@@ -1099,7 +1099,7 @@
 /* ── Configuration ───────────────────────────────────────────────────── */
 
 var DATA_BASE = './data';
-var BUILD     = '2026-05-11f';
+var BUILD     = '2026-05-13m';
 
 
 /* ── Formatting utilities ────────────────────────────────────────────── */
@@ -2579,75 +2579,311 @@ function makeCustomLayer(id, vertData, draws, drawMode, r, g, b, opacity) {
   });
 }
 
-function addCustomLine(id, segs, colorHex, opacity) {
-  /* One LINE_STRIP draw call per segment. Densifies geodesically. */
-  opacity = opacity === undefined ? 1.0 : opacity;
-  var verts = [], draws = [];
-  (segs || []).forEach(function(raw) {
-    if (!raw || raw.length < 2) return;
-    var seg = densifySegment(raw);
-    draws.push({start: verts.length / 2, count: seg.length});
-    seg.forEach(function(p) { var m = lngLatToMerc(p); verts.push(m[0], m[1]); });
-  });
-  if (!verts.length) return;
-  var rgb = hexToRgb(colorHex);
-  makeCustomLayer(id + '-custom', new Float32Array(verts), draws,
-    /*gl.LINE_STRIP=*/3, rgb[0], rgb[1], rgb[2], opacity);
+function wrapContinuous(pts) {
+  /* Wrap a sequence of [lon,lat] points so consecutive longitudes never
+     jump by more than 180°. This preserves antimeridian continuity for
+     MapLibre's GeoJSON line renderer without naively clamping to [-180,180]. */
+  if (!pts || !pts.length) return pts;
+  var out = [[((pts[0][0]+180)%360+360)%360-180, pts[0][1]]];
+  for (var i = 1; i < pts.length; i++) {
+    var prev = out[i-1][0];
+    var lon = pts[i][0];
+    /* Normalise to [-180,180] first */
+    lon = ((lon+180)%360+360)%360-180;
+    /* Then adjust to be within 180° of previous */
+    while (lon - prev >  180) lon -= 360;
+    while (lon - prev < -180) lon += 360;
+    out.push([lon, pts[i][1]]);
+  }
+  return out;
 }
 
-function addCustomFill(id, nSegs, sSegs, colorHex, opacity, useFan) {
-  /* Two triangulation modes:
-     STRIP (useFan=false): umbra corridor — edges are co-parametrized by time,
-       same direction, similar length. Pair north[i]/south[i] directly.
-     FAN  (useFan=true):  penumbra — edges are independent curves running in
-       different directions. Build a closed polygon ring (north forward +
-       south reversed) and triangulate as a fan from the centroid.        */
+function addRawLine(id, segs, colorHex, opacity, width) {
+  opacity = opacity === undefined ? 1.0 : opacity;
+  width   = width   === undefined ? 1.5 : width;
+
+  /* Offset vertices in mercator space perpendicular to each segment.
+     Mercator offset per pixel = 1 / (256 * 2^zoom).
+     We pass the offset as a uniform so it updates when zoom changes. */
+
+  var verts=[], count=0;
+  (segs||[]).forEach(function(raw){
+    if(!raw||raw.length<2) return;
+    var seg = raw;
+    var pts=seg.map(lngLatToMerc);
+    for(var i=0;i<pts.length-1;i++){
+      var c=pts[i], n=pts[i+1];
+      /* dx,dy in mercator space */
+      var dx=n[0]-c[0], dy=n[1]-c[1];
+      var len=Math.sqrt(dx*dx+dy*dy);
+      if(len<1e-10) continue;
+      /* perpendicular unit vector in mercator space */
+      var px=-dy/len, py=dx/len;
+      /* We store base vertices + perp direction; shader applies zoom-scaled offset */
+      /* layout: cx,cy, nx,ny, px,py, side (7 floats) */
+      verts.push(c[0],c[1],n[0],n[1],px,py, 1);
+      verts.push(c[0],c[1],n[0],n[1],px,py,-1);
+      verts.push(n[0],n[1],c[0],c[1],px,py, 1);
+      verts.push(c[0],c[1],n[0],n[1],px,py,-1);
+      verts.push(n[0],n[1],c[0],c[1],px,py,-1);
+      verts.push(n[0],n[1],c[0],c[1],px,py, 1);
+      count+=6;
+    }
+  });
+  if(!count) return;
+
+  var rgb=hexToRgb(colorHex), r=rgb[0], g=rgb[1], b=rgb[2];
+  var shaderCache={};
+  var layerId=id+'-custom';
+  customLineLayers.push(layerId);
+  var vertData=new Float32Array(verts);
+
+  map.addLayer({
+    id:layerId, type:'custom', renderingMode:'2d',
+
+    onAdd:function(m,gl){
+      this._buf=gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER,this._buf);
+      gl.bufferData(gl.ARRAY_BUFFER,vertData,gl.STATIC_DRAW);
+    },
+
+    _prog:function(gl,sd){
+      if(shaderCache[sd.variantName]) return shaderCache[sd.variantName];
+      var vs=[
+        '#version 300 es',
+        sd.vertexShaderPrelude, sd.define,
+        'in vec2 a_pos; in vec2 a_perp; in float a_side;',
+        'uniform float u_hw;',
+        'void main() {',
+        '  vec2 p = a_pos + a_side * u_hw * a_perp;',
+        '  gl_Position = projectTile(p);',
+        '}'
+      ].join('\n');
+      var fs=[
+        '#version 300 es','precision mediump float;','out vec4 c;',
+        'void main(){c=vec4('+r.toFixed(4)+','+g.toFixed(4)+','+b.toFixed(4)+','+opacity.toFixed(4)+');}'
+      ].join('\n');
+      var v=gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(v,vs); gl.compileShader(v);
+      if(!gl.getShaderParameter(v,gl.COMPILE_STATUS)) console.error(id,'VS:',gl.getShaderInfoLog(v));
+      var f=gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(f,fs); gl.compileShader(f);
+      var p=gl.createProgram(); gl.attachShader(p,v); gl.attachShader(p,f); gl.linkProgram(p);
+      if(!gl.getProgramParameter(p,gl.LINK_STATUS)) console.error(id,'LINK:',gl.getProgramInfoLog(p));
+      var L={
+        pos:gl.getAttribLocation(p,'a_pos'),
+        perp:gl.getAttribLocation(p,'a_perp'),
+        side:gl.getAttribLocation(p,'a_side'),
+        hw:gl.getUniformLocation(p,'u_hw')
+      };
+      ['u_projection_matrix','u_projection_fallback_matrix','u_projection_clipping_plane',
+       'u_projection_transition','u_projection_tile_mercator_coords'].forEach(function(n){
+        L[n]=gl.getUniformLocation(p,n);
+      });
+      shaderCache[sd.variantName]={p:p,L:L};
+      return shaderCache[sd.variantName];
+    },
+
+    render:function(gl,args){
+      var s=this._prog(gl,args.shaderData), pd=args.defaultProjectionData, L=s.L;
+      gl.useProgram(s.p);
+      if(L.u_projection_matrix) gl.uniformMatrix4fv(L.u_projection_matrix,false,pd.mainMatrix);
+      if(L.u_projection_fallback_matrix) gl.uniformMatrix4fv(L.u_projection_fallback_matrix,false,pd.fallbackMatrix);
+      if(L.u_projection_clipping_plane){var cp=pd.clippingPlane;gl.uniform4f(L.u_projection_clipping_plane,cp[0],cp[1],cp[2],cp[3]);}
+      if(L.u_projection_transition) gl.uniform1f(L.u_projection_transition,pd.projectionTransition);
+      if(L.u_projection_tile_mercator_coords){var tm=pd.tileMercatorCoords;gl.uniform4f(L.u_projection_tile_mercator_coords,tm[0],tm[1],tm[2],tm[3]);}
+      /* half-width in mercator units: width pixels / (256 * 2^zoom) */
+      var hw = width * 0.5 / map.transform.worldSize;
+      gl.uniform1f(L.hw, hw);
+      var stride=7*4;
+      gl.bindBuffer(gl.ARRAY_BUFFER,this._buf);
+      gl.enableVertexAttribArray(L.pos);  gl.vertexAttribPointer(L.pos, 2,gl.FLOAT,false,stride,0);
+      gl.enableVertexAttribArray(L.perp); gl.vertexAttribPointer(L.perp,2,gl.FLOAT,false,stride,16);
+      gl.enableVertexAttribArray(L.side); gl.vertexAttribPointer(L.side,1,gl.FLOAT,false,stride,24);
+      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+      gl.drawArrays(gl.TRIANGLES,0,count);
+      gl.disableVertexAttribArray(L.pos);
+      gl.disableVertexAttribArray(L.perp);
+      gl.disableVertexAttribArray(L.side);
+    },
+
+    onRemove:function(m,gl){
+      if(this._buf){gl.deleteBuffer(this._buf);this._buf=null;}
+      Object.keys(shaderCache).forEach(function(k){gl.deleteProgram(shaderCache[k].p);});
+    }
+  });
+}
+
+
+
+function addCustomLine(id, segs, colorHex, opacity, width) {
+  opacity = opacity === undefined ? 1.0 : opacity;
+  width   = width   === undefined ? 1.5 : width;
+
+  /* Offset vertices in mercator space perpendicular to each segment.
+     Mercator offset per pixel = 1 / (256 * 2^zoom).
+     We pass the offset as a uniform so it updates when zoom changes. */
+
+  var verts=[], count=0;
+  (segs||[]).forEach(function(raw){
+    if(!raw||raw.length<2) return;
+    var seg = densifySegment(raw);
+    var pts=seg.map(lngLatToMerc);
+    for(var i=0;i<pts.length-1;i++){
+      var c=pts[i], n=pts[i+1];
+      /* dx,dy in mercator space */
+      var dx=n[0]-c[0], dy=n[1]-c[1];
+      var len=Math.sqrt(dx*dx+dy*dy);
+      if(len<1e-10) continue;
+      /* perpendicular unit vector in mercator space */
+      var px=-dy/len, py=dx/len;
+      /* We store base vertices + perp direction; shader applies zoom-scaled offset */
+      /* layout: cx,cy, nx,ny, px,py, side (7 floats) */
+      verts.push(c[0],c[1],n[0],n[1],px,py, 1);
+      verts.push(c[0],c[1],n[0],n[1],px,py,-1);
+      verts.push(n[0],n[1],c[0],c[1],px,py, 1);
+      verts.push(c[0],c[1],n[0],n[1],px,py,-1);
+      verts.push(n[0],n[1],c[0],c[1],px,py,-1);
+      verts.push(n[0],n[1],c[0],c[1],px,py, 1);
+      count+=6;
+    }
+  });
+  if(!count) return;
+
+  var rgb=hexToRgb(colorHex), r=rgb[0], g=rgb[1], b=rgb[2];
+  var shaderCache={};
+  var layerId=id+'-custom';
+  customLineLayers.push(layerId);
+  var vertData=new Float32Array(verts);
+
+  map.addLayer({
+    id:layerId, type:'custom', renderingMode:'2d',
+
+    onAdd:function(m,gl){
+      this._buf=gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER,this._buf);
+      gl.bufferData(gl.ARRAY_BUFFER,vertData,gl.STATIC_DRAW);
+    },
+
+    _prog:function(gl,sd){
+      if(shaderCache[sd.variantName]) return shaderCache[sd.variantName];
+      var vs=[
+        '#version 300 es',
+        sd.vertexShaderPrelude, sd.define,
+        'in vec2 a_pos; in vec2 a_perp; in float a_side;',
+        'uniform float u_hw;',
+        'void main() {',
+        '  vec2 p = a_pos + a_side * u_hw * a_perp;',
+        '  gl_Position = projectTile(p);',
+        '}'
+      ].join('\n');
+      var fs=[
+        '#version 300 es','precision mediump float;','out vec4 c;',
+        'void main(){c=vec4('+r.toFixed(4)+','+g.toFixed(4)+','+b.toFixed(4)+','+opacity.toFixed(4)+');}'
+      ].join('\n');
+      var v=gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(v,vs); gl.compileShader(v);
+      if(!gl.getShaderParameter(v,gl.COMPILE_STATUS)) console.error(id,'VS:',gl.getShaderInfoLog(v));
+      var f=gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(f,fs); gl.compileShader(f);
+      var p=gl.createProgram(); gl.attachShader(p,v); gl.attachShader(p,f); gl.linkProgram(p);
+      if(!gl.getProgramParameter(p,gl.LINK_STATUS)) console.error(id,'LINK:',gl.getProgramInfoLog(p));
+      var L={
+        pos:gl.getAttribLocation(p,'a_pos'),
+        perp:gl.getAttribLocation(p,'a_perp'),
+        side:gl.getAttribLocation(p,'a_side'),
+        hw:gl.getUniformLocation(p,'u_hw')
+      };
+      ['u_projection_matrix','u_projection_fallback_matrix','u_projection_clipping_plane',
+       'u_projection_transition','u_projection_tile_mercator_coords'].forEach(function(n){
+        L[n]=gl.getUniformLocation(p,n);
+      });
+      shaderCache[sd.variantName]={p:p,L:L};
+      return shaderCache[sd.variantName];
+    },
+
+    render:function(gl,args){
+      var s=this._prog(gl,args.shaderData), pd=args.defaultProjectionData, L=s.L;
+      gl.useProgram(s.p);
+      if(L.u_projection_matrix) gl.uniformMatrix4fv(L.u_projection_matrix,false,pd.mainMatrix);
+      if(L.u_projection_fallback_matrix) gl.uniformMatrix4fv(L.u_projection_fallback_matrix,false,pd.fallbackMatrix);
+      if(L.u_projection_clipping_plane){var cp=pd.clippingPlane;gl.uniform4f(L.u_projection_clipping_plane,cp[0],cp[1],cp[2],cp[3]);}
+      if(L.u_projection_transition) gl.uniform1f(L.u_projection_transition,pd.projectionTransition);
+      if(L.u_projection_tile_mercator_coords){var tm=pd.tileMercatorCoords;gl.uniform4f(L.u_projection_tile_mercator_coords,tm[0],tm[1],tm[2],tm[3]);}
+      /* half-width in mercator units: width pixels / (256 * 2^zoom) */
+      var hw = width * 0.5 / map.transform.worldSize;
+      gl.uniform1f(L.hw, hw);
+      var stride=7*4;
+      gl.bindBuffer(gl.ARRAY_BUFFER,this._buf);
+      gl.enableVertexAttribArray(L.pos);  gl.vertexAttribPointer(L.pos, 2,gl.FLOAT,false,stride,0);
+      gl.enableVertexAttribArray(L.perp); gl.vertexAttribPointer(L.perp,2,gl.FLOAT,false,stride,16);
+      gl.enableVertexAttribArray(L.side); gl.vertexAttribPointer(L.side,1,gl.FLOAT,false,stride,24);
+      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+      gl.drawArrays(gl.TRIANGLES,0,count);
+      gl.disableVertexAttribArray(L.pos);
+      gl.disableVertexAttribArray(L.perp);
+      gl.disableVertexAttribArray(L.side);
+    },
+
+    onRemove:function(m,gl){
+      if(this._buf){gl.deleteBuffer(this._buf);this._buf=null;}
+      Object.keys(shaderCache).forEach(function(k){gl.deleteProgram(shaderCache[k].p);});
+    }
+  });
+}
+
+
+
+function addCustomFill(id, nSegs, sSegs, colorHex, opacity) {
   if (!nSegs||!sSegs||!nSegs.length||!sSegs.length) return;
   var north = densifySegment(nSegs[0]);
   var south = densifySegment(sSegs[0]);
   if (!north||!north.length||!south||!south.length) return;
 
-  var rgb = hexToRgb(colorHex);
-  var verts = [], draws = [];
+  /* Parameterize both edges by cumulative great-circle arc-length (0..1).
+     Then pair vertices across edges by equal arc-length parameter,
+     producing quads that cannot cross regardless of path shape or
+     antimeridian crossings. Each quad → 2 explicit triangles. */
 
-  if (useFan) {
-    /* Build closed ring: north forward + south reversed */
-    var ring = north.concat(south.slice().reverse());
-    /* Centroid in mercator space */
-    var cx = 0, cy = 0;
-    ring.forEach(function(p) { var m=lngLatToMerc(p); cx+=m[0]; cy+=m[1]; });
-    cx /= ring.length; cy /= ring.length;
-    /* Fan: centroid, then each consecutive pair of ring vertices */
-    verts.push(cx, cy);
-    ring.forEach(function(p) { var m=lngLatToMerc(p); verts.push(m[0],m[1]); });
-    /* Close the fan */
-    var m0 = lngLatToMerc(ring[0]);
-    verts.push(m0[0], m0[1]);
-    draws = [{start:0, count:verts.length/2}];
-    makeCustomLayer(id+'-custom', new Float32Array(verts), draws,
-      /*gl.TRIANGLE_FAN=*/6, rgb[0], rgb[1], rgb[2], opacity);
-  } else {
-    var n = Math.max(north.length, south.length);
-    function resample(edge) {
-      if (edge.length === n) return edge;
-      var out = [];
-      for (var i = 0; i < n; i++) {
-        var f = i/(n-1)*(edge.length-1);
-        var a = Math.floor(f), b = Math.min(a+1,edge.length-1), s = f-a;
-        out.push([edge[a][0]+(edge[b][0]-edge[a][0])*s,
-                  edge[a][1]+(edge[b][1]-edge[a][1])*s]);
-      }
-      return out;
+  function arcLengthParams(edge) {
+    var dists = [0];
+    for (var i = 1; i < edge.length; i++) {
+      var p0 = edge[i-1], p1 = edge[i];
+      dists.push(dists[i-1] + gcDistance(p0[0],p0[1],p1[0],p1[1]));
     }
-    north = resample(north); south = resample(south);
-    for (var i = 0; i < n; i++) {
-      var mn=lngLatToMerc(north[i]), ms=lngLatToMerc(south[i]);
-      verts.push(mn[0],mn[1], ms[0],ms[1]);
-    }
-    makeCustomLayer(id+'-custom', new Float32Array(verts),
-      [{start:0, count:n*2}],
-      /*gl.TRIANGLE_STRIP=*/5, rgb[0], rgb[1], rgb[2], opacity);
+    var total = dists[dists.length-1];
+    return dists.map(function(d){ return total > 0 ? d/total : 0; });
   }
+
+  var np = arcLengthParams(north);
+  var sp = arcLengthParams(south);
+
+  /* Resample south to north's arc-length parameters */
+  function resampleByParam(edge, srcParams, tgtParams) {
+    var out = [], si = 0;
+    for (var i = 0; i < tgtParams.length; i++) {
+      var t = tgtParams[i];
+      while (si < srcParams.length-2 && srcParams[si+1] < t) si++;
+      var t0 = srcParams[si], t1 = srcParams[si+1] || t0;
+      var f = t1 > t0 ? (t-t0)/(t1-t0) : 0;
+      var a = edge[si], b = edge[Math.min(si+1,edge.length-1)];
+      out.push([a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f]);
+    }
+    return out;
+  }
+
+  var southResampled = resampleByParam(south, sp, np);
+  var n = north.length;
+
+  /* Build explicit quads in lon/lat, convert to mercator at the end */
+  var verts = [];
+  for (var i = 0; i < n-1; i++) {
+    var n0=lngLatToMerc(north[i]),       n1=lngLatToMerc(north[i+1]);
+    var s0=lngLatToMerc(southResampled[i]), s1=lngLatToMerc(southResampled[i+1]);
+    verts.push(n0[0],n0[1], s0[0],s0[1], n1[0],n1[1]);
+    verts.push(s0[0],s0[1], s1[0],s1[1], n1[0],n1[1]);
+  }
+
+  var rgb = hexToRgb(colorHex);
+  makeCustomLayer(id+'-custom', new Float32Array(verts),
+    [{start:0, count:verts.length/2}],
+    /*gl.TRIANGLES=*/4, rgb[0], rgb[1], rgb[2], opacity);
 }
 
 function hexToRgb(hex) {
@@ -2691,21 +2927,27 @@ function drawEclipsePath(ep) {
   /* Penumbra fill deferred — requires bisector_first + bisector_last from
      generator to close the polygon correctly. Boundary lines render below. */
 
-  if (hasPenN) addCustomLine('penumbra-n', ep.penumbra_n, '#2a5a8c');
-  if (hasPenS) addCustomLine('penumbra-s', ep.penumbra_s, '#2a5a8c');
+  if (hasPenN) addCustomLine('penumbra-n', ep.penumbra_n, '#2a5a8c', 1.0, 1.2);
+  if (hasPenS) addCustomLine('penumbra-s', ep.penumbra_s, '#2a5a8c', 1.0, 1.2);
 
   /* Terminator lemniscates — custom layer, handles polar/global wrap */
   if (ep.terminator_first && ep.terminator_first.length)
-    addCustomLine('terminator-first', ep.terminator_first, '#2a5a8c', 0.7);
+    addCustomLine('terminator-first', ep.terminator_first, '#2a5a8c', 0.7, 1.2);
   if (ep.terminator_last && ep.terminator_last.length)
-    addCustomLine('terminator-last', ep.terminator_last, '#2a5a8c', 0.7);
+    addCustomLine('terminator-last', ep.terminator_last, '#2a5a8c', 0.7, 1.2);
+
+  /* Bisectors — close the penumbra boundary at sunrise/sunset ends. */
+  if (ep.bisector_first && ep.bisector_first.length)
+    addCustomLine('bisector-first', ep.bisector_first, '#2a5a8c', 0.7, 1.2);
+  if (ep.bisector_last && ep.bisector_last.length)
+    addCustomLine('bisector-last', ep.bisector_last, '#2a5a8c', 0.7, 1.2);
 
   /* Umbra */
   if (isCentral && ep.umbra_n && ep.umbra_s) {
     var uc = isTotal ? '#8b4a00' : '#1a4a7a';
-    addCustomFill('umbra-fill', ep.umbra_n, ep.umbra_s, uc, 0.18, false);
-    addCustomLine('umbra-n', ep.umbra_n, uc);
-    addCustomLine('umbra-s', ep.umbra_s, uc);
+    addCustomFill('umbra-fill', ep.umbra_n, ep.umbra_s, uc, 0.18);
+    addCustomLine('umbra-n', ep.umbra_n, uc, 1.0, 1.5);
+    addCustomLine('umbra-s', ep.umbra_s, uc, 1.0, 1.5);
   } else {
 
     emptySource('umbra-n','line');
@@ -2713,7 +2955,7 @@ function drawEclipsePath(ep) {
   }
 
   /* Centreline */
-  if (isCentral && ep.centreline) addCustomLine('centreline', ep.centreline, '#cc2200');
+  if (isCentral && ep.centreline) addCustomLine('centreline', ep.centreline, '#cc2200', 1.0, 2.5);
 
   /* GE point */
   if (ep.ge && ep.ge[0] != null) {
