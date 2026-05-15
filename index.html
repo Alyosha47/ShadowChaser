@@ -1100,7 +1100,7 @@
 /* ── Configuration ───────────────────────────────────────────────────── */
 
 var DATA_BASE = './data';
-var BUILD     = '2026-05-14n';
+var BUILD     = '2026-05-15k';
 
 
 /* ── Formatting utilities ────────────────────────────────────────────── */
@@ -1162,7 +1162,7 @@ var chunkCache = {};
 
 function loadChunk(key) {
   if (chunkCache[key]) return Promise.resolve(chunkCache[key]);
-  var url = DATA_BASE + '/' + key + '.json?v=' + BUILD;
+  var url = DATA_BASE + '/besselian/' + key + '.json?v=' + BUILD;
   return fetch(url).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status + ' \u2014 ' + key + '.json');
     return r.json();
@@ -2814,35 +2814,9 @@ function drawEclipsePath(ep) {
   var uc        = isTotal ? [139,74,0] : [26,74,122];
   var layers    = [];
 
-  /* ── Penumbra fill ──────────────────────────────────────────────── */
-  if (hasPenN && hasPenS) {
-    /* Corridor fill between penumbra_n and penumbra_s */
-    layers.push(new DeckGL.SolidPolygonLayer({
-      id: 'penumbra-corridor',
-      data: corridorToPolygonData(ep.penumbra_n, ep.penumbra_s, 'pen'),
-      wrapLongitude: true,
-      getPolygon: function(d) { return d.polygon; },
-      getFillColor: [42,90,140,25],
-      stroked: false,
-      filled: true,
-    }));
-    /* Terminator blob fills */
-    ['terminator_first','terminator_last'].forEach(function(key, ki) {
-      if (ep[key] && ep[key].length && ep[key][0]) {
-        layers.push(new DeckGL.SolidPolygonLayer({
-          id: 'pen-term-' + ki,
-          data: ringToPolygonData(wrapContinuous(ep[key][0]), 'pt'+ki),
-          getPolygon: function(d) { return d.polygon; },
-          getFillColor: [42,90,140,25],
-          stroked: false,
-          filled: true,
-          wrapLongitude: true,
-        }));
-      }
-    });
-  }
+  /* Penumbra fill: deferred pending correct spherical renderer */
 
-  /* ── Penumbra boundary lines ────────────────────────────────────── */
+    /* ── Penumbra boundary lines ────────────────────────────────────── */
   var penPaths = [];
   if (hasPenN) penPaths = penPaths.concat(segsToPathData(ep.penumbra_n, 'pn'));
   if (hasPenS) penPaths = penPaths.concat(segsToPathData(ep.penumbra_s, 'ps'));
