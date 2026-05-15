@@ -1,0 +1,44 @@
+python3 split_eclipse_data.py espenak_5000.csv ./data
+
+the rest of the files are:
+
+**delta_t.py**
+A library, not run directly. Contains the maths for calculating ΔT across the full 5000-year range. The other scripts import it. If you ever need to update the ΔT formula, this is the only file you touch.
+
+---
+
+**verify_dt.py**
+Run this before doing anything else. It checks that the formulae in `delta_t.py` are producing correct values against known reference points — including matching Jubier at 2299. No internet, no data files needed. If it says all clear, you're safe to proceed.
+
+```bash
+python3 verify_dt.py --verbose
+```
+
+---
+
+**update_dt.py**
+Run this after `split_eclipse_data.py`. It goes through every century chunk file and replaces the `dt` value in each eclipse record with the best available value — USNO observed data for modern eclipses, USNO predictions for near future, and the SMH 2016 formula for everything else. Downloads two small files from USNO automatically.
+
+```bash
+python3 update_dt.py --dry-run   # check what would change
+python3 update_dt.py             # commit the changes
+```
+
+---
+
+**split_eclipse_data.py**
+Run this first, from scratch, whenever you're rebuilding the dataset. Takes the Espenak CSV and splits it into century chunk files plus `index.json`. Always run `update_dt.py` immediately after, because the CSV has wrong `dt` values for post-2150 eclipses.
+
+```bash
+python3 split_eclipse_data.py espenak_5000.csv ./data
+```
+
+---
+
+**Correct order every time you rebuild:**
+```bash
+python3 verify_dt.py
+python3 split_eclipse_data.py espenak_5000.csv ./data
+python3 update_dt.py
+# then bump BUILD in index.html
+```

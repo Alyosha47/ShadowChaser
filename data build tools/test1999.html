@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>1999 Aug 11 Eclipse — Penumbral Test</title>
+<link href="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; background:#0a0c0f; color:#dde3ec; font-family:sans-serif; }
+#map { width:100%; height:100%; }
+#info {
+  position:absolute; top:10px; left:10px; background:rgba(10,12,15,0.9);
+  border:1px solid #253040; border-radius:6px; padding:12px; max-width:280px;
+  font-size:0.8rem; line-height:1.5;
+}
+#info h2 { color:#c8a96e; margin-bottom:6px; font-size:0.95rem; }
+.row { display:flex; justify-content:space-between; gap:8px; margin-bottom:4px; }
+.label { color:#7e8fa0; }
+.val { color:#dde3ec; }
+.key { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+.swatch { width:24px; height:3px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="info">
+  <h2>1999 Aug 11 — Total Eclipse</h2>
+  <div class="row"><span class="label">GE</span><span class="val">45.1°N 24.3°E (Romania)</span></div>
+  <div class="row"><span class="label">Gamma</span><span class="val">0.506</span></div>
+  <div class="row"><span class="label">Duration</span><span class="val">2m23s</span></div>
+  <hr style="border-color:#253040; margin:8px 0">
+  <div class="key"><div class="swatch" style="background:#5c9ee0; opacity:0.4; height:8px; border-radius:2px"></div><span>Penumbra fill</span></div>
+  <div class="key"><div class="swatch" style="background:#5c9ee0; border-top:2px dashed #5c9ee0"></div><span>Penumbra N limit</span></div>
+  <div class="key"><div class="swatch" style="background:#5c9ee0; border-top:2px dashed #c8a96e"></div><span style="color:#c8a96e">Penumbra S limit</span></div>
+  <div class="key"><div class="swatch" style="background:#c8a96e; height:3px"></div><span>Umbra N/S limits</span></div>
+  <div class="key"><div class="swatch" style="background:#e8c98e; height:2px; border-top:2px dashed #e8c98e"></div><span>Centreline</span></div>
+  <hr style="border-color:#253040; margin:8px 0">
+  <div id="stats" style="color:#7e8fa0; font-size:0.75rem"></div>
+</div>
+
+<script>
+// ── Besselian elements: 1999 Aug 11 Total Eclipse ──────────────────────────
+var REC = {
+  dt:63.7, tmin:-3.0, tmax:3.0,
+  x0:0.070042,  x1:0.5443035,  x2:-4.06e-05, x3:-8.06e-06,
+  y0:0.502841,  y1:-0.1184929, y2:-0.0001158, y3:1.69e-06,
+  d0:15.32734,  d1:-0.012035,  d2:-3e-06,
+  mu0:343.68741,mu1:15.00298,  mu2:0.0,
+  l10:0.542469, l11:0.0001168, l12:-1.17e-05,
+  l20:-0.00365, l21:0.0001163, l22:-1.16e-05
+};
+
+var DEG = Math.PI/180;
+var E2  = 2/298.257223563 - Math.pow(1/298.257223563, 2);
+
+function poly(c, t) {
+  return c[0] + c[1]*t + c[2]*t*t + (c.length>3 ? c[3]*t*t*t : 0);
+}
+
+function bparams(t) {
+  return {
+    X:  poly([REC.x0,REC.x1,REC.x2,REC.x3], t),
+    Y:  poly([REC.y0,REC.y1,REC.y2,REC.y3], t),
+    dr: poly([REC.d0,REC.d1,REC.d2,0], t) * DEG,
+    mu: poly([REC.mu0,REC.mu1,REC.mu2,0], t),
+    dt: REC.dt
+  };
+}
+
+function f2g(xi, eta, dr, mu, dt) {
+  var r2 = xi*xi + eta*eta;
+  if (r2 >= 1.0) return null;
+  var zeta = Math.sqrt(1.0 - r2);
+  var sin_gc = Math.max(-1, Math.min(1, eta*Math.cos(dr) + zeta*Math.sin(dr)));
+  var lat_gc = Math.asin(sin_gc);
+  var lat_gd = Math.atan(Math.tan(lat_gc) / (1.0 - E2));
+  var H = Math.atan2(xi, zeta*Math.cos(dr) - eta*Math.sin(dr)) * 180/Math.PI;
+  var lon = (H - mu + 0.00417807*dt + 180) % 360 - 180;
+  return [lon, lat_gd * 180/Math.PI];  // [lon, lat] for GeoJSON
+}
+
+// ── Analytic penumbral arc endpoints ─────────────────────────────────────
+function penEndpoints(t) {
+  var b = bparams(t);
+  var L = poly([REC.l10,REC.l11,REC.l12,0], t);
+  var absL = Math.abs(L);
+  var C = (1.0 - b.X*b.X - b.Y*b.Y - absL*absL) / (2.0*absL);
+  var Rxy = Math.sqrt(b.X*b.X + b.Y*b.Y);
+  if (Rxy < 1e-10 || Math.abs(C/Rxy) > 1.0) return null;
+  var phi = Math.atan2(b.Y, b.X);
+  var alpha = Math.asin(C/Rxy);
+  var q1 = phi + alpha, q2 = phi + Math.PI - alpha;
+  var p1 = f2g(b.X+absL*Math.sin(q1), b.Y+absL*Math.cos(q1), b.dr, b.mu, b.dt);
+  var p2 = f2g(b.X+absL*Math.sin(q2), b.Y+absL*Math.cos(q2), b.dr, b.mu, b.dt);
+  return [p1, p2];
+}
+
+function geoDist(a, b) {
+  var dlon=(b[0]-a[0])*DEG, dlat=(b[1]-a[1])*DEG;
+  var alat=(a[1]+b[1])/2*DEG;
+  return 6371*Math.sqrt(dlat*dlat + Math.pow(Math.cos(alat)*dlon, 2));
+}
+
+// ── Sweep all timesteps ────────────────────────────────────────────────────
+var STEP = 1/60.0;
+var times = [];
+for (var t = REC.tmin; t <= REC.tmax + 1e-9; t += STEP) times.push(t);
+
+var northPts = [], southPts = [], clPts = [], umbraNPts = [], umbraSPts = [];
+var prevN = null, prevS = null;
+var prevNlon = null, prevSlon = null;
+
+times.forEach(function(t) {
+  // Centreline
+  var b = bparams(t);
+  var cl = f2g(b.X, b.Y, b.dr, b.mu, b.dt);
+  if (cl) clPts.push(cl);
+
+  // Umbral limits (sweep)
+  var L2 = Math.abs(poly([REC.l20,REC.l21,REC.l22,0], t));
+  var uPts = [];
+  for (var i=0; i<720; i++) {
+    var q = 2*Math.PI*i/720;
+    var pt = f2g(b.X+L2*Math.sin(q), b.Y+L2*Math.cos(q), b.dr, b.mu, b.dt);
+    if (pt) uPts.push(pt);
+  }
+  if (uPts.length) {
+    function londist(a,bv){var d=Math.abs(a-bv);return Math.min(d,360-d);}
+    var nearN = prevNlon!==null ? uPts.filter(function(p){return londist(p[0],prevNlon)<60;}) : uPts;
+    var nearS = prevSlon!==null ? uPts.filter(function(p){return londist(p[0],prevSlon)<60;}) : uPts;
+    if (!nearN.length) nearN=uPts;
+    if (!nearS.length) nearS=uPts;
+    var pn = nearN.reduce(function(a,b){return b[1]>a[1]?b:a;});
+    var ps = nearS.reduce(function(a,b){return b[1]<a[1]?b:a;});
+    umbraNPts.push(pn); umbraSPts.push(ps);
+    prevNlon=pn[0]; prevSlon=ps[0];
+  }
+
+  // Penumbral limits (analytic)
+  var eps = penEndpoints(t);
+  if (!eps) return;
+  var cands = eps.filter(Boolean);
+  if (!cands.length) return;
+  if (cands.length === 1) {
+    northPts.push(cands[0]); southPts.push(cands[0]);
+    prevN=prevS=cands[0]; return;
+  }
+  var n, s;
+  if (!prevN) {
+    n = cands[0][1]>=cands[1][1] ? cands[0] : cands[1];
+    s = cands[0][1]>=cands[1][1] ? cands[1] : cands[0];
+  } else {
+    var d0=geoDist(prevN,cands[0]), d1=geoDist(prevN,cands[1]);
+    n = d0<=d1 ? cands[0] : cands[1];
+    s = d0<=d1 ? cands[1] : cands[0];
+  }
+  northPts.push(n); southPts.push(s);
+  prevN=n; prevS=s;
+});
+
+// ── Helper: split at antimeridian ─────────────────────────────────────────
+function splitLon(pts) {
+  var segs=[], cur=[pts[0]];
+  for (var i=1;i<pts.length;i++) {
+    if (Math.abs(pts[i][0]-pts[i-1][0])>180) { if(cur.length>=2) segs.push(cur); cur=[pts[i]]; }
+    else cur.push(pts[i]);
+  }
+  if(cur.length>=2) segs.push(cur);
+  return segs;
+}
+
+function splitPath(pts, maxKm) {
+  var segs=[], cur=[pts[0]];
+  for (var i=1;i<pts.length;i++) {
+    var dlon=Math.abs(pts[i][0]-pts[i-1][0]);
+    if(dlon>180) dlon=360-dlon;
+    var dlat=Math.abs(pts[i][1]-pts[i-1][1]);
+    var alat=(pts[i][1]+pts[i-1][1])/2*DEG;
+    var d=6371*Math.sqrt(Math.pow(dlat*DEG,2)+Math.pow(Math.cos(alat)*dlon*DEG,2));
+    if(Math.abs(pts[i][0]-pts[i-1][0])>180 || d>maxKm) { if(cur.length>=10) segs.push(cur); cur=[pts[i]]; }
+    else cur.push(pts[i]);
+  }
+  if(cur.length>=10) segs.push(cur);
+  return segs;
+}
+
+function segsToGeoJSON(segs) {
+  return {type:'FeatureCollection', features: segs.map(function(s){
+    return {type:'Feature', geometry:{type:'LineString', coordinates:s}, properties:{}};
+  })};
+}
+
+function longestSeg(segs) {
+  if(!segs||!segs.length) return [];
+  return segs.reduce(function(a,b){return b.length>a.length?b:a;},[]);
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────
+document.getElementById('stats').innerHTML =
+  'Penumbra N: '+northPts.length+' pts<br>' +
+  'Penumbra S: '+southPts.length+' pts<br>' +
+  'Centreline: '+clPts.length+' pts<br>' +
+  'Umbra N: '+umbraNPts.length+' pts';
+
+// ── Map ───────────────────────────────────────────────────────────────────
+var map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: [20, 45], zoom: 2
+});
+
+map.on('style.load', function() {
+  // Dark tint
+  map.getStyle().layers.forEach(function(layer) {
+    try {
+      if (layer.id==='background') map.setPaintProperty(layer.id,'background-color','#0d1117');
+      else if (layer.type==='fill') {
+        if (/water/.test(layer.id)) map.setPaintProperty(layer.id,'fill-color','#0a1520');
+        else if (/land|cover|park|grass|wood|sand|scrub/.test(layer.id)) {
+          map.setPaintProperty(layer.id,'fill-color','#141c24');
+          map.setPaintProperty(layer.id,'fill-opacity',0.8);
+        }
+      } else if (layer.type==='line'&&/water/.test(layer.id)) {
+        map.setPaintProperty(layer.id,'line-color','#0a1520');
+      }
+    } catch(e){}
+  });
+
+  // Penumbra fill (longest segment corridor)
+  var nSeg = longestSeg(splitLon(northPts));
+  var sSeg = longestSeg(splitLon(southPts));
+  if (nSeg.length && sSeg.length) {
+    var ring = nSeg.concat(sSeg.slice().reverse()).concat([nSeg[0]]);
+    map.addSource('pen-fill',{type:'geojson',data:{type:'FeatureCollection',features:[
+      {type:'Feature',geometry:{type:'Polygon',coordinates:[ring]},properties:{}}
+    ]}});
+    map.addLayer({id:'pen-fill-layer',type:'fill',source:'pen-fill',
+      paint:{'fill-color':'#5c9ee0','fill-opacity':0.08}});
+  }
+
+  // Penumbra N line
+  map.addSource('pen-n',{type:'geojson',data:segsToGeoJSON(splitLon(northPts))});
+  map.addLayer({id:'pen-n-layer',type:'line',source:'pen-n',
+    paint:{'line-color':'#5c9ee0','line-width':1.5,'line-dasharray':[4,3]}});
+
+  // Penumbra S line
+  map.addSource('pen-s',{type:'geojson',data:segsToGeoJSON(splitLon(southPts))});
+  map.addLayer({id:'pen-s-layer',type:'line',source:'pen-s',
+    paint:{'line-color':'#c8a96e','line-width':1.5,'line-dasharray':[4,3]}});
+
+  // Umbra limits
+  map.addSource('umb-n',{type:'geojson',data:segsToGeoJSON(splitPath(umbraNPts,500))});
+  map.addLayer({id:'umb-n-layer',type:'line',source:'umb-n',
+    paint:{'line-color':'#c8a96e','line-width':1.5}});
+  map.addSource('umb-s',{type:'geojson',data:segsToGeoJSON(splitPath(umbraSPts,500))});
+  map.addLayer({id:'umb-s-layer',type:'line',source:'umb-s',
+    paint:{'line-color':'#c8a96e','line-width':1.5}});
+
+  // Centreline
+  map.addSource('cl',{type:'geojson',data:segsToGeoJSON(splitPath(clPts,500))});
+  map.addLayer({id:'cl-layer',type:'line',source:'cl',
+    paint:{'line-color':'#e8c98e','line-width':1.5,'line-dasharray':[6,3]}});
+
+  // GE marker
+  map.addSource('ge',{type:'geojson',data:{type:'Feature',
+    geometry:{type:'Point',coordinates:[24.298,45.076]},properties:{}}});
+  map.addLayer({id:'ge-layer',type:'circle',source:'ge',
+    paint:{'circle-radius':6,'circle-color':'#e8c98e',
+           'circle-stroke-width':2,'circle-stroke-color':'#0a0c0f'}});
+});
+</script>
+</body>
+</html>

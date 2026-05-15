@@ -20,6 +20,7 @@
   </style>
   <link href="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.css" rel="stylesheet">
   <script src="https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.js"></script>
+  <script src="./deck.min.js"></script>
   <script src="./tz_lookup.js"></script>
 
   <style>
@@ -1099,7 +1100,7 @@
 /* ── Configuration ───────────────────────────────────────────────────── */
 
 var DATA_BASE = './data';
-var BUILD     = '2026-05-13m';
+var BUILD     = '2026-05-14n';
 
 
 /* ── Formatting utilities ────────────────────────────────────────────── */
@@ -1194,6 +1195,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-panel').forEach(function (p) {
     p.classList.toggle('active', p.id === 'tab-' + name);
   });
+  if (name === 'map') onMapTabActivated();
 }
 
 document.querySelectorAll('.tab-btn').forEach(function (b) {
@@ -2017,12 +2019,10 @@ var pathCache      = {};
 var mapMarkers     = [];
 var currentPathKey = null;
 
-var MAP_SOURCES   = ['penumbra-n','penumbra-s','umbra-n','umbra-s','centreline','bisector','ge'];
+var MAP_SOURCES   = ['ge'];
 /* fill sources use -fill-layer suffix; line/circle sources use -layer */
-var MAP_LAYER_IDS = ['penumbra-n-layer','penumbra-s-layer',
-                     'umbra-n-layer','umbra-s-layer',
-                     'centreline-layer','bisector-layer','ge-layer'];
-var customLineLayers = [];
+var MAP_LAYER_IDS = ['ge-layer'];
+var deckOverlay = null; /* deck.gl MapboxOverlay */
 
 /* ── Basemap loading ──────────────────────────────────────────────────
    We support two basemap modes:
@@ -2258,6 +2258,15 @@ function createMap(style, isOnline, localStyleFallback) {
   map.on('style.load', function () {
     /* Belt-and-braces: re-assert globe in case the style overrode it. */
     try { map.setProjection({ type: 'globe' }); } catch (e) {}
+    /* Initialize deck.gl overlay */
+    if (!deckOverlay) {
+      deckOverlay = new DeckGL.MapboxOverlay({ layers: [], interleaved: false });
+      map.addControl(deckOverlay);
+      if (setDeckLayers._pending) {
+        deckOverlay.setProps({ layers: setDeckLayers._pending });
+        setDeckLayers._pending = null;
+      }
+    }
 
     /* Tint the OpenFreeMap style to match our palette. The local style
        is already styled, so we skip this branch for it. */
@@ -2375,17 +2384,211 @@ function loadPathChunk(entry) {
   });
 }
 
+function clearMapMarkers() { mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
+
+function addObserverMarker(lat, lon, sunAz) {
+  var wrap=document.createElement('div');
+  wrap.className='sun-arrow-wrap';
+  var dot=document.createElement('div');
+  dot.className='observer-dot';
+  wrap.appendChild(dot);
+  if (sunAz!==null&&sunAz!==undefined) {
+    var arrow=document.createElement('div');
+    arrow.className='sun-arrow';
+    arrow.style.transform='rotate('+(sunAz-90)+'deg)';
+    wrap.appendChild(arrow);
+  }
+  var m=new maplibregl.Marker({element:wrap,anchor:'center'})
+    .setLngLat([lon,lat]).addTo(map);
+  mapMarkers.push(m);
+}
+
+function onMapClick(lat, lon) {
+  var search=document.getElementById('search');
+  var f=parseSearch(search.value);
+  var tmp=Object.assign({},f,{coords:{lat:lat,lon:lon}});
+  search.value=filterToString(tmp);
+  onSearchChanged();
+  lookupElevationAndTz(lat,lon);
+  lookupTzOnly(lat,lon);
+
+  /* Auto-trigger location scan so the eclipse list populates */
+  if (eclipseIndex.length) {
+  
+  scanLocation();
+  }
+
+  if (selectedEntry) {
+    showMapPopupLoading(lat,lon);
+    var f2=parseSearch(search.value);
+    var alt=f2.alt!==null?f2.alt:0;
+    loadChunk(selectedEntry._chunk).then(function(chunk){
+      var rec=null;
+      for (var i=0;i<chunk.length;i++) {
+        var r=chunk[i];
+        if (r.year===selectedEntry.year&&r.month===selectedEntry.month
+         &&r.day===selectedEntry.day){rec=r;break;}
+      }
+      if (!rec) return;
+      var result=computeEclipse(rec,lat,lon,alt);
+      showMapPopup(lat,lon,result,rec);
+      clearMapMarkers();
+      addObserverMarker(lat,lon,result.visible?result.sun.az:null);
+    }).catch(function(){});
+  } else {
+    clearMapMarkers();
+    addObserverMarker(lat,lon,null);
+  }
+}
+
+function showMapPopupLoading(lat,lon) {
+  var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
+  var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
+  document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
+  document.getElementById('map-popup-grid').innerHTML=
+    '<span style="color:var(--text-dim)">Computing\u2026</span>';
+  document.getElementById('map-popup').style.display='block';
+}
+
+function showMapPopup(lat,lon,result,rec) {
+  var tz=getTzOffset();
+  var tzStr=tz>=0?'UTC+'+tz:'UTC'+tz;
+  var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
+  var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
+  document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
+  var grid=document.getElementById('map-popup-grid');
+  if (!result.visible) {
+    grid.innerHTML='<span style="color:var(--text-dim);grid-column:1/3">\uD83C\uDF11 Not visible from here</span>';
+  } else {
+    var lbl=typeName(result.type[0].toUpperCase());
+    var rows=[
+      ['Type','<span style="color:var(--gold2)">'+lbl+'</span>'],
+      ['Magnitude',result.mag.toFixed(4)],
+      ['Obscuration',result.osc.toFixed(1)+'%'],
+      ['Maximum',fmtUT(result.tMax)+' ('+tzStr+')'],
+      ['Sun alt/az',fmtAng(result.sun.alt)+' / '+fmtAng(result.sun.az)],
+    ];
+    if (result.durCentral) rows.push(['Duration',fmtDur(result.durCentral)]);
+    if (result.C1&&result.C1.ut!=null) rows.push(['C1',fmtUT(result.C1.ut)]);
+    if (result.C2&&result.C2.ut!=null) rows.push(['C2 ('+lbl+')',fmtUT(result.C2.ut)]);
+    if (result.C3&&result.C3.ut!=null) rows.push(['C3 ('+lbl+')',fmtUT(result.C3.ut)]);
+    if (result.C4&&result.C4.ut!=null) rows.push(['C4',fmtUT(result.C4.ut)]);
+    grid.innerHTML=rows.map(function(r){
+      return '<span class="map-popup-label">'+r[0]+'</span><span>'+r[1]+'</span>';
+    }).join('');
+  }
+  document.getElementById('map-popup').style.display='block';
+}
+
+function clearMapMarkers() { mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
+
+function addObserverMarker(lat, lon, sunAz) {
+  var wrap=document.createElement('div');
+  wrap.className='sun-arrow-wrap';
+  var dot=document.createElement('div');
+  dot.className='observer-dot';
+  wrap.appendChild(dot);
+  if (sunAz!==null&&sunAz!==undefined) {
+    var arrow=document.createElement('div');
+    arrow.className='sun-arrow';
+    arrow.style.transform='rotate('+(sunAz-90)+'deg)';
+    wrap.appendChild(arrow);
+  }
+  var m=new maplibregl.Marker({element:wrap,anchor:'center'})
+    .setLngLat([lon,lat]).addTo(map);
+  mapMarkers.push(m);
+}
+
+function onMapClick(lat, lon) {
+  var search=document.getElementById('search');
+  var f=parseSearch(search.value);
+  var tmp=Object.assign({},f,{coords:{lat:lat,lon:lon}});
+  search.value=filterToString(tmp);
+  onSearchChanged();
+  lookupElevationAndTz(lat,lon);
+  lookupTzOnly(lat,lon);
+
+  /* Auto-trigger location scan so the eclipse list populates */
+  if (eclipseIndex.length) {
+  
+  scanLocation();
+  }
+
+  if (selectedEntry) {
+    showMapPopupLoading(lat,lon);
+    var f2=parseSearch(search.value);
+    var alt=f2.alt!==null?f2.alt:0;
+    loadChunk(selectedEntry._chunk).then(function(chunk){
+      var rec=null;
+      for (var i=0;i<chunk.length;i++) {
+        var r=chunk[i];
+        if (r.year===selectedEntry.year&&r.month===selectedEntry.month
+         &&r.day===selectedEntry.day){rec=r;break;}
+      }
+      if (!rec) return;
+      var result=computeEclipse(rec,lat,lon,alt);
+      showMapPopup(lat,lon,result,rec);
+      clearMapMarkers();
+      addObserverMarker(lat,lon,result.visible?result.sun.az:null);
+    }).catch(function(){});
+  } else {
+    clearMapMarkers();
+    addObserverMarker(lat,lon,null);
+  }
+}
+
+function showMapPopupLoading(lat,lon) {
+  var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
+  var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
+  document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
+  document.getElementById('map-popup-grid').innerHTML=
+    '<span style="color:var(--text-dim)">Computing\u2026</span>';
+  document.getElementById('map-popup').style.display='block';
+}
+
+function showMapPopup(lat,lon,result,rec) {
+  var tz=getTzOffset();
+  var tzStr=tz>=0?'UTC+'+tz:'UTC'+tz;
+  var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
+  var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
+  document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
+  var grid=document.getElementById('map-popup-grid');
+  if (!result.visible) {
+    grid.innerHTML='<span style="color:var(--text-dim);grid-column:1/3">\uD83C\uDF11 Not visible from here</span>';
+  } else {
+    var lbl=typeName(result.type[0].toUpperCase());
+    var rows=[
+      ['Type','<span style="color:var(--gold2)">'+lbl+'</span>'],
+      ['Magnitude',result.mag.toFixed(4)],
+      ['Obscuration',result.osc.toFixed(1)+'%'],
+      ['Maximum',fmtUT(result.tMax)+' ('+tzStr+')'],
+      ['Sun alt/az',fmtAng(result.sun.alt)+' / '+fmtAng(result.sun.az)],
+    ];
+    if (result.durCentral) rows.push(['Duration',fmtDur(result.durCentral)]);
+    if (result.C1&&result.C1.ut!=null) rows.push(['C1',fmtUT(result.C1.ut)]);
+    if (result.C2&&result.C2.ut!=null) rows.push(['C2 ('+lbl+')',fmtUT(result.C2.ut)]);
+    if (result.C3&&result.C3.ut!=null) rows.push(['C3 ('+lbl+')',fmtUT(result.C3.ut)]);
+    if (result.C4&&result.C4.ut!=null) rows.push(['C4',fmtUT(result.C4.ut)]);
+    grid.innerHTML=rows.map(function(r){
+      return '<span class="map-popup-label">'+r[0]+'</span><span>'+r[1]+'</span>';
+    }).join('');
+  }
+  document.getElementById('map-popup').style.display='block';
+}
+
+function syncMapIfVisible() {
+  if (activeTab==='map'&&mapReady) updateMapState();
+}
+
 function clearMapLayers() {
-  customLineLayers.forEach(function(id) {
-    try { if (map.getLayer(id)) map.removeLayer(id); } catch(e){}
-  });
-  customLineLayers = [];
-  /* Clean up ellipse layers separately */
+  /* Clear deck.gl overlay layers */
+  if (deckOverlay) deckOverlay.setProps({ layers: [] });
+  /* Clean up ellipse layers (still MapLibre GeoJSON) */
   ['ellipses-layer'].forEach(function(id){
     try { if(map.getLayer && map.getLayer(id)) map.removeLayer(id); } catch(e){}
   });
   try { if(map.getSource && map.getSource('ellipses')) map.removeSource('ellipses'); } catch(e){}
-  /* Clean up path layers */
+  /* Clean up remaining GeoJSON sources (ge, bisector, umbra caps) */
   MAP_LAYER_IDS.forEach(function (id) { try { if (map.getLayer(id)) map.removeLayer(id); } catch(e){} });
   MAP_SOURCES.forEach(function (id)   { try { if (map.getSource(id)) map.removeSource(id); } catch(e){} });
 }
@@ -2493,104 +2696,43 @@ function densifySegment(seg) {
    upload a Float32 buffer once, and draw with MapLibre's projectTile()
    shader — which handles globe projection correctly at any latitude.
 
-   makeCustomLayer() is the single shared factory. addCustomLine() and
-   addCustomFill() build their respective vertex buffers and call it.  */
+   All eclipse geometry uses deck.gl PathLayer and SolidPolygonLayer.  */
 
-function lngLatToMerc(p) {
-  /* Normalise longitude to [-180,180] (data may be unwrapped), then
-     convert to MapLibre's internal mercator XY in range [0, 1]. */
-  var lon = ((p[0] + 180) % 360 + 360) % 360 - 180;
-  var mc  = maplibregl.MercatorCoordinate.fromLngLat({lng: lon, lat: p[1]});
-  return [mc.x, mc.y];
+/* ── deck.gl rendering helpers ───────────────────────────────────────
+   All eclipse geometry is rendered via deck.gl PathLayer and
+   SolidPolygonLayer, which handle polar regions, antimeridian crossings,
+   line width, and spherical polygon fills correctly and natively.
+
+   setDeckLayers() is the single point of truth — call it with an array
+   of deck.gl layer objects whenever the eclipse changes.               */
+
+function hexToRgb255(hex) {
+  return [parseInt(hex.slice(1,3),16),
+          parseInt(hex.slice(3,5),16),
+          parseInt(hex.slice(5,7),16)];
 }
 
-function makeCustomLayer(id, vertData, draws, drawMode, r, g, b, opacity) {
-  /* draws: [{start, count}] — one draw call per segment / strip. */
-  var shaderCache = {};
-  customLineLayers.push(id);
-
-  map.addLayer({
-    id: id, type: 'custom', renderingMode: '2d',
-
-    onAdd: function(m, gl) {
-      this._buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, this._buf);
-      gl.bufferData(gl.ARRAY_BUFFER, vertData, gl.STATIC_DRAW);
-    },
-
-    _prog: function(gl, sd) {
-      if (shaderCache[sd.variantName]) return shaderCache[sd.variantName];
-      var vs = '#version 300 es\n'
-             + sd.vertexShaderPrelude + '\n' + sd.define + '\n'
-             + 'in vec2 a_pos;\nvoid main(){gl_Position=projectTile(a_pos);}';
-      var fs = '#version 300 es\nprecision mediump float;\nout vec4 c;\n'
-             + 'void main(){c=vec4(' + r.toFixed(4) + ',' + g.toFixed(4) + ','
-             + b.toFixed(4) + ',' + opacity.toFixed(4) + ');}';
-      var v = gl.createShader(gl.VERTEX_SHADER);
-      gl.shaderSource(v, vs); gl.compileShader(v);
-      var f = gl.createShader(gl.FRAGMENT_SHADER);
-      gl.shaderSource(f, fs); gl.compileShader(f);
-      var p = gl.createProgram();
-      gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p);
-      var locs = {pos: gl.getAttribLocation(p, 'a_pos')};
-      ['u_projection_matrix','u_projection_fallback_matrix',
-       'u_projection_clipping_plane','u_projection_transition',
-       'u_projection_tile_mercator_coords'].forEach(function(n) {
-        locs[n] = gl.getUniformLocation(p, n);
-      });
-      shaderCache[sd.variantName] = {p: p, L: locs};
-      return shaderCache[sd.variantName];
-    },
-
-    render: function(gl, args) {
-      var s  = this._prog(gl, args.shaderData);
-      var pd = args.defaultProjectionData;
-      var L  = s.L;
-      gl.useProgram(s.p);
-      if (L.u_projection_matrix)
-        gl.uniformMatrix4fv(L.u_projection_matrix, false, pd.mainMatrix);
-      if (L.u_projection_fallback_matrix)
-        gl.uniformMatrix4fv(L.u_projection_fallback_matrix, false, pd.fallbackMatrix);
-      if (L.u_projection_clipping_plane) {
-        var cp = pd.clippingPlane;
-        gl.uniform4f(L.u_projection_clipping_plane, cp[0], cp[1], cp[2], cp[3]);
-      }
-      if (L.u_projection_transition)
-        gl.uniform1f(L.u_projection_transition, pd.projectionTransition);
-      if (L.u_projection_tile_mercator_coords) {
-        var tm = pd.tileMercatorCoords;
-        gl.uniform4f(L.u_projection_tile_mercator_coords, tm[0], tm[1], tm[2], tm[3]);
-      }
-      gl.bindBuffer(gl.ARRAY_BUFFER, this._buf);
-      gl.enableVertexAttribArray(L.pos);
-      gl.vertexAttribPointer(L.pos, 2, gl.FLOAT, false, 0, 0);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      draws.forEach(function(d) { gl.drawArrays(drawMode, d.start, d.count); });
-      gl.disableVertexAttribArray(L.pos);
-    },
-
-    onRemove: function(m, gl) {
-      if (this._buf) { gl.deleteBuffer(this._buf); this._buf = null; }
-      Object.keys(shaderCache).forEach(function(k) {
-        gl.deleteProgram(shaderCache[k].p);
-      });
-    }
-  });
+function hexToRgba255(hex, opacity) {
+  var rgb = hexToRgb255(hex);
+  return [rgb[0], rgb[1], rgb[2], Math.round(opacity * 255)];
 }
 
+function setDeckLayers(layers) {
+  if (deckOverlay) {
+    deckOverlay.setProps({ layers: layers });
+  } else {
+    /* Overlay not yet initialized — store and apply when ready */
+    setDeckLayers._pending = layers;
+  }
+}
+
+/* Flatten segments into a single array of paths for PathLayer */
 function wrapContinuous(pts) {
-  /* Wrap a sequence of [lon,lat] points so consecutive longitudes never
-     jump by more than 180°. This preserves antimeridian continuity for
-     MapLibre's GeoJSON line renderer without naively clamping to [-180,180]. */
   if (!pts || !pts.length) return pts;
   var out = [[((pts[0][0]+180)%360+360)%360-180, pts[0][1]]];
   for (var i = 1; i < pts.length; i++) {
     var prev = out[i-1][0];
-    var lon = pts[i][0];
-    /* Normalise to [-180,180] first */
-    lon = ((lon+180)%360+360)%360-180;
-    /* Then adjust to be within 180° of previous */
+    var lon = ((pts[i][0]+180)%360+360)%360-180;
     while (lon - prev >  180) lon -= 360;
     while (lon - prev < -180) lon += 360;
     out.push([lon, pts[i][1]]);
@@ -2598,311 +2740,58 @@ function wrapContinuous(pts) {
   return out;
 }
 
-function addRawLine(id, segs, colorHex, opacity, width) {
-  opacity = opacity === undefined ? 1.0 : opacity;
-  width   = width   === undefined ? 1.5 : width;
-
-  /* Offset vertices in mercator space perpendicular to each segment.
-     Mercator offset per pixel = 1 / (256 * 2^zoom).
-     We pass the offset as a uniform so it updates when zoom changes. */
-
-  var verts=[], count=0;
-  (segs||[]).forEach(function(raw){
-    if(!raw||raw.length<2) return;
-    var seg = raw;
-    var pts=seg.map(lngLatToMerc);
-    for(var i=0;i<pts.length-1;i++){
-      var c=pts[i], n=pts[i+1];
-      /* dx,dy in mercator space */
-      var dx=n[0]-c[0], dy=n[1]-c[1];
-      var len=Math.sqrt(dx*dx+dy*dy);
-      if(len<1e-10) continue;
-      /* perpendicular unit vector in mercator space */
-      var px=-dy/len, py=dx/len;
-      /* We store base vertices + perp direction; shader applies zoom-scaled offset */
-      /* layout: cx,cy, nx,ny, px,py, side (7 floats) */
-      verts.push(c[0],c[1],n[0],n[1],px,py, 1);
-      verts.push(c[0],c[1],n[0],n[1],px,py,-1);
-      verts.push(n[0],n[1],c[0],c[1],px,py, 1);
-      verts.push(c[0],c[1],n[0],n[1],px,py,-1);
-      verts.push(n[0],n[1],c[0],c[1],px,py,-1);
-      verts.push(n[0],n[1],c[0],c[1],px,py, 1);
-      count+=6;
-    }
-  });
-  if(!count) return;
-
-  var rgb=hexToRgb(colorHex), r=rgb[0], g=rgb[1], b=rgb[2];
-  var shaderCache={};
-  var layerId=id+'-custom';
-  customLineLayers.push(layerId);
-  var vertData=new Float32Array(verts);
-
-  map.addLayer({
-    id:layerId, type:'custom', renderingMode:'2d',
-
-    onAdd:function(m,gl){
-      this._buf=gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER,this._buf);
-      gl.bufferData(gl.ARRAY_BUFFER,vertData,gl.STATIC_DRAW);
-    },
-
-    _prog:function(gl,sd){
-      if(shaderCache[sd.variantName]) return shaderCache[sd.variantName];
-      var vs=[
-        '#version 300 es',
-        sd.vertexShaderPrelude, sd.define,
-        'in vec2 a_pos; in vec2 a_perp; in float a_side;',
-        'uniform float u_hw;',
-        'void main() {',
-        '  vec2 p = a_pos + a_side * u_hw * a_perp;',
-        '  gl_Position = projectTile(p);',
-        '}'
-      ].join('\n');
-      var fs=[
-        '#version 300 es','precision mediump float;','out vec4 c;',
-        'void main(){c=vec4('+r.toFixed(4)+','+g.toFixed(4)+','+b.toFixed(4)+','+opacity.toFixed(4)+');}'
-      ].join('\n');
-      var v=gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(v,vs); gl.compileShader(v);
-      if(!gl.getShaderParameter(v,gl.COMPILE_STATUS)) console.error(id,'VS:',gl.getShaderInfoLog(v));
-      var f=gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(f,fs); gl.compileShader(f);
-      var p=gl.createProgram(); gl.attachShader(p,v); gl.attachShader(p,f); gl.linkProgram(p);
-      if(!gl.getProgramParameter(p,gl.LINK_STATUS)) console.error(id,'LINK:',gl.getProgramInfoLog(p));
-      var L={
-        pos:gl.getAttribLocation(p,'a_pos'),
-        perp:gl.getAttribLocation(p,'a_perp'),
-        side:gl.getAttribLocation(p,'a_side'),
-        hw:gl.getUniformLocation(p,'u_hw')
-      };
-      ['u_projection_matrix','u_projection_fallback_matrix','u_projection_clipping_plane',
-       'u_projection_transition','u_projection_tile_mercator_coords'].forEach(function(n){
-        L[n]=gl.getUniformLocation(p,n);
-      });
-      shaderCache[sd.variantName]={p:p,L:L};
-      return shaderCache[sd.variantName];
-    },
-
-    render:function(gl,args){
-      var s=this._prog(gl,args.shaderData), pd=args.defaultProjectionData, L=s.L;
-      gl.useProgram(s.p);
-      if(L.u_projection_matrix) gl.uniformMatrix4fv(L.u_projection_matrix,false,pd.mainMatrix);
-      if(L.u_projection_fallback_matrix) gl.uniformMatrix4fv(L.u_projection_fallback_matrix,false,pd.fallbackMatrix);
-      if(L.u_projection_clipping_plane){var cp=pd.clippingPlane;gl.uniform4f(L.u_projection_clipping_plane,cp[0],cp[1],cp[2],cp[3]);}
-      if(L.u_projection_transition) gl.uniform1f(L.u_projection_transition,pd.projectionTransition);
-      if(L.u_projection_tile_mercator_coords){var tm=pd.tileMercatorCoords;gl.uniform4f(L.u_projection_tile_mercator_coords,tm[0],tm[1],tm[2],tm[3]);}
-      /* half-width in mercator units: width pixels / (256 * 2^zoom) */
-      var hw = width * 0.5 / map.transform.worldSize;
-      gl.uniform1f(L.hw, hw);
-      var stride=7*4;
-      gl.bindBuffer(gl.ARRAY_BUFFER,this._buf);
-      gl.enableVertexAttribArray(L.pos);  gl.vertexAttribPointer(L.pos, 2,gl.FLOAT,false,stride,0);
-      gl.enableVertexAttribArray(L.perp); gl.vertexAttribPointer(L.perp,2,gl.FLOAT,false,stride,16);
-      gl.enableVertexAttribArray(L.side); gl.vertexAttribPointer(L.side,1,gl.FLOAT,false,stride,24);
-      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
-      gl.drawArrays(gl.TRIANGLES,0,count);
-      gl.disableVertexAttribArray(L.pos);
-      gl.disableVertexAttribArray(L.perp);
-      gl.disableVertexAttribArray(L.side);
-    },
-
-    onRemove:function(m,gl){
-      if(this._buf){gl.deleteBuffer(this._buf);this._buf=null;}
-      Object.keys(shaderCache).forEach(function(k){gl.deleteProgram(shaderCache[k].p);});
-    }
-  });
+function segsToPathData(segs, id) {
+  if (!segs) return [];
+  return (segs).map(function(seg, i) {
+    if (!seg || seg.length < 2) return null;
+    return { id: id + '_' + i, path: wrapContinuous(densifySegment(seg)) };
+  }).filter(Boolean);
 }
 
-
-
-function addCustomLine(id, segs, colorHex, opacity, width) {
-  opacity = opacity === undefined ? 1.0 : opacity;
-  width   = width   === undefined ? 1.5 : width;
-
-  /* Offset vertices in mercator space perpendicular to each segment.
-     Mercator offset per pixel = 1 / (256 * 2^zoom).
-     We pass the offset as a uniform so it updates when zoom changes. */
-
-  var verts=[], count=0;
-  (segs||[]).forEach(function(raw){
-    if(!raw||raw.length<2) return;
-    var seg = densifySegment(raw);
-    var pts=seg.map(lngLatToMerc);
-    for(var i=0;i<pts.length-1;i++){
-      var c=pts[i], n=pts[i+1];
-      /* dx,dy in mercator space */
-      var dx=n[0]-c[0], dy=n[1]-c[1];
-      var len=Math.sqrt(dx*dx+dy*dy);
-      if(len<1e-10) continue;
-      /* perpendicular unit vector in mercator space */
-      var px=-dy/len, py=dx/len;
-      /* We store base vertices + perp direction; shader applies zoom-scaled offset */
-      /* layout: cx,cy, nx,ny, px,py, side (7 floats) */
-      verts.push(c[0],c[1],n[0],n[1],px,py, 1);
-      verts.push(c[0],c[1],n[0],n[1],px,py,-1);
-      verts.push(n[0],n[1],c[0],c[1],px,py, 1);
-      verts.push(c[0],c[1],n[0],n[1],px,py,-1);
-      verts.push(n[0],n[1],c[0],c[1],px,py,-1);
-      verts.push(n[0],n[1],c[0],c[1],px,py, 1);
-      count+=6;
-    }
-  });
-  if(!count) return;
-
-  var rgb=hexToRgb(colorHex), r=rgb[0], g=rgb[1], b=rgb[2];
-  var shaderCache={};
-  var layerId=id+'-custom';
-  customLineLayers.push(layerId);
-  var vertData=new Float32Array(verts);
-
-  map.addLayer({
-    id:layerId, type:'custom', renderingMode:'2d',
-
-    onAdd:function(m,gl){
-      this._buf=gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER,this._buf);
-      gl.bufferData(gl.ARRAY_BUFFER,vertData,gl.STATIC_DRAW);
-    },
-
-    _prog:function(gl,sd){
-      if(shaderCache[sd.variantName]) return shaderCache[sd.variantName];
-      var vs=[
-        '#version 300 es',
-        sd.vertexShaderPrelude, sd.define,
-        'in vec2 a_pos; in vec2 a_perp; in float a_side;',
-        'uniform float u_hw;',
-        'void main() {',
-        '  vec2 p = a_pos + a_side * u_hw * a_perp;',
-        '  gl_Position = projectTile(p);',
-        '}'
-      ].join('\n');
-      var fs=[
-        '#version 300 es','precision mediump float;','out vec4 c;',
-        'void main(){c=vec4('+r.toFixed(4)+','+g.toFixed(4)+','+b.toFixed(4)+','+opacity.toFixed(4)+');}'
-      ].join('\n');
-      var v=gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(v,vs); gl.compileShader(v);
-      if(!gl.getShaderParameter(v,gl.COMPILE_STATUS)) console.error(id,'VS:',gl.getShaderInfoLog(v));
-      var f=gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(f,fs); gl.compileShader(f);
-      var p=gl.createProgram(); gl.attachShader(p,v); gl.attachShader(p,f); gl.linkProgram(p);
-      if(!gl.getProgramParameter(p,gl.LINK_STATUS)) console.error(id,'LINK:',gl.getProgramInfoLog(p));
-      var L={
-        pos:gl.getAttribLocation(p,'a_pos'),
-        perp:gl.getAttribLocation(p,'a_perp'),
-        side:gl.getAttribLocation(p,'a_side'),
-        hw:gl.getUniformLocation(p,'u_hw')
-      };
-      ['u_projection_matrix','u_projection_fallback_matrix','u_projection_clipping_plane',
-       'u_projection_transition','u_projection_tile_mercator_coords'].forEach(function(n){
-        L[n]=gl.getUniformLocation(p,n);
-      });
-      shaderCache[sd.variantName]={p:p,L:L};
-      return shaderCache[sd.variantName];
-    },
-
-    render:function(gl,args){
-      var s=this._prog(gl,args.shaderData), pd=args.defaultProjectionData, L=s.L;
-      gl.useProgram(s.p);
-      if(L.u_projection_matrix) gl.uniformMatrix4fv(L.u_projection_matrix,false,pd.mainMatrix);
-      if(L.u_projection_fallback_matrix) gl.uniformMatrix4fv(L.u_projection_fallback_matrix,false,pd.fallbackMatrix);
-      if(L.u_projection_clipping_plane){var cp=pd.clippingPlane;gl.uniform4f(L.u_projection_clipping_plane,cp[0],cp[1],cp[2],cp[3]);}
-      if(L.u_projection_transition) gl.uniform1f(L.u_projection_transition,pd.projectionTransition);
-      if(L.u_projection_tile_mercator_coords){var tm=pd.tileMercatorCoords;gl.uniform4f(L.u_projection_tile_mercator_coords,tm[0],tm[1],tm[2],tm[3]);}
-      /* half-width in mercator units: width pixels / (256 * 2^zoom) */
-      var hw = width * 0.5 / map.transform.worldSize;
-      gl.uniform1f(L.hw, hw);
-      var stride=7*4;
-      gl.bindBuffer(gl.ARRAY_BUFFER,this._buf);
-      gl.enableVertexAttribArray(L.pos);  gl.vertexAttribPointer(L.pos, 2,gl.FLOAT,false,stride,0);
-      gl.enableVertexAttribArray(L.perp); gl.vertexAttribPointer(L.perp,2,gl.FLOAT,false,stride,16);
-      gl.enableVertexAttribArray(L.side); gl.vertexAttribPointer(L.side,1,gl.FLOAT,false,stride,24);
-      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
-      gl.drawArrays(gl.TRIANGLES,0,count);
-      gl.disableVertexAttribArray(L.pos);
-      gl.disableVertexAttribArray(L.perp);
-      gl.disableVertexAttribArray(L.side);
-    },
-
-    onRemove:function(m,gl){
-      if(this._buf){gl.deleteBuffer(this._buf);this._buf=null;}
-      Object.keys(shaderCache).forEach(function(k){gl.deleteProgram(shaderCache[k].p);});
-    }
-  });
+/* Build a SolidPolygonLayer data entry from a ring of [lon,lat] points */
+function ringToPolygonData(ring, id) {
+  if (!ring || ring.length < 3) return [];
+  return [{ id: id, polygon: ring }];
 }
 
-
-
-function addCustomFill(id, nSegs, sSegs, colorHex, opacity) {
-  if (!nSegs||!sSegs||!nSegs.length||!sSegs.length) return;
+/* Build corridor polygon data from two edge arrays for SolidPolygonLayer.
+   Uses arc-length parameterization to pair vertices correctly. */
+function corridorToPolygonData(nSegs, sSegs, id) {
+  if (!nSegs||!sSegs||!nSegs.length||!sSegs.length) return [];
   var north = densifySegment(nSegs[0]);
   var south = densifySegment(sSegs[0]);
-  if (!north||!north.length||!south||!south.length) return;
-
-  /* Parameterize both edges by cumulative great-circle arc-length (0..1).
-     Then pair vertices across edges by equal arc-length parameter,
-     producing quads that cannot cross regardless of path shape or
-     antimeridian crossings. Each quad → 2 explicit triangles. */
+  if (!north||!north.length||!south||!south.length) return [];
 
   function arcLengthParams(edge) {
-    var dists = [0];
-    for (var i = 1; i < edge.length; i++) {
-      var p0 = edge[i-1], p1 = edge[i];
-      dists.push(dists[i-1] + gcDistance(p0[0],p0[1],p1[0],p1[1]));
+    var dists=[0];
+    for(var i=1;i<edge.length;i++){
+      var p0=edge[i-1],p1=edge[i];
+      dists.push(dists[i-1]+gcDistance(p0[0],p0[1],p1[0],p1[1]));
     }
-    var total = dists[dists.length-1];
-    return dists.map(function(d){ return total > 0 ? d/total : 0; });
+    var total=dists[dists.length-1];
+    return dists.map(function(d){return total>0?d/total:0;});
   }
 
-  var np = arcLengthParams(north);
-  var sp = arcLengthParams(south);
-
-  /* Resample south to north's arc-length parameters */
-  function resampleByParam(edge, srcParams, tgtParams) {
-    var out = [], si = 0;
-    for (var i = 0; i < tgtParams.length; i++) {
-      var t = tgtParams[i];
-      while (si < srcParams.length-2 && srcParams[si+1] < t) si++;
-      var t0 = srcParams[si], t1 = srcParams[si+1] || t0;
-      var f = t1 > t0 ? (t-t0)/(t1-t0) : 0;
-      var a = edge[si], b = edge[Math.min(si+1,edge.length-1)];
+  var np=arcLengthParams(north), sp=arcLengthParams(south);
+  function resampleByParam(edge,srcP,tgtP){
+    var out=[],si=0;
+    for(var i=0;i<tgtP.length;i++){
+      var t=tgtP[i];
+      while(si<srcP.length-2&&srcP[si+1]<t)si++;
+      var t0=srcP[si],t1=srcP[si+1]||t0,f=t1>t0?(t-t0)/(t1-t0):0;
+      var a=edge[si],b=edge[Math.min(si+1,edge.length-1)];
       out.push([a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f]);
     }
     return out;
   }
 
-  var southResampled = resampleByParam(south, sp, np);
-  var n = north.length;
-
-  /* Build explicit quads in lon/lat, convert to mercator at the end */
-  var verts = [];
-  for (var i = 0; i < n-1; i++) {
-    var n0=lngLatToMerc(north[i]),       n1=lngLatToMerc(north[i+1]);
-    var s0=lngLatToMerc(southResampled[i]), s1=lngLatToMerc(southResampled[i+1]);
-    verts.push(n0[0],n0[1], s0[0],s0[1], n1[0],n1[1]);
-    verts.push(s0[0],s0[1], s1[0],s1[1], n1[0],n1[1]);
-  }
-
-  var rgb = hexToRgb(colorHex);
-  makeCustomLayer(id+'-custom', new Float32Array(verts),
-    [{start:0, count:verts.length/2}],
-    /*gl.TRIANGLES=*/4, rgb[0], rgb[1], rgb[2], opacity);
+  var southR = resampleByParam(south, sp, np);
+  /* Closed ring: north forward + south reversed */
+  var ring = north.concat(southR.slice().reverse());
+  return [{ id: id, polygon: ring }];
 }
 
-function hexToRgb(hex) {
-  return [parseInt(hex.slice(1,3),16)/255,
-          parseInt(hex.slice(3,5),16)/255,
-          parseInt(hex.slice(5,7),16)/255];
-}
 
-function addLine(id, segs, color, width, dash) {
-  /* Non-geodesic lines (bisector, terminator) through GeoJSON.
-     Terminators use unwrapped lons handled by MapLibre's antimeridian logic. */
-  var fc = {type:'FeatureCollection', features:(segs||[]).map(function(seg) {
-    return {type:'Feature', geometry:{type:'LineString', coordinates:seg}, properties:{}};
-  })};
-  map.addSource(id, {type:'geojson', data:fc});
-  var paint = {'line-color':color, 'line-width':width};
-  if (dash) paint['line-dasharray'] = dash;
-  map.addLayer({id:id+'-layer', type:'line', source:id, paint:paint});
-}
 
 
 function emptySource(id, layerType) {
@@ -2920,44 +2809,122 @@ function drawEclipsePath(ep) {
   clearMapLayers();
   var isCentral = /[TAH]/.test(ep.type||'');
   var isTotal   = /[TH]/.test(ep.type||'');
+  var hasPenN   = ep.penumbra_n && ep.penumbra_n.length && ep.penumbra_n[0];
+  var hasPenS   = ep.penumbra_s && ep.penumbra_s.length && ep.penumbra_s[0];
+  var uc        = isTotal ? [139,74,0] : [26,74,122];
+  var layers    = [];
 
-  /* Penumbra */
-  var hasPenN = ep.penumbra_n && ep.penumbra_n.length;
-  var hasPenS = ep.penumbra_s && ep.penumbra_s.length;
-  /* Penumbra fill deferred — requires bisector_first + bisector_last from
-     generator to close the polygon correctly. Boundary lines render below. */
-
-  if (hasPenN) addCustomLine('penumbra-n', ep.penumbra_n, '#2a5a8c', 1.0, 1.2);
-  if (hasPenS) addCustomLine('penumbra-s', ep.penumbra_s, '#2a5a8c', 1.0, 1.2);
-
-  /* Terminator lemniscates — custom layer, handles polar/global wrap */
-  if (ep.terminator_first && ep.terminator_first.length)
-    addCustomLine('terminator-first', ep.terminator_first, '#2a5a8c', 0.7, 1.2);
-  if (ep.terminator_last && ep.terminator_last.length)
-    addCustomLine('terminator-last', ep.terminator_last, '#2a5a8c', 0.7, 1.2);
-
-  /* Bisectors — close the penumbra boundary at sunrise/sunset ends. */
-  if (ep.bisector_first && ep.bisector_first.length)
-    addCustomLine('bisector-first', ep.bisector_first, '#2a5a8c', 0.7, 1.2);
-  if (ep.bisector_last && ep.bisector_last.length)
-    addCustomLine('bisector-last', ep.bisector_last, '#2a5a8c', 0.7, 1.2);
-
-  /* Umbra */
-  if (isCentral && ep.umbra_n && ep.umbra_s) {
-    var uc = isTotal ? '#8b4a00' : '#1a4a7a';
-    addCustomFill('umbra-fill', ep.umbra_n, ep.umbra_s, uc, 0.18);
-    addCustomLine('umbra-n', ep.umbra_n, uc, 1.0, 1.5);
-    addCustomLine('umbra-s', ep.umbra_s, uc, 1.0, 1.5);
-  } else {
-
-    emptySource('umbra-n','line');
-    emptySource('umbra-s','line');
+  /* ── Penumbra fill ──────────────────────────────────────────────── */
+  if (hasPenN && hasPenS) {
+    /* Corridor fill between penumbra_n and penumbra_s */
+    layers.push(new DeckGL.SolidPolygonLayer({
+      id: 'penumbra-corridor',
+      data: corridorToPolygonData(ep.penumbra_n, ep.penumbra_s, 'pen'),
+      wrapLongitude: true,
+      getPolygon: function(d) { return d.polygon; },
+      getFillColor: [42,90,140,25],
+      stroked: false,
+      filled: true,
+    }));
+    /* Terminator blob fills */
+    ['terminator_first','terminator_last'].forEach(function(key, ki) {
+      if (ep[key] && ep[key].length && ep[key][0]) {
+        layers.push(new DeckGL.SolidPolygonLayer({
+          id: 'pen-term-' + ki,
+          data: ringToPolygonData(wrapContinuous(ep[key][0]), 'pt'+ki),
+          getPolygon: function(d) { return d.polygon; },
+          getFillColor: [42,90,140,25],
+          stroked: false,
+          filled: true,
+          wrapLongitude: true,
+        }));
+      }
+    });
   }
 
-  /* Centreline */
-  if (isCentral && ep.centreline) addCustomLine('centreline', ep.centreline, '#cc2200', 1.0, 2.5);
+  /* ── Penumbra boundary lines ────────────────────────────────────── */
+  var penPaths = [];
+  if (hasPenN) penPaths = penPaths.concat(segsToPathData(ep.penumbra_n, 'pn'));
+  if (hasPenS) penPaths = penPaths.concat(segsToPathData(ep.penumbra_s, 'ps'));
+  if (ep.terminator_first && ep.terminator_first.length)
+    penPaths = penPaths.concat(segsToPathData(ep.terminator_first, 'tf'));
+  if (ep.terminator_last && ep.terminator_last.length)
+    penPaths = penPaths.concat(segsToPathData(ep.terminator_last, 'tl'));
+  if (ep.bisector && ep.bisector.length)
+    penPaths = penPaths.concat(segsToPathData(ep.bisector, 'bi'));
+  if (penPaths.length) {
+    layers.push(new DeckGL.PathLayer({
+      id: 'penumbra-lines',
+      data: penPaths,
+      getPath: function(d) { return d.path; },
+      getColor: [42,90,140,200],
+      getWidth: 1.5,
+      widthUnits: 'pixels',
+      widthMinPixels: 1,
+    }));
+  }
 
-  /* GE point */
+  /* ── Umbra fill ─────────────────────────────────────────────────── */
+  if (isCentral && ep.umbra_n && ep.umbra_s) {
+    layers.push(new DeckGL.SolidPolygonLayer({
+      id: 'umbra-fill',
+      data: corridorToPolygonData(ep.umbra_n, ep.umbra_s, 'umb'),
+      getPolygon: function(d) { return d.polygon; },
+      getFillColor: uc.concat([46]),
+      stroked: false,
+      filled: true,
+    }));
+    /* Umbra boundary lines */
+    var umbraPaths = segsToPathData(ep.umbra_n, 'un')
+                       .concat(segsToPathData(ep.umbra_s, 'us'));
+    layers.push(new DeckGL.PathLayer({
+      id: 'umbra-lines',
+      data: umbraPaths,
+      getPath: function(d) { return d.path; },
+      getColor: uc.concat([255]),
+      getWidth: 1.5,
+      widthUnits: 'pixels',
+      widthMinPixels: 1,
+    }));
+  }
+
+  /* ── Centreline ─────────────────────────────────────────────────── */
+  if (isCentral && ep.centreline) {
+    layers.push(new DeckGL.PathLayer({
+      id: 'centreline',
+      data: segsToPathData(ep.centreline, 'cl'),
+      getPath: function(d) { return d.path; },
+      getColor: [204,34,0,255],
+      getWidth: 2.5,
+      widthUnits: 'pixels',
+      widthMinPixels: 1,
+    }));
+  }
+
+  /* ── Umbra cap lines (connect n/s horn tips) ────────────────────── */
+  if (isCentral && ep.umbra_n && ep.umbra_s && ep.umbra_n.length && ep.umbra_s.length) {
+    var capPaths = [];
+    var unFirst = ep.umbra_n[0][0], usFirst = ep.umbra_s[0][0];
+    if (unFirst && usFirst) capPaths.push({ id:'cap0', path:[unFirst,usFirst] });
+    var unLS = ep.umbra_n[ep.umbra_n.length-1], usLS = ep.umbra_s[ep.umbra_s.length-1];
+    var unLast = unLS[unLS.length-1], usLast = usLS[usLS.length-1];
+    if (unLast && usLast) capPaths.push({ id:'cap1', path:[unLast,usLast] });
+    if (capPaths.length) {
+      layers.push(new DeckGL.PathLayer({
+        id: 'umbra-caps',
+        data: capPaths,
+        getPath: function(d) { return d.path; },
+        getColor: [204,34,0,255],
+        getWidth: 2,
+        widthUnits: 'pixels',
+        widthMinPixels: 1,
+      }));
+    }
+  }
+
+  setDeckLayers(layers);
+
+  /* ── GE point — keep as MapLibre circle ─────────────────────────── */
   if (ep.ge && ep.ge[0] != null) {
     map.addSource('ge', { type:'geojson', data:{ type:'Feature',
       geometry:{ type:'Point', coordinates:ep.ge }, properties:{} }});
@@ -2965,141 +2932,8 @@ function drawEclipsePath(ep) {
       paint:{ 'circle-radius':5, 'circle-color':'#cc2200',
               'circle-stroke-width':2, 'circle-stroke-color':'#0a0c0f' }});
   } else emptySource('ge','circle');
-
-  /* Bisector lines — connect n/s horn tips at each end of umbral path */
-  if (isCentral && ep.umbra_n && ep.umbra_s && ep.umbra_n.length && ep.umbra_s.length) {
-    var bisLines = [];
-    var unFirst = ep.umbra_n[0][0], usFirst = ep.umbra_s[0][0];
-    if (unFirst && usFirst) bisLines.push([unFirst, usFirst]);
-    var unLastSeg = ep.umbra_n[ep.umbra_n.length-1];
-    var usLastSeg = ep.umbra_s[ep.umbra_s.length-1];
-    var unLast = unLastSeg[unLastSeg.length-1], usLast = usLastSeg[usLastSeg.length-1];
-    if (unLast && usLast) bisLines.push([unLast, usLast]);
-    if (bisLines.length) {
-      map.addSource('bisector', {type:'geojson', data:{type:'FeatureCollection',
-        features: bisLines.map(function(pts){
-          return {type:'Feature', geometry:{type:'LineString',coordinates:pts}, properties:{}};
-        })}});
-      map.addLayer({id:'bisector-layer', type:'line', source:'bisector',
-        paint:{'line-color':'#cc2200','line-width':2.0,'line-opacity':1.0}});
-    } else emptySource('bisector','line');
-  } else emptySource('bisector','line');
 }
 
-function clearMapMarkers() { mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
-
-function addObserverMarker(lat, lon, sunAz) {
-  var wrap=document.createElement('div');
-  wrap.className='sun-arrow-wrap';
-  var dot=document.createElement('div');
-  dot.className='observer-dot';
-  wrap.appendChild(dot);
-  if (sunAz!==null&&sunAz!==undefined) {
-    var arrow=document.createElement('div');
-    arrow.className='sun-arrow';
-    arrow.style.transform='rotate('+(sunAz-90)+'deg)';
-    wrap.appendChild(arrow);
-  }
-  var m=new maplibregl.Marker({element:wrap,anchor:'center'})
-    .setLngLat([lon,lat]).addTo(map);
-  mapMarkers.push(m);
-}
-
-function onMapClick(lat, lon) {
-  var search=document.getElementById('search');
-  var f=parseSearch(search.value);
-  var tmp=Object.assign({},f,{coords:{lat:lat,lon:lon}});
-  search.value=filterToString(tmp);
-  onSearchChanged();
-  lookupElevationAndTz(lat,lon);
-  lookupTzOnly(lat,lon);
-
-  /* Auto-trigger location scan so the eclipse list populates */
-  if (eclipseIndex.length) {
-  
-  scanLocation();
-  }
-
-  if (selectedEntry) {
-    showMapPopupLoading(lat,lon);
-    var f2=parseSearch(search.value);
-    var alt=f2.alt!==null?f2.alt:0;
-    loadChunk(selectedEntry._chunk).then(function(chunk){
-      var rec=null;
-      for (var i=0;i<chunk.length;i++) {
-        var r=chunk[i];
-        if (r.year===selectedEntry.year&&r.month===selectedEntry.month
-         &&r.day===selectedEntry.day){rec=r;break;}
-      }
-      if (!rec) return;
-      var result=computeEclipse(rec,lat,lon,alt);
-      showMapPopup(lat,lon,result,rec);
-      clearMapMarkers();
-      addObserverMarker(lat,lon,result.visible?result.sun.az:null);
-    }).catch(function(){});
-  } else {
-    clearMapMarkers();
-    addObserverMarker(lat,lon,null);
-  }
-}
-
-function showMapPopupLoading(lat,lon) {
-  var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
-  var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
-  document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
-  document.getElementById('map-popup-grid').innerHTML=
-    '<span style="color:var(--text-dim)">Computing\u2026</span>';
-  document.getElementById('map-popup').style.display='block';
-}
-
-function showMapPopup(lat,lon,result,rec) {
-  var tz=getTzOffset();
-  var tzStr=tz>=0?'UTC+'+tz:'UTC'+tz;
-  var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
-  var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
-  document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
-  var grid=document.getElementById('map-popup-grid');
-  if (!result.visible) {
-    grid.innerHTML='<span style="color:var(--text-dim);grid-column:1/3">\uD83C\uDF11 Not visible from here</span>';
-  } else {
-    var lbl=typeName(result.type[0].toUpperCase());
-    var rows=[
-      ['Type','<span style="color:var(--gold2)">'+lbl+'</span>'],
-      ['Magnitude',result.mag.toFixed(4)],
-      ['Obscuration',result.osc.toFixed(1)+'%'],
-      ['Maximum',fmtUT(result.tMax)+' ('+tzStr+')'],
-      ['Sun alt/az',fmtAng(result.sun.alt)+' / '+fmtAng(result.sun.az)],
-    ];
-    if (result.durCentral) rows.push(['Duration',fmtDur(result.durCentral)]);
-    if (result.C1&&result.C1.ut!=null) rows.push(['C1',fmtUT(result.C1.ut)]);
-    if (result.C2&&result.C2.ut!=null) rows.push(['C2 ('+lbl+')',fmtUT(result.C2.ut)]);
-    if (result.C3&&result.C3.ut!=null) rows.push(['C3 ('+lbl+')',fmtUT(result.C3.ut)]);
-    if (result.C4&&result.C4.ut!=null) rows.push(['C4',fmtUT(result.C4.ut)]);
-    grid.innerHTML=rows.map(function(r){
-      return '<span class="map-popup-label">'+r[0]+'</span><span>'+r[1]+'</span>';
-    }).join('');
-  }
-  document.getElementById('map-popup').style.display='block';
-}
-
-/* Hook into tab switching and state changes */
-var _origSwitchTab=switchTab;
-switchTab=function(name){
-  _origSwitchTab(name);
-  if (name==='map') onMapTabActivated();
-};
-
-function syncMapIfVisible() {
-  if (activeTab==='map'&&mapReady) updateMapState();
-}
-
-/* ── (Projection toggle removed — globe-only) ───────────────────────── */
-
-/* ── Shadow ellipses along the umbral path ───────────────────────────── */
-
-/* Draw the umbra footprint ellipses at regular intervals along the path.
-   Each ellipse is the umbral corridor width at that point, oriented
-   perpendicular to the shadow's travel direction.                        */
 function drawShadowEllipses(ep) {
   if (!ep || !ep.umbra_ovals || !ep.umbra_ovals.length) return;
   var isTotal = /[TH]/.test(ep.type||'');
