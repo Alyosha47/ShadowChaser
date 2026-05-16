@@ -13,7 +13,7 @@ Outputs per eclipse:
 All features verified against Jubier / NASA reference data.
 
 Usage:
-    python3 gen_eclipse_paths.py --data-dir ./data --out-dir ./data/paths
+    python3 gen_eclipse_paths.py --data-dir ./data/besselian --out-dir ./data/paths
     python3 gen_eclipse_paths.py --year 1994
     python3 gen_eclipse_paths.py --test
 """
@@ -1220,39 +1220,74 @@ def _terminator_curves(rec, t_first, t_last, step_min=STEP_MIN, NLAT=None):
 
 
 
+def _bisector_from_lemniscate(lem_seg):
+    """Compute bisector as the longitude midpoint between the two sides
+    of a compact lemniscate blob at each latitude.
+
+    The lemniscate is a closed loop enclosing the sunrise/sunset
+    visibility region. At each latitude, the loop has two sides (east
+    and west). The midpoint of those two longitudes is the bisector —
+    this matches Jubier's 'Maximum on Horizon' construction.
+
+    Longitudes are unwrapped before computing midpoints to handle
+    antimeridian crossings correctly.
+    """
+    if not lem_seg or len(lem_seg) < 4:
+        return []
+
+    # Unwrap longitudes along the loop
+    unwrapped = [lem_seg[0][0]]
+    for i in range(1, len(lem_seg)):
+        diff = ((lem_seg[i][0] - lem_seg[i-1][0] + 180) % 360) - 180
+        unwrapped.append(unwrapped[-1] + diff)
+    pairs = list(zip(unwrapped, [p[1] for p in lem_seg]))
+
+    lats = [p[1] for p in pairs]
+    lat_min, lat_max = min(lats), max(lats)
+    if lat_max - lat_min < 0.1:
+        return []
+
+    n_steps = 200
+    step = (lat_max - lat_min) / n_steps
+    result = []
+    for k in range(n_steps + 1):
+        lat = lat_min + k * step
+        nearby = sorted([p[0] for p in pairs if abs(p[1] - lat) < step * 2])
+        if len(nearby) < 2:
+            continue
+        spread = nearby[-1] - nearby[0]
+        # Skip cusp regions (spread too small) or multi-pass latitudes (spread > 180°)
+        if spread > 180 or spread < 0.5:
+            continue
+        mid_lon = (nearby[0] + nearby[-1]) / 2
+        mid_lon_w = ((mid_lon + 180) % 360) - 180
+        result.append([round(mid_lon_w, 4), round(lat, 4)])
+    return result
+
+
 def _bisector_curves(rec, t_first, t_last, step_min=TERM_STEP_MIN,
                      term_first=None, term_last=None):
     """Maximum-eclipse-on-horizon curves.
 
-    For each time t, the smaller-|s| root of the perpendicular-to-shadow
-    line intersection with the unit circle gives the geographically valid
-    bisector point. For two-blob eclipses (both term_first and term_last
-    present), the raw sweep is split at its polar peak and each half is
-    bounded to its lemniscate's bbox.
-
-    Note: the bisector starts at ~lat 1.5° for blob-1 of some eclipses
-    (e.g. 1998). The extension to the blob's southern cusp (-33°) runs
-    through the terminator lemniscate and is handled by the UI when
-    assembling the penumbra polygon.
+    Single-blob: Bessel construction (smaller-|s| root sweep).
+    Two-blob: longitude midpoint of each lemniscate at each latitude.
 
     Returns list of segments (one per blob).
     """
     if t_first is None or t_last is None:
         return []
 
+    is_two_blob = bool(term_first) and bool(term_last)
+
+    if is_two_blob:
+        s0 = _bisector_from_lemniscate(term_first[0] if term_first else [])
+        s1 = _bisector_from_lemniscate(term_last[0]  if term_last  else [])
+        return [s for s in [s0, s1] if len(s) >= 2]
+
+    # Single-blob: Bessel sweep
     step = step_min / 60.0
 
-    def _bbox(segs):
-        if not segs: return None
-        lats = [p[1] for s in segs for p in s]
-        lons = [((p[0]+180)%360)-180 for s in segs for p in s]
-        return min(lats)-0.5, max(lats)+0.5, min(lons)-0.5, max(lons)+0.5
-
-    def _in_bbox(pt, bb):
-        if not bb: return True
-        return bb[0] <= pt[1] <= bb[1] and bb[2] <= ((pt[0]+180)%360)-180 <= bb[3]
-
-    def _sweep(t_lo, t_hi, bb=None):
+    def _sweep(t_lo, t_hi):
         pts = []
         t = t_lo
         while t <= t_hi + 1e-9:
@@ -1267,31 +1302,11 @@ def _bisector_curves(rec, t_first, t_last, step_min=TERM_STEP_MIN,
             xi = X - s*Yp; eta = Y + s*Xp
             pt = _f2g_term(xi, eta, d_r, mu, dt_s)
             if pt:
-                e = [round(pt[1], 4), round(pt[0], 4)]
-                if _in_bbox(e, bb):
-                    pts.append(e)
+                pts.append([round(pt[1], 4), round(pt[0], 4)])
             t += step
         return pts
 
-    is_two_blob = bool(term_first) and bool(term_last)
-
-    if is_two_blob:
-        raw = _sweep(t_first, t_last)
-        if not raw: return []
-        peak_i = max(range(len(raw)), key=lambda i: raw[i][1])
-        mid_split = 0.1 * len(raw) < peak_i < 0.9 * len(raw)
-        bb_f = _bbox(term_first); bb_l = _bbox(term_last)
-        t_split = t_first + peak_i * step
-        if mid_split:
-            s0 = _sweep(t_first, t_split, bb_f)
-            s1 = _sweep(t_split+step, t_last, bb_l)
-        else:
-            full = _sweep(t_first, t_last)
-            s0 = [p for p in full if _in_bbox(p, bb_f)]
-            s1 = [p for p in full if _in_bbox(p, bb_l)]
-        return [s for s in [s0, s1] if len(s) >= 2]
-    else:
-        return [_sweep(t_first, t_last)]
+    return [_sweep(t_first, t_last)]
 
 
 def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
@@ -1611,8 +1626,10 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     DP_LOOSE = 1.8e-3   # ≈ 200 m, for penumbra and terminators
     for fld in ('centreline', 'umbra_n', 'umbra_s', 'umbra_ovals'):
         result[fld] = [simplify_dp(seg, tol=DP_TIGHT) for seg in result[fld]]
-    for fld in ('penumbra_n', 'penumbra_s', 'terminator_first', 'terminator_last', 'bisector'):
+    for fld in ('penumbra_n', 'penumbra_s', 'terminator_first', 'terminator_last'):
         result[fld] = [simplify_dp(seg, tol=DP_LOOSE) for seg in result[fld]]
+    for fld in ('bisector',):
+        result[fld] = [simplify_dp(seg, tol=DP_TIGHT) for seg in result[fld]]
 
     # ── Junction indices: where penumbra endpoints meet terminator loops ──
     # Computed after DP so indices reference the final simplified curves.
@@ -1779,7 +1796,7 @@ def process_chunk(path, out_dir, step_min, pen_n):
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument('--data-dir',default='./data')
+    p.add_argument('--data-dir',default='./data/besselian')
     p.add_argument('--out-dir', default='./data/paths')
     p.add_argument('--step',    type=float,default=float(STEP_MIN))
     p.add_argument('--pen-n',   type=int,  default=PEN_N)

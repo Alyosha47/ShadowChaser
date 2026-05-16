@@ -408,12 +408,11 @@
         if (e.saros !== filter.saros) return false;
       }
 
-      /* Type */
+      /* Type — eclipse_type can be a single letter (T/A/H/P) or a subtype
+         like Tm, As, H3, Pb. Classify by the first character. */
       if (filter.types && filter.types.length) {
         var raw  = e.local_type || e.eclipse_type || '';
-        var full = raw.length === 1
-                 ? (TYPE_MAP[raw.toUpperCase()] || raw.toLowerCase())
-                 : raw.toLowerCase();
+        var full = TYPE_MAP[raw.charAt(0).toUpperCase()] || raw.toLowerCase();
         if (filter.types.indexOf(full) < 0) return false;
       }
 

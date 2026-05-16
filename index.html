@@ -213,6 +213,39 @@
       margin-bottom:  0.65rem;
     }
 
+    /* Top-level section headers — used for Global Circumstances and
+       Local Circumstances. Stronger than .section-label / .subsection-label. */
+    .top-section-header {
+      font-family:    var(--mono);
+      font-size:      0.78rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color:          var(--gold);
+      margin-bottom:  0.75rem;
+      padding-bottom: 0.5rem;
+      border-bottom:  1px solid var(--border);
+    }
+
+    /* Subsection header — used for Contact Times under Local Circumstances. */
+    .subsection-header {
+      font-family:    var(--mono);
+      font-size:      0.66rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color:          var(--text-dim);
+      margin-bottom:  0.55rem;
+    }
+
+    /* Inline coords appended to a top-section-header — normal case, smaller,
+       so the location reads at a glance without claiming its own row. */
+    .header-coords {
+      margin-left:    0.75rem;
+      font-size:      0.7rem;
+      letter-spacing: 0.04em;
+      text-transform: none;
+      color:          var(--text-dim);
+    }
+
 
     /* ── Form controls ───────────────────────────────────────────────── */
 
@@ -517,7 +550,7 @@
 
     .data-grid {
       display:       grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
       gap:           1px;
       background:    var(--border);
       border:        1px solid var(--border);
@@ -525,7 +558,7 @@
       overflow:      hidden;
       margin-bottom: 1.25rem;
     }
-    .data-cell { background: var(--bg2); padding: 0.85rem 1rem; }
+    .data-cell { background: var(--bg2); padding: 0.7rem 0.85rem; }
     .data-cell-label {
       font-family:    var(--mono);
       font-size:      0.62rem;
@@ -587,22 +620,22 @@
     .local-section {
       margin-top: 1.5rem;
     }
-    .local-header {
-      font-family:    var(--mono);
-      font-size:      0.68rem;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      color:          var(--gold-dim);
-      margin-bottom:  0.75rem;
-      padding-bottom: 0.5rem;
-      border-bottom:  1px solid var(--border);
-    }
     .no-location {
       font-family: var(--mono);
       font-size:   0.78rem;
       color:       var(--text-dim);
       font-style:  italic;
       padding:     1rem 0;
+    }
+
+    /* Empty state for the Eclipse tab — shown when nothing is selected. */
+    .eclipse-placeholder {
+      font-family: var(--mono);
+      font-size:   0.78rem;
+      color:       var(--text-dim);
+      font-style:  italic;
+      padding:     3rem 1.25rem;
+      text-align:  center;
     }
 
     /* Status message */
@@ -906,7 +939,8 @@
   <!-- ── Tab bar ─────────────────────────────────────────────────────── -->
 
   <nav class="tab-bar">
-    <button class="tab-btn active" data-tab="search">Eclipse</button>
+    <button class="tab-btn active" data-tab="search">Search</button>
+    <button class="tab-btn"        data-tab="eclipse">Eclipse</button>
     <button class="tab-btn"        data-tab="map">Map</button>
     <button class="tab-btn"        data-tab="settings">Settings</button>
   </nav>
@@ -982,12 +1016,19 @@
 
       </div><!-- /.panel -->
 
-      <!-- Inline data panel — shown when an eclipse is selected -->
+    </div><!-- #tab-search -->
+
+
+    <!-- ── Eclipse tab ─────────────────────────────────────────────── -->
+
+    <div class="tab-panel" id="tab-eclipse">
       <div id="data-panel" style="display:none">
         <div id="data-inner"></div>
       </div>
-
-    </div><!-- #tab-search -->
+      <div id="eclipse-placeholder" class="eclipse-placeholder">
+        Select an eclipse from the Search tab.
+      </div>
+    </div><!-- #tab-eclipse -->
 
 
     <!-- ── Map tab ──────────────────────────────────────────────────── -->
@@ -1183,6 +1224,7 @@ var scanCache       = {};
 var scanCancelFlag  = false;
 var currentFilter   = parseSearch('');
 var localResult     = null;   // last computeEclipse result for current location
+var _lookedUpAlt    = null;   // elevation fetched for the current coords (not in search field)
 
 
 /* ── Tab navigation ──────────────────────────────────────────────────── */
@@ -1329,7 +1371,8 @@ function updateCoordsStatus() {
   var latS = c.lat >= 0 ? c.lat.toFixed(5)+'\u00b0N' : Math.abs(c.lat).toFixed(5)+'\u00b0S';
   var lonS = c.lon >= 0 ? c.lon.toFixed(5)+'\u00b0E' : Math.abs(c.lon).toFixed(5)+'\u00b0W';
   var f    = currentFilter;
-  var alt  = f.alt !== null ? ' \u00b7 ' + f.alt + '\u2009m' : '';
+  var effAlt = f.alt !== null ? f.alt : _lookedUpAlt;
+  var alt    = effAlt !== null && effAlt !== undefined ? ' \u00b7 ' + effAlt + '\u2009m' : '';
   el.textContent = latS + '\u2002' + lonS + alt;
   el.style.color = 'var(--text-dim)';
   /* Show scan hint only if no location scan is currently active */
@@ -1488,8 +1531,27 @@ function selectEclipse(y, m, d) {
   updateHeaderSelection();
   renderList();
   pushState();
-  if (selectedEntry) computeLocal();
+  if (selectedEntry) {
+    computeLocal();
+    switchTab('eclipse');
+  } else {
+    updateEclipseTabState();
+  }
   syncMapIfVisible();
+}
+
+/* Toggle Eclipse-tab contents: show data panel iff something is selected,
+   placeholder otherwise. */
+function updateEclipseTabState() {
+  var panel       = document.getElementById('data-panel');
+  var placeholder = document.getElementById('eclipse-placeholder');
+  if (selectedEntry) {
+    panel.style.display       = '';
+    placeholder.style.display = 'none';
+  } else {
+    panel.style.display       = 'none';
+    placeholder.style.display = '';
+  }
 }
 
 function clearSelection() {
@@ -1498,7 +1560,7 @@ function clearSelection() {
   updateHeaderSelection();
   renderList();
   pushState();
-  document.getElementById('data-panel').style.display = 'none';
+  updateEclipseTabState();
   syncMapIfVisible();
 }
 
@@ -1519,37 +1581,40 @@ function updateHeaderSelection() {
 /* ── Local circumstances computation ────────────────────────────────── */
 
 function computeLocal() {
-  if (!selectedEntry) return;
+  if (!selectedEntry) return Promise.resolve(null);
   var coords = parseCoords();
-  if (!coords) { renderData(); return; }
+  if (!coords) { renderData(); return Promise.resolve(null); }
 
   var lat = coords.lat;
   var lon = coords.lon;
   var f   = parseSearch(document.getElementById('search').value);
-  var alt = f.alt !== null ? f.alt : 0;
+  var alt = f.alt !== null ? f.alt : (_lookedUpAlt || 0);
   var tz  = getTzOffset();
 
-  loadChunk(selectedEntry._chunk).then(function (chunk) {
+  return loadChunk(selectedEntry._chunk).then(function (chunk) {
     var rec = null;
     for (var i = 0; i < chunk.length; i++) {
       var r = chunk[i];
       if (r.year===selectedEntry.year && r.month===selectedEntry.month
        && r.day===selectedEntry.day) { rec=r; break; }
     }
-    if (!rec) { setStatus('Record not found in data chunk.', true); return; }
+    if (!rec) { setStatus('Record not found in data chunk.', true); return null; }
 
     try {
       localResult = computeEclipse(rec, lat, lon, alt);
       renderData(rec, tz, lat, lon);
       setStatus('', false);
       syncMapIfVisible();
+      return { rec: rec, result: localResult };
     } catch (err) {
       setStatus('Computation error: ' + err.message, true);
       console.error(err);
+      return null;
     }
   }).catch(function (err) {
     setStatus('Failed to load data: ' + err.message, true);
     console.error(err);
+    return null;
   });
 }
 
@@ -1579,7 +1644,7 @@ function scanLocation() {
   var lat = coords.lat;
   var lon = coords.lon;
   var f   = parseSearch(document.getElementById('search').value);
-  var alt = f.alt !== null ? f.alt : 0;
+  var alt = f.alt !== null ? f.alt : (_lookedUpAlt || 0);
   var cacheKey = lat.toFixed(1) + ',' + lon.toFixed(1) + ',' + Math.round(alt/100);
 
   if (scanCache[cacheKey]) {
@@ -1678,19 +1743,19 @@ function renderData(rec, _tz, _lat, _lon) {
   var tzStr = tz >= 0 ? 'UTC+' + tz : 'UTC' + tz;
 
   if (!selectedEntry) {
-    panel.style.display = 'none';
     inner.innerHTML = '';
+    updateEclipseTabState();
     return;
   }
 
-  panel.style.display = '';
+  updateEclipseTabState();
 
   var typeCode  = (selectedEntry.eclipse_type||'P')[0].toLowerCase();
   var typeLabel = typeName((selectedEntry.eclipse_type||'P')[0]);
 
   var html = ''
 
-  + '<div class="section-label">Global Circumstances</div>'
+  + '<div class="top-section-header">Global Circumstances</div>'
   + '<div class="data-grid">'
   + dataCell('Greatest eclipse (UT)', selectedEntry.td_ge || '--')
   + dataCell('GE location',           coordStr(selectedEntry.lat_dd_ge, selectedEntry.lng_dd_ge))
@@ -1705,10 +1770,25 @@ function renderData(rec, _tz, _lat, _lon) {
                   ? ': ' + selectedEntry.nSeq + '/' + selectedEntry.nSer : ''))
   + '</div>';
 
-  html += '<div class="local-section">';
-  html += '<div class="local-header">Local Circumstances</div>';
-
+  /* ── Local Circumstances ─────────────────────────────────────────
+     The header itself carries the coords/alt/tz so the readout takes
+     one line less and the location is unambiguous at a glance. */
   var coords = parseCoords();
+  var f      = parseSearch(document.getElementById('search').value);
+  var alt    = f.alt !== null ? f.alt : (_lookedUpAlt || 0);
+  var locLine = coords
+    ? (coords.lat >= 0 ? coords.lat.toFixed(4)+'\u00b0N' : Math.abs(coords.lat).toFixed(4)+'\u00b0S')
+      + '\u2002' + (coords.lon >= 0 ? coords.lon.toFixed(4)+'\u00b0E' : Math.abs(coords.lon).toFixed(4)+'\u00b0W')
+      + (alt > 0 ? '\u2002\u00b7\u2002' + alt + '\u2009m' : '')
+      + '\u2002\u00b7\u2002' + tzStr
+    : '';
+
+  html += '<div class="local-section">';
+  html += '<div class="top-section-header">'
+        +   'Local Circumstances'
+        +   (locLine ? '<span class="header-coords">@ ' + locLine + '</span>' : '')
+        + '</div>';
+
   if (!coords) {
     html += '<div class="no-location">Enter coordinates in the search field or tap \u201cUse my location\u201d.</div>';
   } else if (!localResult) {
@@ -1719,20 +1799,11 @@ function renderData(rec, _tz, _lat, _lon) {
           + 'Not visible from this location.'
           + '</div>';
   } else {
-    var res    = localResult;
-    var latStr = coords.lat >= 0 ? coords.lat.toFixed(5)+'\u00b0N' : Math.abs(coords.lat).toFixed(5)+'\u00b0S';
-    var lonStr = coords.lon >= 0 ? coords.lon.toFixed(5)+'\u00b0E' : Math.abs(coords.lon).toFixed(5)+'\u00b0W';
-    var f      = parseSearch(document.getElementById('search').value);
-    var alt    = f.alt !== null ? f.alt : 0;
-    var lbl    = typeName(res.type[0].toUpperCase());
+    var res = localResult;
+    var lbl = typeName(res.type[0].toUpperCase());
 
     html +=
-      '<div class="result-sub" style="margin-bottom:.85rem">'
-    +   latStr + ' &nbsp; ' + lonStr
-    +   (alt > 0 ? ' &nbsp;&middot;&nbsp; ' + alt + '\u2009m' : '')
-    +   ' &nbsp;&middot;&nbsp; ' + tzStr
-    + '</div>'
-    + '<div class="data-grid">'
+      '<div class="data-grid">'
     + dataCell('Magnitude',           res.mag.toFixed(4), true)
     + dataCell('Obscuration',         res.osc.toFixed(1) + '%', true)
     + dataCell('Sun altitude at max', fmtAng(res.sun.alt))
@@ -1741,7 +1812,7 @@ function renderData(rec, _tz, _lat, _lon) {
     + (res.durPartial ? dataCell('Partial duration', fmtDur(res.durPartial)) : '')
     + '</div>'
 
-    + '<details class="contacts-details"><summary class="section-label" style="margin-bottom:.65rem;cursor:pointer;list-style:none">Contact Times &#x25BE;</summary>'
+    + '<details class="contacts-details" open><summary class="subsection-header" style="cursor:pointer;list-style:none">Contact Times &#x25BE;</summary>'
     + '<table class="contacts-table"><thead><tr>'
     + '<th>Event</th><th>UT</th><th>' + tzStr + '</th><th>Sun alt</th><th>Sun az</th>'
     + '</tr></thead><tbody>'
@@ -1805,6 +1876,7 @@ function lookupElevationAndTz(lat, lon) {
   var key = lat.toFixed(3) + ',' + lon.toFixed(3);
   if (key === _lastLookupCoords) return;
   _lastLookupCoords = key;
+  _lookedUpAlt = null;   // clear stale altitude from previous location
 
   /* Timezone — tz_lookup.js (offline, polygon-based, single bundled file) */
   if (typeof tzlookup === 'function') {
@@ -1815,19 +1887,16 @@ function lookupElevationAndTz(lat, lon) {
     }
   }
 
-  /* Elevation — Open-Elevation API (online only, silently fails offline) */
+  /* Elevation — Open-Elevation API (online only, silently fails offline).
+     Stored on _lookedUpAlt and used as a fallback by local-circumstance
+     calculations. Not written to the search string. */
   fetch('https://api.open-elevation.com/api/v1/lookup?locations=' + lat + ',' + lon)
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
       if (!d || !d.results || !d.results[0]) return;
       var elev = Math.round(d.results[0].elevation);
       if (elev <= 0) return;
-      var search = document.getElementById('search');
-      var f = parseSearch(search.value);
-      if (f.alt === elev) return;
-      var tmp = Object.assign({}, f, { alt: elev });
-      search.value = filterToString(tmp);
-      currentFilter = parseSearch(search.value);
+      _lookedUpAlt = elev;
       updateCoordsStatus();
       if (selectedEntry) computeLocal();
     })
@@ -2404,137 +2473,31 @@ function addObserverMarker(lat, lon, sunAz) {
 }
 
 function onMapClick(lat, lon) {
-  var search=document.getElementById('search');
-  var f=parseSearch(search.value);
-  var tmp=Object.assign({},f,{coords:{lat:lat,lon:lon}});
-  search.value=filterToString(tmp);
+  var search = document.getElementById('search');
+  var f      = parseSearch(search.value);
+  search.value = filterToString(Object.assign({}, f, { coords:{lat:lat,lon:lon} }));
   onSearchChanged();
-  lookupElevationAndTz(lat,lon);
-  lookupTzOnly(lat,lon);
+  lookupElevationAndTz(lat, lon);
+  lookupTzOnly(lat, lon);
 
   /* Auto-trigger location scan so the eclipse list populates */
-  if (eclipseIndex.length) {
-  
-  scanLocation();
-  }
+  if (eclipseIndex.length) scanLocation();
 
-  if (selectedEntry) {
-    showMapPopupLoading(lat,lon);
-    var f2=parseSearch(search.value);
-    var alt=f2.alt!==null?f2.alt:0;
-    loadChunk(selectedEntry._chunk).then(function(chunk){
-      var rec=null;
-      for (var i=0;i<chunk.length;i++) {
-        var r=chunk[i];
-        if (r.year===selectedEntry.year&&r.month===selectedEntry.month
-         &&r.day===selectedEntry.day){rec=r;break;}
-      }
-      if (!rec) return;
-      var result=computeEclipse(rec,lat,lon,alt);
-      showMapPopup(lat,lon,result,rec);
-      clearMapMarkers();
-      addObserverMarker(lat,lon,result.visible?result.sun.az:null);
-    }).catch(function(){});
-  } else {
+  if (!selectedEntry) {
     clearMapMarkers();
-    addObserverMarker(lat,lon,null);
-  }
-}
-
-function showMapPopupLoading(lat,lon) {
-  var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
-  var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
-  document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
-  document.getElementById('map-popup-grid').innerHTML=
-    '<span style="color:var(--text-dim)">Computing\u2026</span>';
-  document.getElementById('map-popup').style.display='block';
-}
-
-function showMapPopup(lat,lon,result,rec) {
-  var tz=getTzOffset();
-  var tzStr=tz>=0?'UTC+'+tz:'UTC'+tz;
-  var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
-  var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
-  document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
-  var grid=document.getElementById('map-popup-grid');
-  if (!result.visible) {
-    grid.innerHTML='<span style="color:var(--text-dim);grid-column:1/3">\uD83C\uDF11 Not visible from here</span>';
-  } else {
-    var lbl=typeName(result.type[0].toUpperCase());
-    var rows=[
-      ['Type','<span style="color:var(--gold2)">'+lbl+'</span>'],
-      ['Magnitude',result.mag.toFixed(4)],
-      ['Obscuration',result.osc.toFixed(1)+'%'],
-      ['Maximum',fmtUT(result.tMax)+' ('+tzStr+')'],
-      ['Sun alt/az',fmtAng(result.sun.alt)+' / '+fmtAng(result.sun.az)],
-    ];
-    if (result.durCentral) rows.push(['Duration',fmtDur(result.durCentral)]);
-    if (result.C1&&result.C1.ut!=null) rows.push(['C1',fmtUT(result.C1.ut)]);
-    if (result.C2&&result.C2.ut!=null) rows.push(['C2 ('+lbl+')',fmtUT(result.C2.ut)]);
-    if (result.C3&&result.C3.ut!=null) rows.push(['C3 ('+lbl+')',fmtUT(result.C3.ut)]);
-    if (result.C4&&result.C4.ut!=null) rows.push(['C4',fmtUT(result.C4.ut)]);
-    grid.innerHTML=rows.map(function(r){
-      return '<span class="map-popup-label">'+r[0]+'</span><span>'+r[1]+'</span>';
-    }).join('');
-  }
-  document.getElementById('map-popup').style.display='block';
-}
-
-function clearMapMarkers() { mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
-
-function addObserverMarker(lat, lon, sunAz) {
-  var wrap=document.createElement('div');
-  wrap.className='sun-arrow-wrap';
-  var dot=document.createElement('div');
-  dot.className='observer-dot';
-  wrap.appendChild(dot);
-  if (sunAz!==null&&sunAz!==undefined) {
-    var arrow=document.createElement('div');
-    arrow.className='sun-arrow';
-    arrow.style.transform='rotate('+(sunAz-90)+'deg)';
-    wrap.appendChild(arrow);
-  }
-  var m=new maplibregl.Marker({element:wrap,anchor:'center'})
-    .setLngLat([lon,lat]).addTo(map);
-  mapMarkers.push(m);
-}
-
-function onMapClick(lat, lon) {
-  var search=document.getElementById('search');
-  var f=parseSearch(search.value);
-  var tmp=Object.assign({},f,{coords:{lat:lat,lon:lon}});
-  search.value=filterToString(tmp);
-  onSearchChanged();
-  lookupElevationAndTz(lat,lon);
-  lookupTzOnly(lat,lon);
-
-  /* Auto-trigger location scan so the eclipse list populates */
-  if (eclipseIndex.length) {
-  
-  scanLocation();
+    addObserverMarker(lat, lon, null);
+    return;
   }
 
-  if (selectedEntry) {
-    showMapPopupLoading(lat,lon);
-    var f2=parseSearch(search.value);
-    var alt=f2.alt!==null?f2.alt:0;
-    loadChunk(selectedEntry._chunk).then(function(chunk){
-      var rec=null;
-      for (var i=0;i<chunk.length;i++) {
-        var r=chunk[i];
-        if (r.year===selectedEntry.year&&r.month===selectedEntry.month
-         &&r.day===selectedEntry.day){rec=r;break;}
-      }
-      if (!rec) return;
-      var result=computeEclipse(rec,lat,lon,alt);
-      showMapPopup(lat,lon,result,rec);
-      clearMapMarkers();
-      addObserverMarker(lat,lon,result.visible?result.sun.az:null);
-    }).catch(function(){});
-  } else {
+  /* Single computation via computeLocal — it sets localResult, renders the
+     data panel, and we then feed the same result into the map popup. */
+  showMapPopupLoading(lat, lon);
+  computeLocal().then(function (out) {
+    if (!out) return;
+    showMapPopup(lat, lon, out.result, out.rec);
     clearMapMarkers();
-    addObserverMarker(lat,lon,null);
-  }
+    addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
+  });
 }
 
 function showMapPopupLoading(lat,lon) {
@@ -2809,84 +2772,20 @@ function drawEclipsePath(ep) {
   clearMapLayers();
   var isCentral = /[TAH]/.test(ep.type||'');
   var isTotal   = /[TH]/.test(ep.type||'');
-  var hasPenN   = ep.penumbra_n && ep.penumbra_n.length && ep.penumbra_n[0];
-  var hasPenS   = ep.penumbra_s && ep.penumbra_s.length && ep.penumbra_s[0];
   var uc        = isTotal ? [139,74,0] : [26,74,122];
   var layers    = [];
 
-  /* ── Penumbra fill — canvas raster overlay ──────────────────────── */
-  if (hasPenN && hasPenS &&
-      ep.terminator_first && ep.terminator_first.length &&
-      ep.terminator_last  && ep.terminator_last.length &&
-      ep.penumbra_n[0] && ep.penumbra_s[0] &&
-      ep.terminator_last_n_idx != null && ep.terminator_last_s_idx != null &&
-      ep.terminator_first_s_idx != null && ep.terminator_first_n_idx != null) {
-
-    function penArc(loop, fromIdx, toIdx, longer) {
-      var n=loop.length, fwd=(toIdx-fromIdx+n)%n;
-      var goFwd=longer?(fwd>=n/2):(fwd<n/2);
-      var out=[],i=fromIdx;
-      if(goFwd){while(i!==toIdx){out.push(loop[i]);i=(i+1)%n;}}
-      else{while(i!==toIdx){out.push(loop[i]);i=(i-1+n)%n;}}
-      out.push(loop[toIdx]); return out;
-    }
-
-    var tlArc=penArc(ep.terminator_last[0], ep.terminator_last_n_idx,  ep.terminator_last_s_idx,  true);
-    var tfArc=penArc(ep.terminator_first[0],ep.terminator_first_s_idx, ep.terminator_first_n_idx, true);
-
-    /* Assemble ring in continuous unwrapped coordinates */
-    function shiftSeg(seg, prevLon) {
-      var dlon=Math.round((prevLon-seg[0][0])/360)*360;
-      return dlon===0 ? seg : seg.map(function(p){return[p[0]+dlon,p[1]];});
-    }
-    var pn = ep.penumbra_n[0];
-    var tl = shiftSeg(tlArc, pn[pn.length-1][0]);
-    var ps = shiftSeg(ep.penumbra_s[0].slice().reverse(), tl[tl.length-1][0]);
-    var tf = shiftSeg(tfArc, ps[ps.length-1][0]);
-    var ring = pn.concat(tl).concat(ps).concat(tf);
-
-    /* Rasterize on equirectangular canvas.
-       Draw the ring three times (offsets 0, -360, +360) to cover
-       the antimeridian correctly regardless of which side the ring
-       falls on after unwrapping. Canvas clipping handles the rest. */
-    var CW=2048, CH=1024;
-    var cv=document.createElement('canvas'); cv.width=CW; cv.height=CH;
-    var ctx=cv.getContext('2d');
-    ctx.fillStyle='rgba(42,90,140,0.12)';
-
-    [-360,0,360].forEach(function(offset) {
-      ctx.beginPath();
-      var p0=ring[0];
-      ctx.moveTo((p0[0]+offset+180)/360*CW, (90-p0[1])/180*CH);
-      for(var i=1;i<ring.length;i++){
-        var p=ring[i];
-        ctx.lineTo((p[0]+offset+180)/360*CW, (90-p[1])/180*CH);
-      }
-      ctx.closePath();
-      ctx.fill();
-    });
-
-    var imgId='penumbra-raster';
-    if(map.getLayer(imgId+'-layer')) map.removeLayer(imgId+'-layer');
-    if(map.getSource(imgId)) map.removeSource(imgId);
-    map.addSource(imgId,{type:'image', url:cv.toDataURL(),
-      coordinates:[[-180,85.051129],[180,85.051129],[180,-85.051129],[-180,-85.051129]]});
-    map.addLayer({id:imgId+'-layer',type:'raster',source:imgId,
-      paint:{'raster-opacity':1.0,'raster-fade-duration':0}});
-    MAP_SOURCES.push(imgId);
-    MAP_LAYER_IDS.push(imgId+'-layer');
-  }
-
-    /* ── Penumbra boundary lines ────────────────────────────────────── */
-  var penPaths = [];
-  if (hasPenN) penPaths = penPaths.concat(segsToPathData(ep.penumbra_n, 'pn'));
-  if (hasPenS) penPaths = penPaths.concat(segsToPathData(ep.penumbra_s, 'ps'));
-  if (ep.terminator_first && ep.terminator_first.length)
-    penPaths = penPaths.concat(segsToPathData(ep.terminator_first, 'tf'));
-  if (ep.terminator_last && ep.terminator_last.length)
-    penPaths = penPaths.concat(segsToPathData(ep.terminator_last, 'tl'));
-  if (ep.bisector && ep.bisector.length)
-    penPaths = penPaths.concat(segsToPathData(ep.bisector, 'bi'));
+  /* ── Penumbra boundary lines ───────────────────────────────────────
+     Penumbra limits, terminator lemniscates, and bisector — all drawn
+     as the same style of thin blue line. No fill: the closed-ring
+     assembly across penumbra ± terminator joins is not always
+     well-defined (polar shadows have no closed ring at all), so we
+     omit it entirely and let the outlines speak for themselves. */
+  var penPaths = ['penumbra_n','penumbra_s','terminator_first','terminator_last','bisector']
+    .reduce(function(acc, key) {
+      var segs = ep[key];
+      return segs && segs.length ? acc.concat(segsToPathData(segs, key)) : acc;
+    }, []);
   if (penPaths.length) {
     layers.push(new DeckGL.PathLayer({
       id: 'penumbra-lines',
