@@ -1100,7 +1100,7 @@
 /* ── Configuration ───────────────────────────────────────────────────── */
 
 var DATA_BASE = './data';
-var BUILD     = '2026-05-15k';
+var BUILD     = '2026-05-15l';
 
 
 /* ── Formatting utilities ────────────────────────────────────────────── */
@@ -2814,7 +2814,68 @@ function drawEclipsePath(ep) {
   var uc        = isTotal ? [139,74,0] : [26,74,122];
   var layers    = [];
 
-  /* Penumbra fill: deferred pending correct spherical renderer */
+  /* ── Penumbra fill — canvas raster overlay ──────────────────────── */
+  if (hasPenN && hasPenS &&
+      ep.terminator_first && ep.terminator_first.length &&
+      ep.terminator_last  && ep.terminator_last.length &&
+      ep.penumbra_n[0] && ep.penumbra_s[0] &&
+      ep.terminator_last_n_idx != null && ep.terminator_last_s_idx != null &&
+      ep.terminator_first_s_idx != null && ep.terminator_first_n_idx != null) {
+
+    function penArc(loop, fromIdx, toIdx, longer) {
+      var n=loop.length, fwd=(toIdx-fromIdx+n)%n;
+      var goFwd=longer?(fwd>=n/2):(fwd<n/2);
+      var out=[],i=fromIdx;
+      if(goFwd){while(i!==toIdx){out.push(loop[i]);i=(i+1)%n;}}
+      else{while(i!==toIdx){out.push(loop[i]);i=(i-1+n)%n;}}
+      out.push(loop[toIdx]); return out;
+    }
+
+    var tlArc=penArc(ep.terminator_last[0], ep.terminator_last_n_idx,  ep.terminator_last_s_idx,  true);
+    var tfArc=penArc(ep.terminator_first[0],ep.terminator_first_s_idx, ep.terminator_first_n_idx, true);
+
+    /* Assemble ring in continuous unwrapped coordinates */
+    function shiftSeg(seg, prevLon) {
+      var dlon=Math.round((prevLon-seg[0][0])/360)*360;
+      return dlon===0 ? seg : seg.map(function(p){return[p[0]+dlon,p[1]];});
+    }
+    var pn = ep.penumbra_n[0];
+    var tl = shiftSeg(tlArc, pn[pn.length-1][0]);
+    var ps = shiftSeg(ep.penumbra_s[0].slice().reverse(), tl[tl.length-1][0]);
+    var tf = shiftSeg(tfArc, ps[ps.length-1][0]);
+    var ring = pn.concat(tl).concat(ps).concat(tf);
+
+    /* Rasterize on equirectangular canvas.
+       Draw the ring three times (offsets 0, -360, +360) to cover
+       the antimeridian correctly regardless of which side the ring
+       falls on after unwrapping. Canvas clipping handles the rest. */
+    var CW=2048, CH=1024;
+    var cv=document.createElement('canvas'); cv.width=CW; cv.height=CH;
+    var ctx=cv.getContext('2d');
+    ctx.fillStyle='rgba(42,90,140,0.12)';
+
+    [-360,0,360].forEach(function(offset) {
+      ctx.beginPath();
+      var p0=ring[0];
+      ctx.moveTo((p0[0]+offset+180)/360*CW, (90-p0[1])/180*CH);
+      for(var i=1;i<ring.length;i++){
+        var p=ring[i];
+        ctx.lineTo((p[0]+offset+180)/360*CW, (90-p[1])/180*CH);
+      }
+      ctx.closePath();
+      ctx.fill();
+    });
+
+    var imgId='penumbra-raster';
+    if(map.getLayer(imgId+'-layer')) map.removeLayer(imgId+'-layer');
+    if(map.getSource(imgId)) map.removeSource(imgId);
+    map.addSource(imgId,{type:'image', url:cv.toDataURL(),
+      coordinates:[[-180,85.051129],[180,85.051129],[180,-85.051129],[-180,-85.051129]]});
+    map.addLayer({id:imgId+'-layer',type:'raster',source:imgId,
+      paint:{'raster-opacity':1.0,'raster-fade-duration':0}});
+    MAP_SOURCES.push(imgId);
+    MAP_LAYER_IDS.push(imgId+'-layer');
+  }
 
     /* ── Penumbra boundary lines ────────────────────────────────────── */
   var penPaths = [];
