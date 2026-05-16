@@ -237,13 +237,22 @@
     }
 
     /* Inline coords appended to a top-section-header — normal case, smaller,
-       so the location reads at a glance without claiming its own row. */
+       so the location reads at a glance without claiming its own row.
+       On narrow screens it wraps to its own line below the heading. */
     .header-coords {
       margin-left:    0.75rem;
       font-size:      0.7rem;
       letter-spacing: 0.04em;
       text-transform: none;
       color:          var(--text-dim);
+    }
+
+    @media (max-width: 480px) {
+      .header-coords {
+        display:     block;
+        margin-left: 0;
+        margin-top:  0.2rem;
+      }
     }
 
 
@@ -368,13 +377,14 @@
       font-family:    var(--mono);
       font-size:      0.68rem;
       letter-spacing: 0.06em;
-      padding:        0.2rem 0.65rem;
+      padding:        0.35rem 0.75rem;  /* taller for touch */
       border-radius:  20px;
       border:         1px solid var(--border2);
       background:     transparent;
       color:          var(--text-dim);
       cursor:         pointer;
       transition:     all 0.15s;
+      min-height:     2rem;             /* ~32px minimum touch target */
     }
     .pill:hover  { border-color: var(--gold-dim); color: var(--text); }
     .pill.active { background: rgba(200,169,110,0.12); border-color: var(--gold-dim); color: var(--gold); }
@@ -652,15 +662,6 @@
     /* ── Settings tab ────────────────────────────────────────────────── */
 
     .settings-section { margin-bottom: 2rem; }
-    .settings-section h2 {
-      font-family:    var(--serif);
-      font-size:      1.1rem;
-      font-weight:    300;
-      color:          var(--gold2);
-      margin-bottom:  0.75rem;
-      padding-bottom: 0.4rem;
-      border-bottom:  1px solid var(--border);
-    }
     .settings-row {
       display:     flex;
       align-items: center;
@@ -796,37 +797,6 @@
     }
     .maplibregl-ctrl-attrib a { color: var(--text-dim) !important; }
 
-    /* Floating map overlay — eclipse info + controls */
-    .map-overlay {
-      position:      absolute;
-      top:           0.75rem;
-      right:         0.75rem;
-      z-index:       10;
-      background:    rgba(10,12,15,0.88);
-      border:        1px solid var(--border2);
-      border-radius: var(--radius);
-      padding:       0.6rem 0.85rem;
-      font-family:   var(--mono);
-      font-size:     0.72rem;
-      color:         var(--text-dim);
-      width:         max-content;
-      max-width:     min(220px, calc(100vw - 1.5rem));
-      backdrop-filter: blur(4px);
-      pointer-events: auto;
-      line-height:   1.5;
-    }
-    .map-overlay-title {
-      color:         var(--gold2);
-      font-size:     0.78rem;
-      margin-bottom: 0.2rem;
-    }
-    .map-overlay-hint {
-      font-size:  0.65rem;
-      color:      var(--text-dim);
-      margin-top: 0.35rem;
-      font-style: italic;
-    }
-
     /* Click-result popup */
     .map-popup {
       position:      absolute;
@@ -914,7 +884,14 @@
       .app-subtitle { display: none; }
       .header-selection .header-eclipse-sub { display: none; }
       .tab-btn      { font-size: 0.65rem; letter-spacing: 0.06em; }
-      .tab-panel    { padding: 1rem 1rem 2rem; }
+      .tab-panel    { padding: 0.75rem 0.75rem 2rem; }
+
+      /* Tighter data cells on phone so more fit per row */
+      .data-cell { padding: 0.55rem 0.65rem; }
+      .data-cell-value.large { font-size: 1rem; }
+
+      /* Map locate button — slightly larger tap area on phone */
+      #btn-locate { font-size: 1.2rem; padding: 0.5rem 0.8rem; }
     }
 
   </style>
@@ -968,8 +945,7 @@
         <div class="search-hint">
           <strong>today+</strong> · year · month · day · <strong>saros 126</strong> or <strong>s126</strong> ·
           type · <strong>&gt;50%</strong> obscuration ·
-          <strong>100m</strong> or <strong>328ft</strong> altitude ·
-          <strong>(lat, lon)</strong> — press Enter or Scan to search by location
+          <strong>(lat, lon)</strong> coordinates
         </div>
 
         <!-- Type pills + today+ + locate + scan -->
@@ -984,13 +960,9 @@
             <span class="partial-min-label" id="partial-min-label">&gt;70%</span>
           </div>
           <button class="pill pill-loc" id="pill-loc" style="display:none">&times;&nbsp;Location filter</button>
-          <button class="btn btn-ghost" id="btn-locate" title="Use my location" style="margin-left:auto;padding:0.2rem 0.6rem">&#x1F4CD;</button>
-          <button class="btn btn-primary" id="btn-scan" style="padding:0.2rem 0.8rem">&#x1F50D;&nbsp;Scan</button>
         </div>
 
-        <!-- Location status (shown when coords are in search field) -->
         <div id="coords-status" style="font-family:var(--mono);font-size:0.68rem;color:var(--text-dim);margin-bottom:0.2rem;min-height:1rem"></div>
-        <div id="scan-hint" style="display:none;font-family:var(--mono);font-size:0.65rem;color:var(--gold-dim);margin-bottom:0.4rem">Press Enter or tap Scan to search eclipses at this location</div>
 
         <!-- Scan progress (hidden unless scanning) -->
         <div class="scan-bar" id="scan-bar" style="display:none">
@@ -1034,9 +1006,16 @@
     <!-- ── Map tab ──────────────────────────────────────────────────── -->
 
     <div class="tab-panel" id="tab-map">
-
-      <!-- MapLibre map container -->
       <div id="map"></div>
+
+      <!-- Locate button — top right of map -->
+      <button id="btn-locate" title="Use my location"
+              style="position:absolute;top:0.6rem;right:0.6rem;z-index:200;
+                     background:rgba(10,15,32,0.88);border:1px solid var(--border2);
+                     border-radius:var(--radius);padding:0.35rem 0.65rem;
+                     font-size:1rem;cursor:pointer;backdrop-filter:blur(4px)">📍</button>
+
+      <!-- Brightness control — bottom right -->
       <div style="position:absolute;bottom:32px;right:10px;z-index:200;background:rgba(10,15,32,0.80);border-radius:6px;padding:5px 10px;display:flex;align-items:center;gap:8px;font-size:11px;color:#8ca0b5;pointer-events:auto;">
         <span title="Map brightness">☀</span>
         <input type="range" id="brightness-slider" min="20" max="100" value="100"
@@ -1045,11 +1024,7 @@
       </div>
 
       <!-- Floating overlay: shows eclipse name or "click to set location" -->
-      <div class="map-overlay" id="map-overlay">
-        <div class="map-overlay-title" id="map-overlay-title">ShadowChaser</div>
-        <div id="map-overlay-body" style="color:var(--text-dim)">Select an eclipse to see its path</div>
-        <div class="map-overlay-hint" id="map-overlay-hint">Click map to set observer location</div>
-      </div>
+        <div id="map-status" style="position:absolute;bottom:2.5rem;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);pointer-events:none;background:var(--bg1);padding:0.25rem 0.75rem;border-radius:99px;opacity:0.85;display:none"></div>
 
       <!-- Click-result popup -->
       <div class="map-popup" id="map-popup">
@@ -1066,7 +1041,7 @@
     <div class="tab-panel" id="tab-settings">
 
       <div class="settings-section">
-        <h2>Time Zone</h2>
+        <div class="top-section-header">Time Zone</div>
         <div class="settings-row">
           <label for="tz">Time zone</label>
           <select id="tz" style="max-width:18rem"></select>
@@ -1077,14 +1052,14 @@
       </div>
 
       <div class="settings-section">
-        <h2>Accessibility</h2>
+        <div class="top-section-header">Accessibility</div>
         <div class="about-text">
           <p style="color:var(--text-dim);font-style:italic">Font size, high contrast, and reduced motion options coming soon.</p>
         </div>
       </div>
 
       <div class="settings-section">
-        <h2>Search Syntax</h2>
+        <div class="top-section-header">Search Syntax</div>
         <div class="about-text">
           <p>The search field accepts any combination of the following, in any order:</p>
         </div>
@@ -1096,9 +1071,8 @@
             <tr><td>Month</td><td>aug &nbsp; august &nbsp; Nov</td><td>3-letter or full name</td></tr>
             <tr><td>Day</td><td>28</td><td>Only meaningful with a month</td></tr>
             <tr><td>Saros</td><td>saros 126 &nbsp; s126</td><td>Requires "saros" or "s" prefix</td></tr>
-            <tr><td>Type</td><td>total &nbsp; annular &nbsp; hybrid &nbsp; partial</td><td>Multiple allowed</td></tr>
+            <tr><td>Type</td><td>total &nbsp; annular &nbsp; hybrid &nbsp; partial</td><td>Multiple allowed; prefix (to, an, hy, pa) works while typing</td></tr>
             <tr><td>Obscuration</td><td>&gt;80 &nbsp; 50+ &nbsp; &lt;30 &nbsp; 95-</td><td>With or without %</td></tr>
-            <tr><td>Altitude</td><td>100m &nbsp; 4051m &nbsp; 328ft</td><td>Feet auto-converted; default 0m</td></tr>
             <tr><td>Coordinates</td>
               <td>
                 (44.858, 0.082)<br>
@@ -1108,14 +1082,14 @@
                 (51°30.44'N, 0°7.67'W)<br>
                 (51 30 26 N, 0 07 40 W)
               </td>
-              <td>Press Enter or Scan to search by location. Timezone and altitude auto-filled when online.</td>
+              <td>Tap the map or use the 📍 button. Timezone and elevation are auto-filled when online.</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <div class="settings-section">
-        <h2>About</h2>
+        <div class="top-section-header">About</div>
         <div class="about-text">
           <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. But although there are many eclipse-adventure-planning tools out there, we still missed certain features. Search-by-location, for example, accurate local time zone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We&rsquo;ve tried to cover all the bases in one convenient package. If you find any bugs, please let us know &mdash; and don&rsquo;t stare at the sun!</p>
           <p>Eclipse circumstances are calculated using the Besselian element method as described in Jean Meeus, <em>Astronomical Algorithms</em> (Willmann-Bell, 2nd ed. 1998), Chapter 54, and the NASA <em>Five Millennium Canon of Solar Eclipses</em> (Espenak &amp; Meeus). No lunar limb correction is applied.</p>
@@ -1346,6 +1320,8 @@ function parseCoords() {
 
 /* ── Search and filter ───────────────────────────────────────────────── */
 
+var _scanDebounceTimer = null;
+
 function onSearchChanged() {
   var raw = document.getElementById('search').value;
   currentFilter = parseSearch(raw);
@@ -1353,30 +1329,32 @@ function onSearchChanged() {
   updateCoordsStatus();
   renderList();
   pushState();
-  /* Recompute local circumstances if coords changed and eclipse selected */
+
   if (selectedEntry && currentFilter.coords) computeLocal();
-  else if (selectedEntry && !currentFilter.coords) renderData();
+  else if (selectedEntry) { localResult = null; renderData(); }  /* coords cleared — reset local circs */
+
   syncMapIfVisible();
+
+  /* Auto-scan: debounce 800ms after typing stops, then scan if coords present */
+  clearTimeout(_scanDebounceTimer);
+  if (currentFilter.coords && eclipseIndex.length) {
+    _scanDebounceTimer = setTimeout(function () {
+      lookupElevationAndTz(currentFilter.coords.lat, currentFilter.coords.lon);
+      scanLocation();
+    }, 800);
+  }
 }
 
 function updateCoordsStatus() {
-  var el   = document.getElementById('coords-status');
-  var hint = document.getElementById('scan-hint');
-  var c    = currentFilter.coords;
-  if (!c) {
-    el.textContent = '';
-    hint.style.display = 'none';
-    return;
-  }
-  var latS = c.lat >= 0 ? c.lat.toFixed(5)+'\u00b0N' : Math.abs(c.lat).toFixed(5)+'\u00b0S';
-  var lonS = c.lon >= 0 ? c.lon.toFixed(5)+'\u00b0E' : Math.abs(c.lon).toFixed(5)+'\u00b0W';
-  var f    = currentFilter;
-  var effAlt = f.alt !== null ? f.alt : _lookedUpAlt;
-  var alt    = effAlt !== null && effAlt !== undefined ? ' \u00b7 ' + effAlt + '\u2009m' : '';
+  var el = document.getElementById('coords-status');
+  var c  = currentFilter.coords;
+  if (!c) { el.textContent = ''; return; }
+  var latS   = c.lat >= 0 ? c.lat.toFixed(5)+'\u00b0N' : Math.abs(c.lat).toFixed(5)+'\u00b0S';
+  var lonS   = c.lon >= 0 ? c.lon.toFixed(5)+'\u00b0E' : Math.abs(c.lon).toFixed(5)+'\u00b0W';
+  var effAlt = _lookedUpAlt;
+  var alt    = effAlt ? ' \u00b7 ' + effAlt + '\u2009m' : '';
   el.textContent = latS + '\u2002' + lonS + alt;
   el.style.color = 'var(--text-dim)';
-  /* Show scan hint only if no location scan is currently active */
-  hint.style.display = locationResults !== null ? 'none' : '';
 }
 
 function updatePillStates() {
@@ -1446,11 +1424,9 @@ function toggleTypePill(t) {
 function renderList() {
   var list = document.getElementById('eclipse-list');
 
-  /* Option A: coords in search field but no scan yet — prompt instead of ambiguous list */
+  /* Coords set but scan not yet complete — show neutral waiting state */
   if (currentFilter.coords && locationResults === null) {
-    list.innerHTML = '<div class="list-status" style="color:var(--gold-dim)">'
-      + 'Press Enter or tap Scan to find eclipses visible from this location'
-      + '</div>';
+    list.innerHTML = '<div class="list-status" style="color:var(--text-dim)">Finding eclipses at this location\u2026</div>';
     return;
   }
 
@@ -1588,7 +1564,7 @@ function computeLocal() {
   var lat = coords.lat;
   var lon = coords.lon;
   var f   = parseSearch(document.getElementById('search').value);
-  var alt = f.alt !== null ? f.alt : (_lookedUpAlt || 0);
+  var alt = _lookedUpAlt || 0;
   var tz  = getTzOffset();
 
   return loadChunk(selectedEntry._chunk).then(function (chunk) {
@@ -1632,9 +1608,20 @@ function setStatus(msg, isErr) {
 
 function clearLocationFilter() {
   locationResults = null;
-  document.getElementById('pill-loc').style.display  = 'none';
-  document.getElementById('scan-bar').style.display  = 'none';
+  _lookedUpAlt    = null;
+  /* Strip coords from the search field so the filter matches that state */
+  var search = document.getElementById('search');
+  var f = parseSearch(search.value);
+  if (f.coords) {
+    search.value = filterToString(Object.assign({}, f, { coords: null }));
+    currentFilter = parseSearch(search.value);
+  }
+  document.getElementById('pill-loc').style.display = 'none';
+  document.getElementById('scan-bar').style.display = 'none';
+  updateCoordsStatus();
   renderList();
+  if (selectedEntry) { localResult = null; renderData(); }
+  syncMapIfVisible();
 }
 
 function scanLocation() {
@@ -1644,7 +1631,7 @@ function scanLocation() {
   var lat = coords.lat;
   var lon = coords.lon;
   var f   = parseSearch(document.getElementById('search').value);
-  var alt = f.alt !== null ? f.alt : (_lookedUpAlt || 0);
+  var alt = _lookedUpAlt || 0;
   var cacheKey = lat.toFixed(1) + ',' + lon.toFixed(1) + ',' + Math.round(alt/100);
 
   if (scanCache[cacheKey]) {
@@ -1667,7 +1654,6 @@ function scanLocation() {
 
   document.getElementById('scan-bar').style.display = '';
   document.getElementById('pill-loc').style.display = 'none';
-  document.getElementById('btn-scan').disabled      = true;
   document.getElementById('scan-fill').style.width  = '0%';
   document.getElementById('scan-msg').textContent   = 'Loading chunks\u2026';
 
@@ -1696,7 +1682,6 @@ function scanLocation() {
   function nextChunk(idx) {
     if (scanCancelFlag) {
       document.getElementById('scan-bar').style.display = 'none';
-      document.getElementById('btn-scan').disabled = false;
       return;
     }
     if (idx >= totalChunks) {
@@ -1708,9 +1693,7 @@ function scanLocation() {
       scanCache[cacheKey] = results;
       locationResults = results;
       document.getElementById('scan-bar').style.display = 'none';
-      document.getElementById('btn-scan').disabled = false;
       document.getElementById('pill-loc').style.display = '';
-      document.getElementById('scan-hint').style.display = 'none';
       document.getElementById('scan-msg').textContent = 'Scanning\u2026';
       renderList();
       return;
@@ -1775,7 +1758,7 @@ function renderData(rec, _tz, _lat, _lon) {
      one line less and the location is unambiguous at a glance. */
   var coords = parseCoords();
   var f      = parseSearch(document.getElementById('search').value);
-  var alt    = f.alt !== null ? f.alt : (_lookedUpAlt || 0);
+  var alt    = _lookedUpAlt || 0;
   var locLine = coords
     ? (coords.lat >= 0 ? coords.lat.toFixed(4)+'\u00b0N' : Math.abs(coords.lat).toFixed(4)+'\u00b0S')
       + '\u2002' + (coords.lon >= 0 ? coords.lon.toFixed(4)+'\u00b0E' : Math.abs(coords.lon).toFixed(4)+'\u00b0W')
@@ -1790,7 +1773,7 @@ function renderData(rec, _tz, _lat, _lon) {
         + '</div>';
 
   if (!coords) {
-    html += '<div class="no-location">Enter coordinates in the search field or tap \u201cUse my location\u201d.</div>';
+    html += '<div class="no-location">Enter coordinates in the search field, or tap the map to choose a location.</div>';
   } else if (!localResult) {
     html += '<div class="no-location">Computing\u2026</div>';
   } else if (!localResult.visible) {
@@ -1951,36 +1934,16 @@ document.getElementById('btn-scan-cancel').addEventListener('click', function ()
   scanCancelFlag = true;
 });
 
-document.getElementById('btn-scan').addEventListener('click', function () {
-  var c = parseCoords();
-  if (c) {
-    lookupElevationAndTz(c.lat, c.lon);
-    lookupTzOnly(c.lat, c.lon);
-  }
-  scanLocation();
-});
-
 document.getElementById('btn-locate').addEventListener('click', function () {
   if (!navigator.geolocation) { setStatus('Geolocation not available.', true); return; }
   navigator.geolocation.getCurrentPosition(function (pos) {
-    /* Capture device timezone from browser — most accurate when using own location */
-    try {
-      window._deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    } catch(e) {}
-
+    try { window._deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) {}
     var lat = pos.coords.latitude;
     var lon = pos.coords.longitude;
-    var latS = lat.toFixed(6);
-    var lonS = lon.toFixed(6);
-
-    /* Insert/replace coord token in search field */
     var search = document.getElementById('search');
     var f = parseSearch(search.value);
-    var tmp = Object.assign({}, f, { coords: { lat: lat, lon: lon } });
-    search.value = filterToString(tmp);
+    search.value = filterToString(Object.assign({}, f, { coords: { lat: lat, lon: lon } }));
     onSearchChanged();
-
-    /* Fetch elevation */
     lookupElevationAndTz(lat, lon);
   }, function () {
     setStatus('Location unavailable.', true);
@@ -2061,6 +2024,9 @@ function restoreFromHash() {
 
   /* Apply search filter */
   onSearchChanged();
+
+  /* If coords are in the restored search, trigger scan automatically */
+  if (currentFilter.coords && eclipseIndex.length) scanLocation();
 
   /* Restore selected eclipse by cat_no */
   if (h.catNo) {
@@ -2373,59 +2339,65 @@ function onMapTabActivated() {
   if (!map || !mapReady) { initMap(); } else { map.resize(); updateMapState(); }
 }
 
+function setMapStatus(msg) {
+  var el = document.getElementById('map-status');
+  if (msg) { el.textContent = msg; el.style.display = ''; }
+  else      { el.style.display = 'none'; }
+}
+
 function updateMapState() {
   if (!mapReady) return;
   clearMapLayers();
   clearMapMarkers();
   var coords = parseCoords();
-  var title  = document.getElementById('map-overlay-title');
-  var body   = document.getElementById('map-overlay-body');
-  var hint   = document.getElementById('map-overlay-hint');
 
   if (!selectedEntry) {
-    title.textContent = 'ShadowChaser';
-    body.textContent  = 'Select an eclipse to see its path';
-    hint.textContent  = coords ? 'Click to move observer' : 'Click map to set location';
     if (coords) addObserverMarker(coords.lat, coords.lon, null);
     return;
   }
 
-  title.textContent = fmtDate(selectedEntry)+' \u2014 '+typeName((selectedEntry.eclipse_type||'P')[0]);
-  body.textContent  = 'Loading path\u2026';
-  hint.textContent  = 'Click map to calculate local circumstances';
-
+  setMapStatus('Loading path\u2026');
   loadPathChunk(selectedEntry).then(function (pathData) {
-    if (!pathData) { body.textContent='Path data unavailable'; return; }
     var catKey = String(Math.round(selectedEntry.cat_no));
-    var ep = pathData[catKey];
-    if (!ep) { body.textContent='Path not in chunk'; return; }
+    var ep     = pathData && pathData[catKey];
+    if (!ep) { setMapStatus('Path data unavailable'); return; }
+
     drawEclipsePath(ep);
     if (/[TAH]/.test(ep.type||'')) drawShadowEllipses(ep);
-    body.textContent = '';
-    /* Center on observer location if set, otherwise fit to path bounds */
+    setMapStatus(null);
+
+    /* Camera: observer location if set, otherwise fit path/GE */
     if (coords) {
       map.flyTo({ center:[coords.lon, coords.lat], zoom:Math.max(map.getZoom(),4), duration:800 });
     } else {
-      /* Compute bounds from centreline + penumbral limits */
       var allPts = [];
-      (ep.centreline||[]).forEach(function(seg){allPts=allPts.concat(seg);});
-      (ep.penumbra_n||[]).forEach(function(seg){allPts=allPts.concat(seg);});
-      (ep.penumbra_s||[]).forEach(function(seg){allPts=allPts.concat(seg);});
+      ['centreline','penumbra_n','penumbra_s'].forEach(function(k){
+        (ep[k]||[]).forEach(function(seg){ allPts = allPts.concat(seg); });
+      });
       if (allPts.length) {
-        var lons=allPts.map(function(p){return p[0];});
-        var lats=allPts.map(function(p){return p[1];});
+        var lons = allPts.map(function(p){return p[0];});
+        var lats = allPts.map(function(p){return p[1];});
         map.fitBounds([
           [Math.min.apply(null,lons), Math.min.apply(null,lats)],
           [Math.max.apply(null,lons), Math.max.apply(null,lats)]
         ], { padding:40, duration:800, maxZoom:6 });
-      } else if (ep.ge && ep.ge[0]!=null) {
+      } else if (ep.ge && ep.ge[0] != null) {
         map.flyTo({ center:ep.ge, zoom:3, duration:800 });
       }
     }
-  }).catch(function () { body.textContent='Could not load path'; });
+  }).catch(function () { setMapStatus('Could not load path'); });
 
   if (coords) addObserverMarker(coords.lat, coords.lon,
-    localResult&&localResult.visible ? localResult.sun.az : null);
+    localResult && localResult.visible ? localResult.sun.az : null);
+
+  /* If we already have a local result, populate the map popup automatically */
+  if (coords && localResult && selectedEntry) {
+    loadPathChunk(selectedEntry).then(function (pathData) {
+      var catKey = String(Math.round(selectedEntry.cat_no));
+      var ep = pathData && pathData[catKey];
+      if (ep) showMapPopup(coords.lat, coords.lon, localResult, ep);
+    }).catch(function(){});
+  }
 }
 
 /* Path chunks are gzipped JSON keyed by cat_no.
@@ -2901,6 +2873,20 @@ fetch(DATA_BASE + '/index.json?v=' + BUILD)
       restoreFromHash();
     } else {
       onSearchChanged();
+      /* No saved state — silently request geolocation to pre-populate coords */
+      if (navigator.geolocation && !currentFilter.coords) {
+        navigator.geolocation.getCurrentPosition(function (pos) {
+          try { window._deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) {}
+          var lat = pos.coords.latitude, lon = pos.coords.longitude;
+          var search = document.getElementById('search');
+          var f = parseSearch(search.value);
+          if (!parseCoords()) {  /* only if user hasn't typed coords in the meantime */
+            search.value = filterToString(Object.assign({}, f, { coords: { lat: lat, lon: lon } }));
+            onSearchChanged();
+            lookupElevationAndTz(lat, lon);
+          }
+        }, function () { /* silently ignore denial */ });
+      }
     }
   })
   .catch(function (err) {

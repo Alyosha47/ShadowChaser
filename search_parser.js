@@ -28,9 +28,6 @@
  *
  *   Duration:     >2m  >90s  <3m30s  2m+   central duration only
  *
- *   Altitude:     100m  328ft   observer altitude (metres or feet)
- *                               default 0m if omitted
- *
  *   Coordinates:  (44.858, 0.082)            decimal
  *                 (51°30'26"N, 0°07'40"W)    DMS
  *                 (51 30 26 N, 0 07 40 W)    DMS spaces
@@ -46,7 +43,6 @@
  *   - Two saros numbers    → last wins
  *   - Two coordinate pairs → last wins
  *   - Two obscuration ranges → last wins
- *   - Two altitudes        → last wins
  *
  * PUBLIC API:
  *   parseSearch(str)              → filter object
@@ -201,8 +197,7 @@
       saros:     null,
       types:     null,
       coords:    null,
-      obscRange: null,
-      alt:       null    // metres, null = use default (0)
+      obscRange: null
     };
 
     if (!str || !str.trim()) return filter;
@@ -236,16 +231,6 @@
       }
       var isMin = (op === '>') || (op === '+');
       filter.durRange = isMin ? {min:secs, max:99999} : {min:0, max:secs};
-      return ' ';
-    });
-
-    /* 3. Altitude — e.g. 100m, 100M, 328ft, 328FT */
-    s = s.replace(/\b(\d+\.?\d*)\s*ft\b/gi, function (_, n) {
-      filter.alt = Math.round(parseFloat(n) * 0.3048);
-      return ' ';
-    });
-    s = s.replace(/\b(\d+\.?\d*)\s*m\b/gi, function (_, n) {
-      filter.alt = parseFloat(n);
       return ' ';
     });
 
@@ -299,14 +284,25 @@
       return ' ';
     });
 
-    /* 8. Eclipse types */
+    /* 8. Eclipse types — full word or unambiguous prefix (min 2 chars) */
     ['total','annular','hybrid','partial'].forEach(function (t) {
       var re = new RegExp('\\b' + t + '\\b', 'gi');
       if (re.test(s)) {
         filter.types = filter.types || [];
         if (filter.types.indexOf(t) < 0) filter.types.push(t);
         s = s.replace(re, ' ');
+        return;
       }
+      /* Prefix match: "to" → total, "an" → annular, "hy" → hybrid, "pa" → partial */
+      var pre = new RegExp('\\b' + t.slice(0,2) + '[a-z]*\\b', 'gi');
+      s = s.replace(pre, function (m) {
+        if (t.indexOf(m.toLowerCase()) === 0 && m.length >= 2) {
+          filter.types = filter.types || [];
+          if (filter.types.indexOf(t) < 0) filter.types.push(t);
+          return ' ';
+        }
+        return m;
+      });
     });
 
     /* 8. Month names — substring match per whitespace-delimited token */
@@ -497,9 +493,6 @@
       } else {
         parts.push('<' + filter.obscRange.max + '%');
       }
-    }
-    if (filter.alt !== null && filter.alt > 0) {
-      parts.push(filter.alt + 'm');
     }
     if (filter.coords) {
       parts.push('(' + filter.coords.lat.toFixed(5) + ', ' + filter.coords.lon.toFixed(5) + ')');

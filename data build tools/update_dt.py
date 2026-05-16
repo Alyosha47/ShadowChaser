@@ -16,12 +16,12 @@ SMH 2016 = Stephenson, Morrison & Hohenkerk (2016) + Morrison et al (2021).
 Calibrated to match Jubier's value at 2299 (752.7s). This replaces the
 old Morrison-Stephenson 2004 simple parabola which gave ~714s at 2299.
 
-Usage:
-  python3 update_dt.py              # update all century chunk files
-  python3 update_dt.py --dry-run    # print changes, write nothing
-  python3 update_dt.py --dry-run --year 2299  # check specific year
+Usage (run from anywhere — paths are relative to script location):
+  python3 "data build tools/update_dt.py"
+  python3 "data build tools/update_dt.py" --dry-run
+  python3 "data build tools/update_dt.py" --dry-run --year 2299
 
-Requirements: Python 3 standard library + delta_t.py in same directory.
+Requires delta_t.py in the same directory as this script.
 ────────────────────────────────────────────────────────────────────────────
 """
 
@@ -39,7 +39,8 @@ from delta_t import formula_dt, source_name
 URL_OBSERVED  = 'https://maia.usno.navy.mil/ser7/deltat.data'
 URL_PREDICTED = 'https://maia.usno.navy.mil/ser7/deltat.preds'
 
-DATA_DIR = Path('data')
+HERE     = Path(__file__).parent
+DATA_DIR = HERE / '..' / 'data' / 'besselian'
 
 
 # ── Fetch ─────────────────────────────────────────────────────────────────
@@ -132,12 +133,11 @@ def main():
     args = parser.parse_args()
 
     if not DATA_DIR.exists():
-        sys.exit(f'Error: {DATA_DIR}/ not found. Run from your eclipse folder.')
+        sys.exit(f'Error: {DATA_DIR.resolve()} not found.')
 
-    chunk_files = sorted(p for p in DATA_DIR.glob('*.json')
-                         if p.name != 'index.json')
+    chunk_files = sorted(p for p in DATA_DIR.glob('*.json'))
     if not chunk_files:
-        sys.exit(f'Error: no century chunk files found in {DATA_DIR}/')
+        sys.exit(f'Error: no century chunk files found in {DATA_DIR.resolve()}')
 
     print('Downloading USNO delta_T tables...')
     try:
@@ -169,12 +169,17 @@ def main():
             new_dt, src = best_dt(y, m, observed, predicted)
             new_dt = round(new_dt, 1)
 
-            if orig is None or abs(new_dt - orig) >= 0.05:
-                if args.dry_run:
+            changed = orig is None or abs(new_dt - orig) >= 0.05
+            needs_source = 'dt_source' not in rec
+
+            if changed or needs_source:
+                if changed and args.dry_run:
                     if args.year is None or y == args.year:
                         orig_str = f'{orig:.1f}s' if orig is not None else 'None'
                         print(f'  {y}-{m:02d}  {orig_str} -> {new_dt:.1f}s  [{src}]')
-                rec['dt'] = new_dt
+                if changed:
+                    rec['dt'] = new_dt
+                rec['dt_source'] = src
                 patched += 1
 
         total_records += len(chunk)
@@ -185,8 +190,8 @@ def main():
                 json.dump(chunk, f, separators=(',', ':'))
             print(f'  {path.name}: {patched} records updated')
 
-    print(f'\n{"Would update" if args.dry_run else "Updated"} '
-          f'{total_patched} of {total_records} records '
+    print(f'\n{"Would write" if args.dry_run else "Wrote"} '
+          f'dt_source to {total_patched} of {total_records} records '
           f'across {len(chunk_files)} files.')
 
 
