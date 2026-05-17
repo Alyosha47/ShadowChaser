@@ -1323,21 +1323,33 @@ function parseCoords() {
 var _scanDebounceTimer = null;
 
 function onSearchChanged() {
-  var raw = document.getElementById('search').value;
+  var raw       = document.getElementById('search').value;
+  var hadCoords = !!(currentFilter && currentFilter.coords);
   currentFilter = parseSearch(raw);
+  var hasCoords = !!currentFilter.coords;
+
+  /* Coords just removed — clear all location-specific state */
+  if (hadCoords && !hasCoords) {
+    locationResults = null;
+    _lookedUpAlt    = null;
+    document.getElementById('pill-loc').style.display = 'none';
+    document.getElementById('scan-bar').style.display = 'none';
+    if (selectedEntry) { localResult = null; }
+  }
+
   updatePillStates();
   updateCoordsStatus();
   renderList();
   pushState();
 
-  if (selectedEntry && currentFilter.coords) computeLocal();
-  else if (selectedEntry) { localResult = null; renderData(); }  /* coords cleared — reset local circs */
+  if (selectedEntry && hasCoords) computeLocal();
+  else if (selectedEntry && !hasCoords) renderData();
 
   syncMapIfVisible();
 
-  /* Auto-scan: debounce 800ms after typing stops, then scan if coords present */
+  /* Auto-scan: debounce 800ms after typing stops */
   clearTimeout(_scanDebounceTimer);
-  if (currentFilter.coords && eclipseIndex.length) {
+  if (hasCoords && eclipseIndex.length) {
     _scanDebounceTimer = setTimeout(function () {
       lookupElevationAndTz(currentFilter.coords.lat, currentFilter.coords.lon);
       scanLocation();
@@ -1736,6 +1748,34 @@ function renderData(rec, _tz, _lat, _lon) {
   var typeCode  = (selectedEntry.eclipse_type||'P')[0].toLowerCase();
   var typeLabel = typeName((selectedEntry.eclipse_type||'P')[0]);
 
+  /* ΔT — use besselian chunk values when loaded (after computeLocal),
+     fall back to formula for display before a location is set.
+     dt_source comes from the chunk; formula fallback labels by year range. */
+  function dtSourceFallback(year) {
+    if (year > 2050)  return 'SMH\u202f2016 LOD extrapolation';
+    if (year >= -720) return 'Espenak\u2013Meeus';
+    return 'SMH\u202f2016 LOD (ancient)';
+  }
+  function formulaDt(year) {
+    var t, u;
+    if (year > 2050 || year < -720) { t=(year-2000)/100; return 8.37+153.25*t+32*t*t; }
+    if (year >= 2010) { t=year-2000; return 62.92+0.32217*t+0.005589*t*t; }
+    if (year >= 1986) { t=year-2000; return 63.86+0.3345*t-0.060374*t*t+0.0017275*Math.pow(t,3)+0.000651814*Math.pow(t,4)+0.00002373599*Math.pow(t,5); }
+    if (year >= 1961) { t=year-1975; return 45.45+1.067*t-t*t/260-Math.pow(t,3)/718; }
+    if (year >= 1941) { t=year-1950; return 29.07+0.407*t-t*t/233+Math.pow(t,3)/2547; }
+    if (year >= 1920) { t=year-1920; return 21.20+0.84493*t-0.076100*t*t+0.0020936*Math.pow(t,3); }
+    if (year >= 1900) { t=year-1900; return -2.79+1.494119*t-0.0598939*t*t+0.0061966*Math.pow(t,3)-0.000197*Math.pow(t,4); }
+    if (year >= 1860) { t=year-1860; return 7.62+0.5737*t-0.251754*t*t+0.01680668*Math.pow(t,3)-0.0004473624*Math.pow(t,4)+Math.pow(t,5)/233174; }
+    if (year >= 1800) { t=year-1800; return 13.72-0.332447*t+0.0068612*t*t+0.0041116*Math.pow(t,3)-0.00037436*Math.pow(t,4)+0.0000121272*Math.pow(t,5)-0.0000001699*Math.pow(t,6)+0.000000000875*Math.pow(t,7); }
+    if (year >= 1700) { t=year-1700; return 8.83+0.1603*t-0.0059285*t*t+0.00013336*Math.pow(t,3)-Math.pow(t,4)/1174000; }
+    if (year >= 1620) { t=year-1600; return 120.0-0.9808*t-0.01532*t*t+Math.pow(t,3)/7129; }
+    if (year >= 500)  { u=(year-1000)/100; return 1574.2-556.01*u+71.23472*u*u+0.319781*Math.pow(u,3)-0.8503463*Math.pow(u,4)-0.005050998*Math.pow(u,5)+0.0083572073*Math.pow(u,6); }
+    u=year/100; return 10583.6-1014.41*u+33.78311*u*u-5.952053*Math.pow(u,3)-0.1798452*Math.pow(u,4)+0.022174192*Math.pow(u,5)+0.0090316521*Math.pow(u,6);
+  }
+  var dtVal    = rec && rec.dt     != null ? rec.dt              : formulaDt(selectedEntry.year);
+  var dtSrc    = rec && rec.dt_source      ? rec.dt_source       : dtSourceFallback(selectedEntry.year);
+  var dtCell   = dataCell('\u0394T', dtVal.toFixed(1) + '\u2009s<div style="font-size:0.62rem;color:var(--text-dim);margin-top:0.15rem;font-family:var(--mono)">' + dtSrc + '</div>');
+
   var html = ''
 
   + '<div class="top-section-header">Global Circumstances</div>'
@@ -1751,6 +1791,7 @@ function renderData(rec, _tz, _lat, _lon) {
   + dataCell('Saros', selectedEntry.saros
                + (selectedEntry.nSeq && selectedEntry.nSer
                   ? ': ' + selectedEntry.nSeq + '/' + selectedEntry.nSer : ''))
+  + dtCell
   + '</div>';
 
   /* ── Local Circumstances ─────────────────────────────────────────
@@ -1811,8 +1852,7 @@ function renderData(rec, _tz, _lat, _lon) {
     + '</tbody></table></details>'
 
     + (rec ? '<div class="note">'
-    + '\u0394T\u2009=\u2009' + rec.dt.toFixed(1) + '\u2009s'
-    + ' &nbsp;&middot;&nbsp; Besselian elements: Espenak &amp; Meeus, '
+    + 'Besselian elements: Espenak &amp; Meeus, '
     + '<em>Five Millennium Canon of Solar Eclipses</em>.'
     + ' No lunar limb correction applied.'
     + '</div>' : '');
@@ -2053,10 +2093,6 @@ var mapReady       = false;
 var pathCache      = {};
 var mapMarkers     = [];
 var currentPathKey = null;
-
-var MAP_SOURCES   = ['ge'];
-/* fill sources use -fill-layer suffix; line/circle sources use -layer */
-var MAP_LAYER_IDS = ['ge-layer'];
 var deckOverlay = null; /* deck.gl MapboxOverlay */
 
 /* ── Basemap loading ──────────────────────────────────────────────────
@@ -2352,6 +2388,7 @@ function updateMapState() {
   var coords = parseCoords();
 
   if (!selectedEntry) {
+    document.getElementById('map-popup').style.display = 'none';
     if (coords) addObserverMarker(coords.lat, coords.lon, null);
     return;
   }
@@ -2363,7 +2400,6 @@ function updateMapState() {
     if (!ep) { setMapStatus('Path data unavailable'); return; }
 
     drawEclipsePath(ep);
-    if (/[TAH]/.test(ep.type||'')) drawShadowEllipses(ep);
     setMapStatus(null);
 
     /* Camera: observer location if set, otherwise fit path/GE */
@@ -2387,16 +2423,19 @@ function updateMapState() {
     }
   }).catch(function () { setMapStatus('Could not load path'); });
 
-  if (coords) addObserverMarker(coords.lat, coords.lon,
-    localResult && localResult.visible ? localResult.sun.az : null);
-
-  /* If we already have a local result, populate the map popup automatically */
-  if (coords && localResult && selectedEntry) {
-    loadPathChunk(selectedEntry).then(function (pathData) {
-      var catKey = String(Math.round(selectedEntry.cat_no));
-      var ep = pathData && pathData[catKey];
-      if (ep) showMapPopup(coords.lat, coords.lon, localResult, ep);
-    }).catch(function(){});
+  if (coords) {
+    addObserverMarker(coords.lat, coords.lon,
+      localResult && localResult.visible ? localResult.sun.az : null);
+    /* Auto-populate map popup if local result already available */
+    if (localResult) {
+      loadPathChunk(selectedEntry).then(function (pathData) {
+        var catKey = String(Math.round(selectedEntry.cat_no));
+        var ep = pathData && pathData[catKey];
+        if (ep) showMapPopup(coords.lat, coords.lon, localResult, ep);
+      }).catch(function(){});
+    }
+  } else {
+    document.getElementById('map-popup').style.display = 'none';
   }
 }
 
@@ -2516,16 +2555,7 @@ function syncMapIfVisible() {
 }
 
 function clearMapLayers() {
-  /* Clear deck.gl overlay layers */
   if (deckOverlay) deckOverlay.setProps({ layers: [] });
-  /* Clean up ellipse layers (still MapLibre GeoJSON) */
-  ['ellipses-layer'].forEach(function(id){
-    try { if(map.getLayer && map.getLayer(id)) map.removeLayer(id); } catch(e){}
-  });
-  try { if(map.getSource && map.getSource('ellipses')) map.removeSource('ellipses'); } catch(e){}
-  /* Clean up remaining GeoJSON sources (ge, bisector, umbra caps) */
-  MAP_LAYER_IDS.forEach(function (id) { try { if (map.getLayer(id)) map.removeLayer(id); } catch(e){} });
-  MAP_SOURCES.forEach(function (id)   { try { if (map.getSource(id)) map.removeSource(id); } catch(e){} });
 }
 
 /* ── Geodesic densification ───────────────────────────────────────────
@@ -2729,17 +2759,6 @@ function corridorToPolygonData(nSegs, sSegs, id) {
 
 
 
-function emptySource(id, layerType) {
-  var empty={type:'FeatureCollection',features:[]};
-  map.addSource(id,{type:'geojson',data:empty});
-  var layerId = layerType==='fill' ? id+'-fill-layer' : id+'-layer';
-  var paint;
-  if (layerType==='fill')   paint={'fill-opacity':0};
-  else if (layerType==='circle') paint={'circle-opacity':0,'circle-stroke-opacity':0};
-  else                      paint={'line-opacity':0};
-  map.addLayer({id:layerId, type:layerType, source:id, paint:paint});
-}
-
 function drawEclipsePath(ep) {
   clearMapLayers();
   var isCentral = /[TAH]/.test(ep.type||'');
@@ -2828,28 +2847,55 @@ function drawEclipsePath(ep) {
     }
   }
 
-  setDeckLayers(layers);
+  /* ── Umbra ovals — deck.gl SolidPolygonLayer ──────────────────────
+     Must be added to layers[] before setDeckLayers() so they share
+     the same render pass. MapLibre GeoJSON Polygon can't handle
+     unwrapped longitudes across the antimeridian; deck.gl can. */
+  if (/[TAH]/.test(ep.type||'') && ep.umbra_ovals && ep.umbra_ovals.length) {
+    var isTotal  = /[TH]/.test(ep.type||'');
+    var ovalFill = isTotal ? [139,74,0,60]      : [26,74,122,60];
+    var ovalLine = isTotal ? [180,120,20,180]    : [42,90,180,180];
+    var ovalData = ep.umbra_ovals
+      .filter(function(r) { return r && r.length >= 3; })
+      .map(function(r, i) { return { id: 'oval-'+i, polygon: r }; });
+    if (ovalData.length) {
+      layers.push(new DeckGL.SolidPolygonLayer({
+        id:                 'umbra-ovals',
+        data:               ovalData,
+        getPolygon:         function(d) { return d.polygon; },
+        getFillColor:       ovalFill,
+        getLineColor:       ovalLine,
+        stroked:            true,
+        filled:             true,
+        lineWidthMinPixels: 1,
+      }));
+    }
+  }
 
-  /* ── GE point — keep as MapLibre circle ─────────────────────────── */
+  /* ── Greatest eclipse point ─────────────────────────────────────── */
   if (ep.ge && ep.ge[0] != null) {
-    map.addSource('ge', { type:'geojson', data:{ type:'Feature',
-      geometry:{ type:'Point', coordinates:ep.ge }, properties:{} }});
-    map.addLayer({ id:'ge-layer', type:'circle', source:'ge',
-      paint:{ 'circle-radius':5, 'circle-color':'#cc2200',
-              'circle-stroke-width':2, 'circle-stroke-color':'#0a0c0f' }});
-  } else emptySource('ge','circle');
-}
+    /* ScatterplotLayer is not in this deck.gl build — approximate a circle
+       as a closed polygon ring with N vertices. */
+    var geLon = ep.ge[0], geLat = ep.ge[1];
+    var N = 24, R = 0.18; /* radius in degrees — visually ~5px at zoom 3 */
+    var geRing = [];
+    for (var i = 0; i <= N; i++) {
+      var a = (i / N) * Math.PI * 2;
+      geRing.push([geLon + R * Math.cos(a), geLat + R * Math.sin(a) * 0.6]);
+    }
+    layers.push(new DeckGL.SolidPolygonLayer({
+      id:           'ge-point',
+      data:         [{ polygon: geRing }],
+      getPolygon:   function(d) { return d.polygon; },
+      getFillColor: [204,34,0,255],
+      getLineColor: [10,12,15,255],
+      stroked:      true,
+      filled:       true,
+      lineWidthMinPixels: 1.5,
+    }));
+  }
 
-function drawShadowEllipses(ep) {
-  if (!ep || !ep.umbra_ovals || !ep.umbra_ovals.length) return;
-  var isTotal = /[TH]/.test(ep.type||'');
-  var color   = isTotal ? '#8b4a00' : '#1a4a7a';
-  var features = ep.umbra_ovals.map(function(ring) {
-    return { type:'Feature', geometry:{ type:'Polygon', coordinates:[ring] }, properties:{} };
-  });
-  map.addSource('ellipses', { type:'geojson', data:{ type:'FeatureCollection', features:features } });
-  map.addLayer({ id:'ellipses-layer', type:'line', source:'ellipses',
-    paint:{ 'line-color':color, 'line-width':1.2, 'line-opacity':0.7 } });
+  setDeckLayers(layers);
 }
 
 
