@@ -662,6 +662,54 @@
     /* ── Settings tab ────────────────────────────────────────────────── */
 
     .settings-section { margin-bottom: 2rem; }
+
+    /* Collapsible settings groups */
+    .settings-group {
+      border:        1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 1rem;
+      overflow:      hidden;
+    }
+    .settings-group-header {
+      display:        flex;
+      align-items:    center;
+      font-family:    var(--mono);
+      font-size:      0.8rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color:          var(--gold2);
+      padding:        0.75rem 1rem;
+      background:     var(--bg2);
+      cursor:         pointer;
+      user-select:    none;
+      list-style:     none;
+    }
+    .settings-group-header::-webkit-details-marker { display: none; }
+    .settings-group-header::after {
+      content:    '▾';
+      margin-left: auto;
+      font-size:  0.7rem;
+      color:      var(--text-dim);
+      transition: transform 0.2s;
+    }
+    .settings-group:not([open]) .settings-group-header::after {
+      transform: rotate(-90deg);
+    }
+    .settings-group > :not(summary) {
+      padding: 0.75rem 1rem 0;
+    }
+
+    /* On desktop keep all open and hide the toggle affordance */
+    @media (min-width: 601px) {
+      .settings-group { border: none; margin-bottom: 0; }
+      .settings-group-header {
+        background:     transparent;
+        padding:        0;
+        pointer-events: none;
+        display:        none;
+      }
+      .settings-group > :not(summary) { padding: 0; }
+    }
     .settings-row {
       display:     flex;
       align-items: center;
@@ -1040,62 +1088,101 @@
 
     <div class="tab-panel" id="tab-settings">
 
-      <div class="settings-section">
-        <div class="top-section-header">Time Zone</div>
-        <div class="settings-row">
-          <label for="tz">Time zone</label>
-          <select id="tz" style="max-width:18rem"></select>
-        </div>
-        <div class="about-text" style="margin-top:0.5rem">
-          <p><em>Auto</em> uses the device timezone when available, or estimates from observer longitude.</p>
-        </div>
-      </div>
+      <details class="settings-group" open>
+        <summary class="settings-group-header">Settings</summary>
 
-      <div class="settings-section">
-        <div class="top-section-header">Accessibility</div>
-        <div class="about-text">
-          <p style="color:var(--text-dim);font-style:italic">Font size, high contrast, and reduced motion options coming soon.</p>
+        <div class="settings-section">
+          <div class="top-section-header">Time Zone</div>
+          <div class="settings-row">
+            <label for="tz">Time zone</label>
+            <select id="tz" style="max-width:18rem"></select>
+          </div>
+          <div class="about-text" style="margin-top:0.5rem">
+            <p><em>Auto</em> uses the device timezone when available, or estimates from observer longitude.</p>
+          </div>
         </div>
-      </div>
 
-      <div class="settings-section">
-        <div class="top-section-header">Search Syntax</div>
-        <div class="about-text">
-          <p>The search field accepts any combination of the following, in any order:</p>
+        <div class="settings-section">
+          <div class="top-section-header">Accessibility</div>
+          <div class="about-text">
+            <p style="color:var(--text-dim);font-style:italic">Font size, high contrast, and reduced motion options coming soon.</p>
+          </div>
         </div>
-        <table class="syntax-table">
-          <thead><tr><th>Token</th><th>Examples</th><th>Notes</th></tr></thead>
-          <tbody>
-            <tr><td>Today+</td><td>today+</td><td>From today forward</td></tr>
-            <tr><td>Year</td><td>2026<br>2026-2030<br>after 2100<br>before 500</td><td>Single, range, or open-ended</td></tr>
-            <tr><td>Month</td><td>aug &nbsp; august &nbsp; Nov</td><td>3-letter or full name</td></tr>
-            <tr><td>Day</td><td>28</td><td>Only meaningful with a month</td></tr>
-            <tr><td>Saros</td><td>saros 126 &nbsp; s126</td><td>Requires "saros" or "s" prefix</td></tr>
-            <tr><td>Type</td><td>total &nbsp; annular &nbsp; hybrid &nbsp; partial</td><td>Multiple allowed; prefix (to, an, hy, pa) works while typing</td></tr>
-            <tr><td>Obscuration</td><td>&gt;80 &nbsp; 50+ &nbsp; &lt;30 &nbsp; 95-</td><td>With or without %</td></tr>
-            <tr><td>Coordinates</td>
-              <td>
-                (44.858, 0.082)<br>
-                (-19.581, -65.747)<br>
-                (51°30'26"N, 0°07'40"W)<br>
-                (51d30m26sN, 0d07m40sW)<br>
-                (51°30.44'N, 0°7.67'W)<br>
-                (51 30 26 N, 0 07 40 W)
-              </td>
-              <td>Tap the map or use the 📍 button. Timezone and elevation are auto-filled when online.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
 
-      <div class="settings-section">
-        <div class="top-section-header">About</div>
-        <div class="about-text">
-          <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. But although there are many eclipse-adventure-planning tools out there, we still missed certain features. Search-by-location, for example, accurate local time zone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We&rsquo;ve tried to cover all the bases in one convenient package. If you find any bugs, please let us know &mdash; and don&rsquo;t stare at the sun!</p>
-          <p>Eclipse circumstances are calculated using the Besselian element method as described in Jean Meeus, <em>Astronomical Algorithms</em> (Willmann-Bell, 2nd ed. 1998), Chapter 54, and the NASA <em>Five Millennium Canon of Solar Eclipses</em> (Espenak &amp; Meeus). No lunar limb correction is applied.</p>
-          <p>Besselian elements: Espenak &amp; Meeus, <em>Five Millennium Canon of Solar Eclipses: &minus;1999 to +3000</em>, NASA/TP-2006-214141.</p>
+      </details>
+
+      <details class="settings-group" open>
+        <summary class="settings-group-header">Instructions</summary>
+
+        <div class="settings-section">
+          <div class="top-section-header">Search Syntax</div>
+          <div class="about-text">
+            <p>The search field accepts any combination of the following, in any order:</p>
+          </div>
+          <table class="syntax-table">
+            <thead><tr><th>Token</th><th>Examples</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td>Today+</td><td>today+</td><td>From today forward</td></tr>
+              <tr><td>Year</td><td>2026<br>2026-2030<br>after 2100<br>before 500</td><td>Single, range, or open-ended</td></tr>
+              <tr><td>Month</td><td>aug &nbsp; august &nbsp; Nov</td><td>3-letter or full name</td></tr>
+              <tr><td>Day</td><td>28</td><td>Only meaningful with a month</td></tr>
+              <tr><td>Saros</td><td>saros 126 &nbsp; s126</td><td>Requires "saros" or "s" prefix</td></tr>
+              <tr><td>Type</td><td>total &nbsp; annular &nbsp; hybrid &nbsp; partial</td><td>Multiple allowed; prefix (to, an, hy, pa) works while typing</td></tr>
+              <tr><td>Obscuration</td><td>&gt;80 &nbsp; 50+ &nbsp; &lt;30 &nbsp; 95-</td><td>With or without %</td></tr>
+              <tr><td>Coordinates</td>
+                <td>
+                  (44.858, 0.082)<br>
+                  (-19.581, -65.747)<br>
+                  (51°30'26"N, 0°07'40"W)<br>
+                  (51d30m26sN, 0d07m40sW)<br>
+                  (51°30.44'N, 0°7.67'W)<br>
+                  (51 30 26 N, 0 07 40 W)
+                </td>
+                <td>Tap the map or use the 📍 button. Timezone and elevation are auto-filled when online.</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-      </div>
+
+      </details>
+
+      <details class="settings-group" open>
+        <summary class="settings-group-header">About</summary>
+
+        <div class="settings-section">
+          <div class="top-section-header">About</div>
+          <div class="about-text">
+            <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. Although there are many eclipse-adventure-planning tools out there, we still missed certain features — search-by-location, accurate local timezone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We&rsquo;ve tried to cover all the bases in one convenient package. If you find any bugs, please let us know &mdash; and <em>don&rsquo;t stare at the sun!</em></p>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="top-section-header">Data Sources</div>
+          <div class="about-text">
+            <p><strong>Eclipse catalogue &amp; Besselian elements</strong> &mdash; Espenak &amp; Meeus, <em>Five Millennium Canon of Solar Eclipses: &minus;1999 to +3000</em>, NASA/TP-2006-214141. Eclipse circumstances computed via the Besselian element method (Jean Meeus, <em>Astronomical Algorithms</em>, Willmann-Bell, 2nd ed. 1998, Ch. 54). No lunar limb correction applied.</p>
+            <p><strong>Delta T (ΔT = TT &minus; UT)</strong> &mdash; Values for 1973&ndash;present from USNO observed monthly tables (<em>deltat.data</em>); near-term predictions from USNO quarterly forecast (<em>deltat.preds</em>); years &minus;720 to 2050 from the Espenak&ndash;Meeus piecewise polynomial; outside that range from the Stephenson, Morrison &amp; Hohenkerk (2016) LOD integral extrapolation.</p>
+            <p><strong>Basemap</strong> &mdash; Natural Earth public domain geodata, <em>naturalearthdata.com</em>.</p>
+            <p><strong>Timezone lookup</strong> &mdash; Offline polygon database via <em>tz-lookup</em>. Elevation auto-fill via Open-Elevation API when online.</p>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="top-section-header">Accuracy</div>
+          <table class="syntax-table">
+            <thead><tr><th>Curve</th><th>Median error</th></tr></thead>
+            <tbody>
+              <tr><td>Centreline</td><td>&lt;1 km</td></tr>
+              <tr><td>Umbra edges (N/S)</td><td>120&ndash;600 m</td></tr>
+              <tr><td>Penumbra edges</td><td>25 km (total) / 100+ km (annular)</td></tr>
+              <tr><td>Terminator lemniscates</td><td>3 km / 100 km at tips</td></tr>
+              <tr><td>Polar grazers (γ &gt; 0.95)</td><td>Up to 35 km</td></tr>
+              <tr><td>Pre-1900</td><td>ΔT-limited</td></tr>
+              <tr><td>Post-2050</td><td>Increasing (ΔT extrapolation)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </details>
 
     </div><!-- #tab-settings -->
 
@@ -2751,8 +2838,9 @@ function corridorToPolygonData(nSegs, sSegs, id) {
   }
 
   var southR = resampleByParam(south, sp, np);
-  /* Closed ring: north forward + south reversed */
-  var ring = north.concat(southR.slice().reverse());
+  /* Closed ring: north forward + south reversed.
+     wrapContinuous ensures no longitude jump > 180° in the assembled ring. */
+  var ring = wrapContinuous(north.concat(southR.slice().reverse()));
   return [{ id: id, polygon: ring }];
 }
 
@@ -2857,7 +2945,7 @@ function drawEclipsePath(ep) {
     var ovalLine = isTotal ? [180,120,20,180]    : [42,90,180,180];
     var ovalData = ep.umbra_ovals
       .filter(function(r) { return r && r.length >= 3; })
-      .map(function(r, i) { return { id: 'oval-'+i, polygon: r }; });
+      .map(function(r, i) { return { id: 'oval-'+i, polygon: wrapContinuous(r) }; });
     if (ovalData.length) {
       layers.push(new DeckGL.SolidPolygonLayer({
         id:                 'umbra-ovals',

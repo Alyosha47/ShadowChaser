@@ -352,7 +352,13 @@
 
     if (!filter.today) {
       if (yearBuf.length === 1 && !filter.years) {
-        filter.years = { min: yearBuf[0], max: yearBuf[0] };
+        var y = yearBuf[0];
+        /* A bare positive year matches both CE and BCE equivalents.
+           974 CE = astronomical year 974; 974 BCE = astronomical year -973.
+           Store both as explicit year values rather than a range. */
+        filter.years = y > 0
+          ? { min: -(y - 1), max: y, exactPair: true }
+          : { min: y, max: y };
       } else if (yearBuf.length >= 2 && !filter.years) {
         filter.years = {
           min: Math.min.apply(null, yearBuf),
@@ -378,7 +384,12 @@
 
       /* Year / today */
       if (filter.years) {
-        if (e.year < filter.years.min || e.year > filter.years.max) return false;
+        if (filter.years.exactPair) {
+          /* Single bare positive year typed — match CE year and BCE equivalent only */
+          if (e.year !== filter.years.max && e.year !== filter.years.min) return false;
+        } else {
+          if (e.year < filter.years.min || e.year > filter.years.max) return false;
+        }
         /* today+ : also exclude past dates within the current year */
         if (filter.today && filter.years.todayMonth) {
           if (e.year === filter.years.min) {
