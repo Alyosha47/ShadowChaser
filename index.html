@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="build" content="2026-05-18 08:10 UTC">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="build" content="2026-05-18 14:30 UTC">
   <title>ShadowChaser</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
@@ -452,7 +453,7 @@
     /* Eclipse list */
     .list-header {
       display:               grid;
-      grid-template-columns: 1fr 5rem 4.5rem 5rem;
+      grid-template-columns: 1fr 2rem 4.5rem;
       gap:                   0.5rem;
       padding:               0.35rem 0.75rem;
       border-bottom:         1px solid var(--border2);
@@ -480,14 +481,14 @@
 
     .eclipse-item {
       display:               grid;
-      grid-template-columns: 1fr 5rem 4.5rem 5rem;
+      grid-template-columns: 1fr 2rem 4.5rem;
       align-items:           center;
       gap:                   0.5rem;
-      padding:               0.5rem 0.75rem;
+      padding:               0.65rem 0.75rem;
       cursor:                pointer;
       border-bottom:         1px solid var(--border);
       font-family:           var(--mono);
-      font-size:             0.76rem;
+      font-size:             0.88rem;
       transition:            background 0.1s;
     }
     .eclipse-item:last-child { border-bottom: none; }
@@ -923,15 +924,29 @@
       .app-title    { font-size: 1.1rem; }
       .app-subtitle { display: none; }
       .header-selection .header-eclipse-sub { display: none; }
-      .tab-btn      { font-size: 0.65rem; letter-spacing: 0.06em; }
+      .tab-btn      { font-size: 1.1rem; letter-spacing: 0; }
+      .tab-label    { display: none; }
       .tab-panel    { padding: 0.75rem 0.75rem 2rem; }
+
+      /* Larger base font for readability on phone */
+      body { font-size: 1.05rem; }
+      .eclipse-item { font-size: 1rem; padding: 0.75rem; }
+      .list-header  { font-size: 0.72rem; }
+      .search-hint  { font-size: 0.78rem; }
+      .pill         { font-size: 0.8rem; }
+      .section-label, .subsection-header, .top-section-header { font-size: 0.85rem; }
+      .data-cell-label { font-size: 0.78rem; }
+      .data-cell-value { font-size: 1.1rem; }
 
       /* Tighter data cells on phone so more fit per row */
       .data-cell { padding: 0.55rem 0.65rem; }
-      .data-cell-value.large { font-size: 1rem; }
+      .data-cell-value.large { font-size: 1.1rem; }
 
       /* Map locate button — slightly larger tap area on phone */
       #btn-locate { font-size: 1.2rem; padding: 0.5rem 0.8rem; }
+
+      /* Hide map popup on mobile — it renders off-screen */
+      .map-popup { display: none !important; }
     }
 
   </style>
@@ -943,7 +958,7 @@
   <header class="app-header">
     <div>
       <div class="app-title">ShadowChaser</div>
-      <div class="app-subtitle">by followtheshadow &nbsp;&middot;&nbsp; Five Millennium Canon &middot; Espenak &amp; Meeus</div>
+      <div class="app-subtitle">by followtheshadow</div>
     </div>
     <div class="header-selection" id="header-selection" style="display:none">
       <div class="header-eclipse-name" id="header-eclipse-name"></div>
@@ -956,10 +971,10 @@
   <!-- ── Tab bar ─────────────────────────────────────────────────────── -->
 
   <nav class="tab-bar">
-    <button class="tab-btn active" data-tab="search">Search</button>
-    <button class="tab-btn"        data-tab="eclipse">Eclipse</button>
-    <button class="tab-btn"        data-tab="map">Map</button>
-    <button class="tab-btn"        data-tab="settings">Settings</button>
+    <button class="tab-btn active" data-tab="search">🔍<span class="tab-label"> Search</span></button>
+    <button class="tab-btn"        data-tab="eclipse">☀️<span class="tab-label"> Eclipse</span></button>
+    <button class="tab-btn"        data-tab="map">🌍<span class="tab-label"> Map</span></button>
+    <button class="tab-btn"        data-tab="settings">⚙️<span class="tab-label"> Settings</span></button>
   </nav>
 
 
@@ -1016,8 +1031,7 @@
         <!-- List header + list -->
         <div class="list-header">
           <span>Date (UT)</span>
-          <span>Type</span>
-          <span style="text-align:right">Mag</span>
+          <span></span>
           <span style="text-align:right;padding-right:.25rem">Duration</span>
         </div>
         <div class="eclipse-list" id="eclipse-list">
@@ -1242,6 +1256,39 @@ function typeName(t) {
   return { T:'Total', A:'Annular', H:'Hybrid', P:'Partial',
            total:'Total', annular:'Annular', hybrid:'Hybrid', partial:'Partial' }[t] || t;
 }
+
+function typeIcon(tc) {
+  /* Returns an SVG icon for the eclipse type */
+  var s = 18; /* icon size */
+  switch (tc) {
+    case 'T':
+      /* Total — black disk with white corona rays */
+      return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 18 18" title="Total">'
+           + '<circle cx="9" cy="9" r="6" fill="var(--gold2)"/>'
+           + '<circle cx="9" cy="9" r="4.5" fill="#111"/>'
+           + '</svg>';
+    case 'A':
+      /* Annular — ring of fire */
+      return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 18 18" title="Annular">'
+           + '<circle cx="9" cy="9" r="6.5" fill="var(--blue)" opacity="0.85"/>'
+           + '<circle cx="9" cy="9" r="4" fill="var(--bg3)"/>'
+           + '</svg>';
+    case 'H':
+      /* Hybrid — half total half annular */
+      return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 18 18" title="Hybrid">'
+           + '<circle cx="9" cy="9" r="6.5" fill="var(--green)" opacity="0.85"/>'
+           + '<circle cx="9" cy="9" r="4" fill="var(--bg3)"/>'
+           + '<path d="M9,2.5 A6.5,6.5 0 0,1 9,15.5 Z" fill="#111"/>'
+           + '</svg>';
+    default:
+      /* Partial — crescent */
+      return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 18 18" title="Partial">'
+           + '<circle cx="9" cy="9" r="6" fill="var(--text-dim)" opacity="0.5"/>'
+           + '<circle cx="12" cy="9" r="5" fill="var(--bg3)"/>'
+           + '</svg>';
+  }
+}
+
 
 function typeCode(t) {
   /* Normalise to single uppercase letter for CSS class */
@@ -1552,15 +1599,11 @@ function renderList() {
            && selectedEntry.year===e.year
            && selectedEntry.month===e.month
            && selectedEntry.day===e.day;
-    var mag = locationResults !== null
-            ? (e.local_mag != null ? e.local_mag.toFixed(3) : '--')
-            : (e.magnitude  != null ? e.magnitude.toFixed(3) : '--');
     var dur = e.duration_secs > 0 ? fmtDur(e.duration_secs) : '--';
     return '<div class="eclipse-item' + (sel ? ' selected' : '') + '"'
          + ' onclick="selectEclipse(' + e.year + ',' + e.month + ',' + e.day + ')">'
          + '<span>' + fmtDate(e) + '</span>'
-         + '<span class="et-' + tc + '">' + typeName(tc) + '</span>'
-         + '<span style="text-align:right">' + mag + '</span>'
+         + '<span style="display:flex;align-items:center;justify-content:center">' + typeIcon(tc) + '</span>'
          + '<span style="text-align:right;padding-right:.25rem">' + dur + '</span>'
          + '</div>';
   }).join('');
@@ -1987,11 +2030,9 @@ function renderData(rec, _tz, _lat, _lon) {
     + buildContactRows(rec, res, lbl, tz)
     + '</tbody></table></details>'
 
-    + (rec ? '<div class="note">'
-    + 'Besselian elements: Espenak &amp; Meeus, '
-    + '<em>Five Millennium Canon of Solar Eclipses</em>.'
-    + ' No lunar limb correction applied.'
-    + '</div>' : '');
+    + (rec ? '<div class="note">No lunar limb correction applied.</div>' : '');
+
+
   }
 
   html += '</div>';
@@ -2445,6 +2486,8 @@ function createMap(style, isOnline, localStyleFallback) {
     center: [0, 30], zoom: 2, minZoom: 1, maxZoom: 18,
     maxPitch: 0,
     dragRotate: false,
+    touchPitch: false,
+    pitchWithRotate: false,
   });
 
   /* If we tried online and the style fails to load, swap in the local one. */
