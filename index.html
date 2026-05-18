@@ -536,14 +536,6 @@
       position:      relative;
       top:           -0.15rem;
     }
-    .result-sub {
-      font-family:    var(--mono);
-      font-size:      0.7rem;
-      color:          var(--text-dim);
-      letter-spacing: 0.06em;
-      margin-top:     0.2rem;
-    }
-
     .type-badge {
       font-family:    var(--mono);
       font-size:      0.7rem;
@@ -1123,7 +1115,7 @@
             <thead><tr><th>Token</th><th>Examples</th><th>Notes</th></tr></thead>
             <tbody>
               <tr><td>Today+</td><td>today+</td><td>From today forward</td></tr>
-              <tr><td>Year</td><td>2026<br>2026-2030<br>after 2100<br>before 500</td><td>Single, range, or open-ended</td></tr>
+              <tr><td>Year</td><td>2026<br>2026-2030<br>after 2100<br>before 500<br>44BC &nbsp; 44BCE<br>44BC 10AD<br>10BCE 10CE</td><td>Single, range, or open-ended. Two years = range (no dash needed). BC/BCE and AD/CE supported.</td></tr>
               <tr><td>Month</td><td>aug &nbsp; august &nbsp; Nov</td><td>3-letter or full name</td></tr>
               <tr><td>Day</td><td>28</td><td>Only meaningful with a month</td></tr>
               <tr><td>Saros</td><td>saros 126 &nbsp; s126</td><td>Requires "saros" or "s" prefix</td></tr>
@@ -1390,12 +1382,6 @@ function getAutoTzOffset() {
   return 0;
 }
 
-function setTzFromLon(lon) {
-  var sel = document.getElementById('tz');
-  if (sel.value !== 'auto') return; /* don't override manual selection */
-  /* Nothing to do — getTzOffset() handles auto dynamically */
-}
-
 
 /* ── Coordinate parsing — reads from currentFilter ───────────────────── */
 
@@ -1409,7 +1395,7 @@ function parseCoords() {
 
 var _scanDebounceTimer = null;
 
-function onSearchChanged() {
+function onSearchChanged(skipCompute) {
   var raw       = document.getElementById('search').value;
   var hadCoords = !!(currentFilter && currentFilter.coords);
   currentFilter = parseSearch(raw);
@@ -1429,8 +1415,10 @@ function onSearchChanged() {
   renderList();
   pushState();
 
-  if (selectedEntry && hasCoords) computeLocal();
-  else if (selectedEntry && !hasCoords) renderData();
+  if (!skipCompute) {
+    if (selectedEntry && hasCoords) computeLocal();
+    else if (selectedEntry && !hasCoords) renderData();
+  }
 
   syncMapIfVisible();
 
@@ -1694,7 +1682,39 @@ function computeLocal() {
 }
 
 
-/* ── Status messages ─────────────────────────────────────────────────── */
+/* ── Sunrise / Sunset ────────────────────────────────────────────────── */
+
+/* Binary-search for the UT offset (hours from t0) when sun altitude = 0.
+   Returns null if the sun doesn't cross the horizon in the search window. */
+function findHorizonCrossing(rec, lat, lonW, alt, dT_s, tStart, tEnd, rising) {
+  var ALT_THRESH = 0.01;
+  var MAX_ITER   = 40;
+  var aStart = sunAltAz(fundamentalArgs(rec, tStart, lat, lonW, alt, dT_s), lat).alt;
+  var aEnd   = sunAltAz(fundamentalArgs(rec, tEnd,   lat, lonW, alt, dT_s), lat).alt;
+  if (rising  && !(aStart < 0 && aEnd > 0)) return null;
+  if (!rising && !(aStart > 0 && aEnd < 0)) return null;
+  var lo = tStart, hi = tEnd;
+  for (var i = 0; i < MAX_ITER; i++) {
+    var mid = (lo + hi) / 2;
+    var a   = sunAltAz(fundamentalArgs(rec, mid, lat, lonW, alt, dT_s), lat).alt;
+    if (Math.abs(a) < ALT_THRESH) return mid;
+    if (rising ? (a < 0) : (a > 0)) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+function computeSunriseSunset(rec, lat, lon, alt) {
+  var dT_s  = rec.dt;
+  var lonW  = -lon;  /* east-positive → west-positive for fundamentalArgs */
+  var rise = null, set = null;
+  for (var t = -18; t < 18; t++) {
+    var a0 = sunAltAz(fundamentalArgs(rec, t,   lat, lonW, alt, dT_s), lat).alt;
+    var a1 = sunAltAz(fundamentalArgs(rec, t+1, lat, lonW, alt, dT_s), lat).alt;
+    if (rise === null && a0 < 0 && a1 > 0) rise = findHorizonCrossing(rec, lat, lonW, alt, dT_s, t, t+1, true);
+    if (set  === null && a0 > 0 && a1 < 0) set  = findHorizonCrossing(rec, lat, lonW, alt, dT_s, t, t+1, false);
+  }
+  return { rise: rise, set: set };
+}
 
 function setStatus(msg, isErr) {
   var el = document.getElementById('status-msg');
@@ -1818,6 +1838,42 @@ function scanLocation() {
 
 /* ── Render inline data panel ────────────────────────────────────────── */
 
+function buildContactRows(rec, res, lbl, tz) {
+  var contactRows = contactRow('C1 \u2014 Partial begins',     res.C1, '')
+    + contactRow('C2 \u2014 ' + lbl + ' begins', res.C2, 'row-umbral')
+    + '<tr class="row-max"><td>Maximum eclipse</td>'
+    + '<td>' + fmtUT(res.tMax)        + '</td>'
+    + '<td>' + fmtLocal(res.tMax, tz) + '</td>'
+    + '<td>' + fmtAng(res.sun.alt)    + '</td>'
+    + '<td>' + fmtAng(res.sun.az)     + '</td></tr>'
+    + contactRow('C3 \u2014 ' + lbl + ' ends',  res.C3, 'row-umbral')
+    + contactRow('C4 \u2014 Partial ends',        res.C4, '');
+
+  if (!rec) return contactRows;
+  var c = parseCoords();
+  if (!c) return contactRows;
+
+  var dT_s = rec.dt;
+  var lonW = -c.lon;
+  var alt  = _lookedUpAlt || 0;
+  var ss   = computeSunriseSunset(rec, c.lat, c.lon, alt);
+
+  function toUT(t) { return t !== null ? rec.t0 + t - dT_s / 3600 : null; }
+  function horizonRow(label, t, ut) {
+    if (ut === null) return '';
+    var az = sunAltAz(fundamentalArgs(rec, t, c.lat, lonW, alt, dT_s), c.lat).az;
+    return '<tr><td>' + label + '</td>'
+      + '<td>' + fmtUT(ut)        + '</td>'
+      + '<td>' + fmtLocal(ut, tz) + '</td>'
+      + '<td>0\u00b0</td>'
+      + '<td>' + fmtAng(az)       + '</td></tr>';
+  }
+
+  return horizonRow('Sunrise', ss.rise, toUT(ss.rise))
+    + contactRows
+    + horizonRow('Sunset', ss.set, toUT(ss.set));
+}
+
 function renderData(rec, _tz, _lat, _lon) {
   var panel = document.getElementById('data-panel');
   var inner = document.getElementById('data-inner');
@@ -1927,15 +1983,7 @@ function renderData(rec, _tz, _lat, _lon) {
     + '<table class="contacts-table"><thead><tr>'
     + '<th>Event</th><th>UT</th><th>' + tzStr + '</th><th>Sun alt</th><th>Sun az</th>'
     + '</tr></thead><tbody>'
-    + contactRow('C1 \u2014 Partial begins',     res.C1, '')
-    + contactRow('C2 \u2014 ' + lbl + ' begins', res.C2, 'row-umbral')
-    + '<tr class="row-max"><td>Maximum eclipse</td>'
-    + '<td>' + fmtUT(res.tMax)        + '</td>'
-    + '<td>' + fmtLocal(res.tMax, tz) + '</td>'
-    + '<td>' + fmtAng(res.sun.alt)    + '</td>'
-    + '<td>' + fmtAng(res.sun.az)     + '</td></tr>'
-    + contactRow('C3 \u2014 ' + lbl + ' ends',  res.C3, 'row-umbral')
-    + contactRow('C4 \u2014 Partial ends',        res.C4, '')
+    + buildContactRows(rec, res, lbl, tz)
     + '</tbody></table></details>'
 
     + (rec ? '<div class="note">'
@@ -2013,7 +2061,6 @@ function lookupElevationAndTz(lat, lon) {
     .catch(function () {});
 }
 
-function lookupTzOnly(lat, lon) {}
 /* ── Event wiring ────────────────────────────────────────────────────── */
 
 /* Search field — live filtering, Enter triggers location scan if coords present */
@@ -2026,7 +2073,6 @@ document.getElementById('search').addEventListener('keydown', function (e) {
     scanLocation();
     /* Also trigger elevation + tz lookup */
     lookupElevationAndTz(c.lat, c.lon);
-    lookupTzOnly(c.lat, c.lon);
   }
 });
 
@@ -2395,7 +2441,9 @@ function createMap(style, isOnline, localStyleFallback) {
   map = new maplibregl.Map({
     container: 'map',
     style: style,
-    center: [0, 30], zoom: 2, minZoom: 1, maxZoom: 18
+    center: [0, 30], zoom: 2, minZoom: 1, maxZoom: 18,
+    maxPitch: 0,
+    dragRotate: false,
   });
 
   /* If we tried online and the style fails to load, swap in the local one. */
@@ -2574,9 +2622,8 @@ function onMapClick(lat, lon) {
   var search = document.getElementById('search');
   var f      = parseSearch(search.value);
   search.value = filterToString(Object.assign({}, f, { coords:{lat:lat,lon:lon} }));
-  onSearchChanged();
+  onSearchChanged(true);
   lookupElevationAndTz(lat, lon);
-  lookupTzOnly(lat, lon);
 
   /* Auto-trigger location scan so the eclipse list populates */
   if (eclipseIndex.length) scanLocation();
@@ -2758,17 +2805,6 @@ function densifySegment(seg) {
    setDeckLayers() is the single point of truth — call it with an array
    of deck.gl layer objects whenever the eclipse changes.               */
 
-function hexToRgb255(hex) {
-  return [parseInt(hex.slice(1,3),16),
-          parseInt(hex.slice(3,5),16),
-          parseInt(hex.slice(5,7),16)];
-}
-
-function hexToRgba255(hex, opacity) {
-  var rgb = hexToRgb255(hex);
-  return [rgb[0], rgb[1], rgb[2], Math.round(opacity * 255)];
-}
-
 function setDeckLayers(layers) {
   if (deckOverlay) {
     deckOverlay.setProps({ layers: layers });
@@ -2798,12 +2834,6 @@ function segsToPathData(segs, id) {
     if (!seg || seg.length < 2) return null;
     return { id: id + '_' + i, path: wrapContinuous(densifySegment(seg)) };
   }).filter(Boolean);
-}
-
-/* Build a SolidPolygonLayer data entry from a ring of [lon,lat] points */
-function ringToPolygonData(ring, id) {
-  if (!ring || ring.length < 3) return [];
-  return [{ id: id, polygon: ring }];
 }
 
 /* Build corridor polygon data from two edge arrays for SolidPolygonLayer.
@@ -2838,8 +2868,7 @@ function corridorToPolygonData(nSegs, sSegs, id) {
   }
 
   var southR = resampleByParam(south, sp, np);
-  /* Closed ring: north forward + south reversed.
-     wrapContinuous ensures no longitude jump > 180° in the assembled ring. */
+  /* Closed ring: north forward + south reversed, longitude-continuous. */
   var ring = wrapContinuous(north.concat(southR.slice().reverse()));
   return [{ id: id, polygon: ring }];
 }
@@ -2854,13 +2883,16 @@ function drawEclipsePath(ep) {
   var uc        = isTotal ? [139,74,0] : [26,74,122];
   var layers    = [];
 
+  /* Polygon offset pushes all deck.gl geometry just above the globe surface
+     to prevent z-fighting when using interleaved: true. */
+
   /* ── Penumbra boundary lines ───────────────────────────────────────
      Penumbra limits, terminator lemniscates, and bisector — all drawn
      as the same style of thin blue line. No fill: the closed-ring
      assembly across penumbra ± terminator joins is not always
      well-defined (polar shadows have no closed ring at all), so we
      omit it entirely and let the outlines speak for themselves. */
-  var penPaths = ['penumbra_n','penumbra_s','terminator_first','terminator_last','bisector']
+  var penPaths = ['penumbra_n','penumbra_s','terminator_first','terminator_last']
     .reduce(function(acc, key) {
       var segs = ep[key];
       return segs && segs.length ? acc.concat(segsToPathData(segs, key)) : acc;
@@ -2880,14 +2912,18 @@ function drawEclipsePath(ep) {
   /* ── Umbra fill ─────────────────────────────────────────────────── */
   if (isCentral && ep.umbra_n && ep.umbra_s) {
     layers.push(new DeckGL.SolidPolygonLayer({
-      id: 'umbra-fill',
-      data: corridorToPolygonData(ep.umbra_n, ep.umbra_s, 'umb'),
-      getPolygon: function(d) { return d.polygon; },
+      id:           'umbra-fill',
+      data:         corridorToPolygonData(ep.umbra_n, ep.umbra_s, 'umb'),
+      getPolygon:   function(d) { return d.polygon; },
       getFillColor: uc.concat([46]),
-      stroked: false,
-      filled: true,
+      stroked:      false,
+      filled:       true,
+      parameters:   { depthWriteEnabled: false },
     }));
-    /* Umbra boundary lines */
+  }
+
+  /* ── Umbra boundary lines ────────────────────────────────────────── */
+  if (isCentral && ep.umbra_n && ep.umbra_s) {
     var umbraPaths = segsToPathData(ep.umbra_n, 'un')
                        .concat(segsToPathData(ep.umbra_s, 'us'));
     layers.push(new DeckGL.PathLayer({
@@ -2899,6 +2935,31 @@ function drawEclipsePath(ep) {
       widthUnits: 'pixels',
       widthMinPixels: 1,
     }));
+  }
+
+  /* ── Umbra ovals ───────────────────────────────────────────────────── */
+  if (/[TAH]/.test(ep.type||'') && ep.umbra_ovals && ep.umbra_ovals.length) {
+    var ovalFill = /[TH]/.test(ep.type||'') ? [139,74,0,60]   : [26,74,122,60];
+    var ovalLine = /[TH]/.test(ep.type||'') ? [180,120,20,200] : [42,90,180,200];
+    var ovalData = ep.umbra_ovals
+      .filter(function(r) { return r && r.length >= 3; })
+      .map(function(r, i) {
+        var ring = (r[0][0]===r[r.length-1][0] && r[0][1]===r[r.length-1][1])
+          ? r.slice(0,-1) : r;
+        return { id: 'oval-'+i, polygon: wrapContinuous(ring) };
+      });
+    if (ovalData.length) {
+      layers.push(new DeckGL.SolidPolygonLayer({
+        id:                 'umbra-ovals',
+        data:               ovalData,
+        getPolygon:         function(d) { return d.polygon; },
+        getFillColor:       ovalFill,
+        getLineColor:       ovalLine,
+        stroked:            true,
+        filled:             true,
+        lineWidthMinPixels: 1,
+      }));
+    }
   }
 
   /* ── Centreline ─────────────────────────────────────────────────── */
@@ -2935,31 +2996,6 @@ function drawEclipsePath(ep) {
     }
   }
 
-  /* ── Umbra ovals — deck.gl SolidPolygonLayer ──────────────────────
-     Must be added to layers[] before setDeckLayers() so they share
-     the same render pass. MapLibre GeoJSON Polygon can't handle
-     unwrapped longitudes across the antimeridian; deck.gl can. */
-  if (/[TAH]/.test(ep.type||'') && ep.umbra_ovals && ep.umbra_ovals.length) {
-    var isTotal  = /[TH]/.test(ep.type||'');
-    var ovalFill = isTotal ? [139,74,0,60]      : [26,74,122,60];
-    var ovalLine = isTotal ? [180,120,20,180]    : [42,90,180,180];
-    var ovalData = ep.umbra_ovals
-      .filter(function(r) { return r && r.length >= 3; })
-      .map(function(r, i) { return { id: 'oval-'+i, polygon: wrapContinuous(r) }; });
-    if (ovalData.length) {
-      layers.push(new DeckGL.SolidPolygonLayer({
-        id:                 'umbra-ovals',
-        data:               ovalData,
-        getPolygon:         function(d) { return d.polygon; },
-        getFillColor:       ovalFill,
-        getLineColor:       ovalLine,
-        stroked:            true,
-        filled:             true,
-        lineWidthMinPixels: 1,
-      }));
-    }
-  }
-
   /* ── Greatest eclipse point ─────────────────────────────────────── */
   if (ep.ge && ep.ge[0] != null) {
     /* ScatterplotLayer is not in this deck.gl build — approximate a circle
@@ -2971,15 +3007,29 @@ function drawEclipsePath(ep) {
       var a = (i / N) * Math.PI * 2;
       geRing.push([geLon + R * Math.cos(a), geLat + R * Math.sin(a) * 0.6]);
     }
+    /* Outer white halo */
+    var geHalo = [];
+    for (var i = 0; i <= N; i++) {
+      var a = (i / N) * Math.PI * 2;
+      geHalo.push([geLon + R*1.9 * Math.cos(a), geLat + R*1.9 * Math.sin(a) * 0.6]);
+    }
+    layers.push(new DeckGL.SolidPolygonLayer({
+      id:           'ge-halo',
+      data:         [{ polygon: geHalo }],
+      getPolygon:   function(d) { return d.polygon; },
+      getFillColor: [255,255,255,220],
+      stroked:      false,
+      filled:       true,
+      parameters:   { depthWriteEnabled: false },
+    }));
     layers.push(new DeckGL.SolidPolygonLayer({
       id:           'ge-point',
       data:         [{ polygon: geRing }],
       getPolygon:   function(d) { return d.polygon; },
       getFillColor: [204,34,0,255],
-      getLineColor: [10,12,15,255],
-      stroked:      true,
+      stroked:      false,
       filled:       true,
-      lineWidthMinPixels: 1.5,
+      parameters:   { depthWriteEnabled: false },
     }));
   }
 

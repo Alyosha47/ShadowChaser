@@ -319,6 +319,15 @@
     /* 9. Bare numbers — years and days */
     var yearBuf = [];
 
+    /* BCE/BC → negative astronomical year (10BC → -9); AD/CE → positive.
+       Must be before bare-number parsing so "10BC" doesn't partially match. */
+    s = s.replace(/\b(\d{1,4})\s*(?:bce?|bc)\b/gi, function (_, n) {
+      yearBuf.push(-(parseInt(n, 10) - 1)); return ' ';
+    });
+    s = s.replace(/\b(\d{1,4})\s*(?:ad|ce)\b/gi, function (_, n) {
+      yearBuf.push(parseInt(n, 10)); return ' ';
+    });
+
     /* Negative years: -1500, -500 etc — must be handled before bare positive numbers */
     s = s.replace(/(^|[\s,])(-\d{1,4})\b/g, function (match, pre, n) {
       var v = parseInt(n, 10);
