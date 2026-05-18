@@ -449,7 +449,7 @@
                 : e.magnitude   != null ? e.magnitude : null;
         if (mag === null) return false;
         var osc = mag >= 1 ? 100
-                : Math.round((Math.acos(1 - 2*mag) - Math.sin(Math.acos(1 - 2*mag))) / Math.PI * 100);
+                : (Math.acos(1 - 2*mag) - Math.sin(Math.acos(1 - 2*mag))) / Math.PI * 100;
         if (osc < filter.obscRange.min || osc > filter.obscRange.max) return false;
       }
 
@@ -475,7 +475,9 @@
     if (filter.today) {
       parts.push('today+');
     } else if (filter.years) {
-      if (filter.years.min === filter.years.max) {
+      if (filter.years.exactPair) {
+        parts.push(String(filter.years.max));  /* emit the bare positive year */
+      } else if (filter.years.min === filter.years.max) {
         parts.push(String(filter.years.min));
       } else if (filter.years.min === -1999) {
         parts.push('before ' + filter.years.max);
