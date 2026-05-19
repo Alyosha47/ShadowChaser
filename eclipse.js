@@ -350,6 +350,9 @@
     /* Sun position at maximum */
     var sun = sunAltAz(oMax, lat);
 
+    /* Eclipse is not observable if the Sun is below the horizon */
+    if (sun.alt <= 0) return { visible: false };
+
     /* Contact times (TDT offsets from t0) */
     var isCentral = (type === 'total' || type === 'annular' || type === 'hybrid');
     var tC1 = findContact(rec, tMax, lat, lonWest, alt, dT_s, false, -1);

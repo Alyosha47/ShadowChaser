@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="build" content="2026-05-18z">
+  <meta name="build" content="2026-05-19g">
   <title>ShadowChaser</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
@@ -525,14 +525,19 @@
     .data-grid {
       display:       grid;
       grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-      gap:           1px;
-      background:    var(--border);
+      gap:           0;
+      background:    var(--bg);
       border:        1px solid var(--border);
       border-radius: var(--radius);
       overflow:      hidden;
       margin-bottom: 1.25rem;
     }
-    .data-cell { background: var(--bg); padding: 0.7rem 0.85rem; }
+    .data-cell {
+      background: var(--bg);
+      padding: 0.7rem 0.85rem;
+      border-right:  1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
     .data-cell-label {
       font-family:    var(--mono);
       font-size:      0.62rem;
@@ -1087,7 +1092,7 @@
         </div>
 
         <div class="settings-section">
-          <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: 2026-05-18z</p>
+          <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: 2026-05-19g</p>
         </div>
 
       </details>
@@ -1161,7 +1166,7 @@
 /* ── Configuration ───────────────────────────────────────────────────── */
 
 var DATA_BASE = './data';
-var BUILD     = '2026-05-18z';
+var BUILD     = '2026-05-19g';
 
 
 /* ── Formatting utilities ────────────────────────────────────────────── */
@@ -1805,6 +1810,17 @@ function scanLocation() {
       document.getElementById('pill-loc').style.display = '';
       document.getElementById('scan-msg').textContent = 'Scanning\u2026';
       renderList();
+      /* Auto-select first eclipse in filtered results if none selected (don't switch tabs) */
+      if (!selectedEntry && results.length) {
+        var filtered = applyFilter(results, currentFilter);
+        var pick = filtered.length ? filtered[0] : results[0];
+        selectedEntry = pick;
+        updateHeaderSelection();
+        renderList();
+        pushState();
+        computeLocal();
+        if (mapReady) updateMapState();
+      }
       return;
     }
     document.getElementById('scan-fill').style.width =
@@ -2213,24 +2229,29 @@ function restoreFromHash() {
     document.getElementById('search').value = h.q;
   }
 
-  /* Apply search filter */
-  onSearchChanged();
-
-  /* If coords are in the restored search, trigger scan automatically */
-  if (currentFilter.coords && eclipseIndex.length) scanLocation();
-
-  /* Restore selected eclipse by cat_no */
+  /* Restore selected eclipse before onSearchChanged so pushState keeps e= */
   if (h.catNo) {
     for (var i = 0; i < eclipseIndex.length; i++) {
       var e = eclipseIndex[i];
       if (e.cat_no != null && Math.round(e.cat_no) === h.catNo) {
         selectedEntry = e;
-        updateHeaderSelection();
-        renderList();
-        computeLocal();
         break;
       }
     }
+  }
+
+  /* Apply search filter (skipCompute=true; we call computeLocal below) */
+  onSearchChanged(true);
+
+  /* If coords are in the restored search, trigger scan */
+  if (currentFilter.coords && eclipseIndex.length) scanLocation();
+
+  /* Now render with selectedEntry set */
+  if (selectedEntry) {
+    updateHeaderSelection();
+    renderList();
+    computeLocal();
+    if (mapReady) updateMapState();
   }
 }
 
