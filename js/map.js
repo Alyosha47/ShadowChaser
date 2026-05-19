@@ -1,7 +1,6 @@
 /* ── Map ─────────────────────────────────────────────────────────────── */
 
-var map            = null;
-var mapReady       = false;
+/* `map` and `mapReady` are AppState properties; see js/state.js. */
 var pathCache      = {};
 var mapMarkers     = [];
 var currentPathKey = null;

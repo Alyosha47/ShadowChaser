@@ -15,16 +15,49 @@ function loadChunk(key) {
 }
 
 
-/* ── UI state ────────────────────────────────────────────────────────── */
+/* ── AppState ────────────────────────────────────────────────────────── */
+/* Single object holding all shared cross-file state, with event subscriptions.
+   The old `var foo` globals (selectedEntry, mapReady, etc.) are kept working
+   via getter/setter shims on `window` so no call sites need to change yet. */
 
-var eclipseIndex    = [];
-var selectedEntry   = null;
-var activeTab       = 'map';
-var locationResults = null;
-var scanCache       = {};
-var scanCancelFlag  = false;
-var currentFilter   = parseSearch('');
-var localResult     = null;   // last computeEclipse result for current location
-var _lookedUpAlt    = null;   // elevation fetched for the current coords (not in search field)
+var AppState = (function () {
+  var data = {
+    eclipseIndex:    [],
+    selectedEntry:   null,
+    activeTab:       'map',
+    locationResults: null,
+    scanCache:       {},
+    scanCancelFlag:  false,
+    currentFilter:   parseSearch(''),
+    localResult:     null,
+    _lookedUpAlt:    null,
+    map:             null,
+    mapReady:        false
+  };
+  var listeners = {};
 
+  return {
+    get: function (key) { return data[key]; },
+    set: function (key, value) {
+      if (data[key] === value) return;
+      data[key] = value;
+      (listeners[key] || []).forEach(function (fn) {
+        try { fn(value); } catch (e) { console.error('AppState listener for ' + key, e); }
+      });
+    },
+    on: function (key, fn) {
+      (listeners[key] = listeners[key] || []).push(fn);
+    }
+  };
+})();
 
+/* Forwarding shims: keep existing global reads/writes working unchanged. */
+['eclipseIndex','selectedEntry','activeTab','locationResults','scanCache',
+ 'scanCancelFlag','currentFilter','localResult','_lookedUpAlt','map','mapReady']
+  .forEach(function (key) {
+    Object.defineProperty(window, key, {
+      get: function ()  { return AppState.get(key); },
+      set: function (v) { AppState.set(key, v); },
+      configurable: true
+    });
+  });
