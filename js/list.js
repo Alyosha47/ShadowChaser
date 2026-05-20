@@ -75,14 +75,14 @@ function renderList() {
 /* ── Eclipse selection ───────────────────────────────────────────────── */
 
 function selectEclipse(y, m, d) {
-  selectedEntry = null;
+  var found = null;
   for (var i = 0; i < eclipseIndex.length; i++) {
     var e = eclipseIndex[i];
-    if (e.year===y && e.month===m && e.day===d) { selectedEntry=e; break; }
+    if (e.year===y && e.month===m && e.day===d) { found = e; break; }
   }
+  selectedEntry = found;
   updateHeaderSelection();
   renderList();
-  pushState();
   if (selectedEntry) {
     computeLocal();
     switchTab('eclipse');
@@ -97,7 +97,6 @@ function clearSelection() {
   localResult   = null;
   updateHeaderSelection();
   renderList();
-  pushState();
   updateEclipseTabState();
   syncMapIfVisible();
 }

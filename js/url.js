@@ -81,21 +81,22 @@ document.getElementById('btn-locate').addEventListener('click', function () {
   }, { enableHighAccuracy: true, timeout: 15000 });
 });
 
-/* Settings accordion — only one group open at a time */
+/* Accordion: tapping one group closes the others. On desktop, CSS keeps
+   the headers hidden so this never fires from user action. */
 (function () {
+  var ready = false;
+  setTimeout(function () { ready = true; }, 0);
   var groups = ['sg-about', 'sg-instructions', 'sg-settings'];
   groups.forEach(function (id) {
     var el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('toggle', function () {
-      if (el.open) {
-        groups.forEach(function (otherId) {
-          if (otherId !== id) {
-            var other = document.getElementById(otherId);
-            if (other && other.open) other.open = false;
-          }
-        });
-      }
+      if (!ready || !el.open) return;
+      groups.forEach(function (otherId) {
+        if (otherId === id) return;
+        var other = document.getElementById(otherId);
+        if (other && other.open) other.open = false;
+      });
     });
   });
 })();
@@ -124,10 +125,12 @@ function pushState() {
   if (q) parts.push('q=' + encodeURIComponent(q));
   var tz = document.getElementById('tz').value;
   if (tz !== 'auto') parts.push('tz=' + encodeURIComponent(tz));
-  var hash = parts.length ? '#' + parts.join('&') : '#';
+  var hash = parts.length ? '#' + parts.join('&') : '';
   /* Use replaceState to avoid polluting browser history on every keystroke */
-  if (window.location.hash !== hash) {
-    history.replaceState(null, '', hash);
+  /* When hash is empty, compare against '' (current hash) — browser may report '' or '#'. */
+  var current = window.location.hash;
+  if (current !== hash && !(current === '#' && hash === '')) {
+    history.replaceState(null, '', hash || window.location.pathname + window.location.search);
   }
 }
 
@@ -149,6 +152,10 @@ function readHash() {
   });
   return out;
 }
+
+/* Auto-update URL when selection changes. Other triggers (search input, tz,
+   scan completion, initial load) still call pushState explicitly. */
+AppState.on('selectedEntry', pushState);
 
 /**
  * Restore state from URL hash after the index is loaded.
