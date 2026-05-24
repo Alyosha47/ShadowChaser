@@ -35,7 +35,8 @@ function onSearchChanged(skipCompute) {
     else if (selectedEntry && !hasCoords) renderData();
   }
 
-  syncMapIfVisible();
+  /* Coords come from this search input (DOM, not AppState) — explicit redraw. */
+  redrawIfMapVisible();
 
   /* Auto-scan: debounce 800ms after typing stops */
   clearTimeout(_scanDebounceTimer);

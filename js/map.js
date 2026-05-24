@@ -277,7 +277,6 @@ function createMap(style, isOnline, localStyleFallback) {
     }
 
     mapReady = true;
-    updateMapState();
   });
 
   map.on('click', function (e) { onMapClick(e.lngLat.lat, e.lngLat.lng); });
@@ -288,7 +287,9 @@ function createMap(style, isOnline, localStyleFallback) {
 }
 
 function onMapTabActivated() {
-  if (!map || !mapReady) { initMap(); } else { map.resize(); updateMapState(); }
+  if (!map || !mapReady) { initMap(); return; }
+  map.resize();
+  /* updateMapState will fire via the activeTab event subscription below. */
 }
 
 /* map-status overlay: two layers — a persistent eclipse label (low priority)
@@ -479,16 +480,22 @@ function showMapPopup(lat,lon,result,rec) {
   document.getElementById('map-popup').style.display='block';
 }
 
-function syncMapIfVisible() {
-  if (activeTab === 'map') {
-    if (mapReady) updateMapState();
-    /* else: updateMapState will be called from style.load when ready */
-  }
-}
-
 function clearMapLayers() {
   if (deckOverlay) deckOverlay.setProps({ layers: [] });
 }
+
+/* Auto-redraw the map whenever the data behind it changes — but only when
+   the Map tab is actually visible. Switching to the Map tab also triggers
+   a redraw (via the activeTab subscription) so the latest state is shown. */
+function redrawIfMapVisible() {
+  if (activeTab === 'map' && mapReady) updateMapState();
+}
+AppState.on('selectedEntry', redrawIfMapVisible);
+AppState.on('localResult',   redrawIfMapVisible);
+AppState.on('mapReady',      redrawIfMapVisible);
+AppState.on('activeTab', function (tab) {
+  if (tab === 'map' && mapReady) updateMapState();
+});
 
 /* ── Geodesic densification ───────────────────────────────────────────
    MapLibre draws GeoJSON LineStrings as straight lines in lon/lat space.

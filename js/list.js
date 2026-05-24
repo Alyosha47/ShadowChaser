@@ -89,7 +89,6 @@ function selectEclipse(y, m, d) {
   } else {
     updateEclipseTabState();
   }
-  syncMapIfVisible();
 }
 
 function clearSelection() {
@@ -98,7 +97,6 @@ function clearSelection() {
   updateHeaderSelection();
   renderList();
   updateEclipseTabState();
-  syncMapIfVisible();
 }
 
 function updateEclipseTabState() {

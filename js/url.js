@@ -194,12 +194,12 @@ function restoreFromHash() {
   /* If coords are in the restored search, trigger scan */
   if (currentFilter.coords && eclipseIndex.length) scanLocation();
 
-  /* Now render with selectedEntry set */
+  /* Now render with selectedEntry set. Map redraw fires via AppState event;
+     if mapReady isn't yet true, the mapReady subscription will redraw later. */
   if (selectedEntry) {
     updateHeaderSelection();
     renderList();
     computeLocal();
-    if (mapReady) updateMapState();
   }
 }
 

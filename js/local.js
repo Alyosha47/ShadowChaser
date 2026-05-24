@@ -24,7 +24,6 @@ function computeLocal() {
       localResult = computeEclipse(rec, lat, lon, alt);
       renderData(rec, tz, lat, lon);
       setStatus('', false);
-      syncMapIfVisible();
       return { rec: rec, result: localResult };
     } catch (err) {
       setStatus('Computation error: ' + err.message, true);
@@ -97,7 +96,8 @@ function clearLocationFilter() {
   updateCoordsStatus();
   renderList();
   if (selectedEntry) { localResult = null; renderData(); }
-  syncMapIfVisible();
+  /* Coords come from the DOM search input, not AppState — explicit redraw. */
+  redrawIfMapVisible();
 }
 
 function scanLocation() {
@@ -179,9 +179,8 @@ function scanLocation() {
         selectedEntry = pick;
         updateHeaderSelection();
         renderList();
-        pushState();
         computeLocal();
-        if (mapReady) updateMapState();
+        /* AppState events auto-fire pushState (url.js) and redrawIfMapVisible (map.js). */
       }
       return;
     }

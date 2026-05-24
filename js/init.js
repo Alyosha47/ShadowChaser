@@ -33,9 +33,8 @@ fetch(DATA_BASE + '/index.json?v=' + BUILD)
           selectedEntry = e;
           updateHeaderSelection();
           renderList();
-          pushState();
           computeLocal();
-          if (mapReady) updateMapState();
+          /* AppState events fire pushState (url.js) and redrawIfMapVisible (map.js). */
           break;
         }
       })();
