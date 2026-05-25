@@ -37,18 +37,12 @@ function buildContactRows(rec, res, lbl, tz) {
 }
 
 function renderData(rec, _tz, _lat, _lon) {
+  if (!selectedEntry) return;   /* nothing to render yet (init-time only) */
   var panel = document.getElementById('data-panel');
   var inner = document.getElementById('data-inner');
   var tz    = getTzOffset();
   var tzStr = tz >= 0 ? 'UTC+' + tz : 'UTC' + tz;
 
-  if (!selectedEntry) {
-    inner.innerHTML = '';
-    updateEclipseTabState();
-    return;
-  }
-
-  updateEclipseTabState();
 
   var typeCode  = (selectedEntry.eclipse_type||'P')[0].toLowerCase();
   var typeLabel = typeName((selectedEntry.eclipse_type||'P')[0]);
@@ -206,7 +200,7 @@ function lookupElevationAndTz(lat, lon) {
     var tzName = tzlookup(lat, lon);
     if (tzName) {
       window._deviceTz = tzName;
-      if (selectedEntry && localResult) renderData();
+      if (localResult) renderData();
     }
   }
 
@@ -221,7 +215,7 @@ function lookupElevationAndTz(lat, lon) {
       if (elev <= 0) return;
       _lookedUpAlt = elev;
       updateCoordsStatus();
-      if (selectedEntry) computeLocal();
+      computeLocal();
     })
     .catch(function () {});
 }

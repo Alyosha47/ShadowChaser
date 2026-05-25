@@ -608,16 +608,6 @@
       padding:     1rem 0;
     }
 
-    /* Empty state for the Eclipse tab — shown when nothing is selected. */
-    .eclipse-placeholder {
-      font-family: var(--mono);
-      font-size:   0.78rem;
-      color:       var(--text-dim);
-      font-style:  italic;
-      padding:     3rem 1.25rem;
-      text-align:  center;
-    }
-
     /* Status message */
     #status-msg {
       font-family: var(--mono);
@@ -1004,11 +994,8 @@
     <!-- ── Eclipse tab ────────────────────────────────────── -->
 
     <div class="tab-panel" id="tab-eclipse">
-      <div id="data-panel" style="display:none">
+      <div id="data-panel">
         <div id="data-inner"></div>
-      </div>
-      <div id="eclipse-placeholder" class="eclipse-placeholder">
-        Select an eclipse from the Search tab.
       </div>
     </div><!-- #tab-eclipse -->
 

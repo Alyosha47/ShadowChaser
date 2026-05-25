@@ -60,15 +60,6 @@ function renderList() {
   }
 
   list.innerHTML = html;
-
-  if (!currentFilter.text && !currentFilter.types && !currentFilter.years &&
-      !currentFilter.months && !selectedEntry && locationResults === null) {
-    var scrollIdx = anchor - start;
-    setTimeout(function () {
-      var child = list.children[scrollIdx];
-      if (child) list.scrollTop = child.offsetTop;
-    }, 60);
-  }
 }
 
 
@@ -109,18 +100,6 @@ function selectNextEclipse() {
     return e;
   }
   return null;
-}
-
-function updateEclipseTabState() {
-  var panel       = document.getElementById('data-panel');
-  var placeholder = document.getElementById('eclipse-placeholder');
-  if (selectedEntry) {
-    panel.style.display       = '';
-    placeholder.style.display = 'none';
-  } else {
-    panel.style.display       = 'none';
-    placeholder.style.display = '';
-  }
 }
 
 function updateHeaderSelection() {

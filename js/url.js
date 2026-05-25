@@ -66,16 +66,11 @@ document.getElementById('btn-locate').addEventListener('click', function () {
     onSearchChanged(true);
     lookupElevationAndTz(lat, lon);
     if (eclipseIndex.length) scanLocation();
-    if (selectedEntry) {
-      computeLocal().then(function (out) {
-        if (!out) return;
-        clearMapMarkers();
-        addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
-      });
-    } else {
+    computeLocal().then(function (out) {
+      if (!out) return;
       clearMapMarkers();
-      addObserverMarker(lat, lon, null);
-    }
+      addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
+    });
   }, function () {
     setStatus('Location unavailable.', true);
   }, { enableHighAccuracy: true, timeout: 15000 });
@@ -103,7 +98,7 @@ document.getElementById('btn-locate').addEventListener('click', function () {
 
 document.getElementById('tz').addEventListener('change', function () {
   pushState();
-  if (selectedEntry && localResult) renderData();
+  if (localResult) renderData();
 });
 
 
@@ -117,8 +112,9 @@ document.getElementById('tz').addEventListener('change', function () {
  * tz is the selected timezone value.
  */
 function pushState() {
+  if (!selectedEntry) return;   /* nothing to push yet (init-time only) */
   var parts = [];
-  if (selectedEntry && selectedEntry.cat_no != null) {
+  if (selectedEntry.cat_no != null) {
     parts.push('e=' + Math.round(selectedEntry.cat_no));
   }
   var q = document.getElementById('search').value.trim();
@@ -177,8 +173,11 @@ function restoreFromHash() {
     document.getElementById('search').value = h.q;
   }
 
-  /* Restore selected eclipse before onSearchChanged so pushState keeps e= */
+  /* Restore selected eclipse. If a catNo was specified, that overrides
+     whatever is currently selected — including clearing to null if the
+     catNo isn't in our catalogue (the fallback below picks a default). */
   if (h.catNo) {
+    selectedEntry = null;
     for (var i = 0; i < eclipseIndex.length; i++) {
       var e = eclipseIndex[i];
       if (e.cat_no != null && Math.round(e.cat_no) === h.catNo) {
@@ -194,21 +193,20 @@ function restoreFromHash() {
   /* If coords are in the restored search, trigger scan */
   if (currentFilter.coords && eclipseIndex.length) scanLocation();
 
-  /* Now render with selectedEntry set. Map redraw fires via AppState event;
-     if mapReady isn't yet true, the mapReady subscription will redraw later. */
-  if (selectedEntry) {
-    updateHeaderSelection();
-    renderList();
-    computeLocal();
-  }
+  /* If the hash referenced an eclipse we don't have, fall back to default. */
+  if (!selectedEntry) selectNextEclipse();
+
+  /* Render with the restored (or fallback) selection. Map redraw fires via
+     AppState event; if mapReady isn't yet true, the mapReady subscription
+     will redraw later. */
+  updateHeaderSelection();
+  renderList();
+  computeLocal();
 }
 
 /* Re-apply state when the user edits the URL hash directly. pushState uses
    replaceState which does NOT fire hashchange, so there's no loop. */
-window.addEventListener('hashchange', function () {
-  restoreFromHash();
-  if (!selectedEntry && typeof selectNextEclipse === 'function') selectNextEclipse();
-});
+window.addEventListener('hashchange', restoreFromHash);
 
 
 

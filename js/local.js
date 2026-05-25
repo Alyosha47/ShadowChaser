@@ -1,7 +1,6 @@
 /* ── Local circumstances computation ────────────────────────────────── */
 
 function computeLocal() {
-  if (!selectedEntry) return Promise.resolve(null);
   var coords = parseCoords();
   if (!coords) { renderData(); return Promise.resolve(null); }
 
@@ -95,7 +94,9 @@ function clearLocationFilter() {
   document.getElementById('scan-bar').style.display = 'none';
   updateCoordsStatus();
   renderList();
-  if (selectedEntry) { localResult = null; renderData(); }
+  localResult = null;
+  renderData();
+  pushState();   /* search value changed — keep URL in sync */
   /* Coords come from the DOM search input, not AppState — explicit redraw. */
   redrawIfMapVisible();
 }
@@ -172,16 +173,6 @@ function scanLocation() {
       document.getElementById('pill-loc').style.display = '';
       document.getElementById('scan-msg').textContent = 'Scanning\u2026';
       renderList();
-      /* Auto-select first eclipse in filtered results if none selected (don't switch tabs) */
-      if (!selectedEntry && results.length) {
-        var filtered = applyFilter(results, currentFilter);
-        var pick = filtered.length ? filtered[0] : results[0];
-        selectedEntry = pick;
-        updateHeaderSelection();
-        renderList();
-        computeLocal();
-        /* AppState events auto-fire pushState (url.js) and redrawIfMapVisible (map.js). */
-      }
       return;
     }
     document.getElementById('scan-fill').style.width =

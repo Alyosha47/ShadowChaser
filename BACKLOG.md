@@ -108,6 +108,8 @@ Not for action during the current refactor passes.
 
 - **Share link encoding** — if eclipse is selected, drop the full search state
   from URL (just `e=` + coords).
+- **Prettier share modal/sheet** — current presentation works but is plain;
+  needs visual polish.
 - **New eclipse icons** — diamond ring for total, obscuration percentage for
   partial (see screenshot examples from prior session).
 - **Intelligent list scrolling** — scroll selected into view.
@@ -154,7 +156,16 @@ Not for action during the current refactor passes.
   - Step 1 ✓ AppState + forwarding shims.
   - Step 2 ✓ URL auto-updates via AppState event; settings accordion fixed.
   - Step 3 ✓ map subsystem event-driven; 9 mapReady guards collapsed to 1.
-- **Pass C** — deferred. Loose ends: search input still DOM-driven (not on
-  AppState); map.js still 833 lines (split deferred until a bug motivates it);
-  similar event wiring possible for list/details. Likely tackled incrementally
-  alongside backlog bugs rather than as a dedicated effort.
+- **Always-selected eclipse** ✓ done (2026-05-21) — removed deselect UI, removed
+  most null branches; left three init-time preconditions in `pushState`,
+  `updateMapState`, `renderData`.
+- **Pass C** — deferred. Things to tackle:
+  - **Init-time preconditions are patchy.** Three functions (`pushState`,
+    `updateMapState`, `renderData`) have early-returns labelled "init-time only"
+    because events fire before `selectNextEclipse` completes. The architectural
+    fix is: don't fire events for things that don't yet exist. Wire selection
+    *before* anything subscribes, or buffer events until init completes.
+  - Search input still DOM-driven (not on AppState).
+  - map.js still 833 lines (split deferred until a bug motivates it).
+  - Similar event wiring possible for list/details.
+  - Likely tackled incrementally alongside backlog bugs.

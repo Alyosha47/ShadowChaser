@@ -1,7 +1,6 @@
 /* ── Share ───────────────────────────────────────────────────────────── */
 
 function buildShareText() {
-  if (!selectedEntry) return '';
   var lines = [];
   var e = selectedEntry;
   var typeLabel = typeName((e.eclipse_type||'P')[0]);

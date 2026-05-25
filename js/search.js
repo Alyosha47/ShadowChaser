@@ -22,7 +22,7 @@ function onSearchChanged(skipCompute) {
     _lookedUpAlt    = null;
     document.getElementById('pill-loc').style.display = 'none';
     document.getElementById('scan-bar').style.display = 'none';
-    if (selectedEntry) { localResult = null; }
+    localResult     = null;
   }
 
   updatePillStates();
@@ -31,8 +31,8 @@ function onSearchChanged(skipCompute) {
   pushState();
 
   if (!skipCompute) {
-    if (selectedEntry && hasCoords) computeLocal();
-    else if (selectedEntry && !hasCoords) renderData();
+    if (hasCoords) computeLocal();
+    else           renderData();
   }
 
   /* Coords come from this search input (DOM, not AppState) — explicit redraw. */

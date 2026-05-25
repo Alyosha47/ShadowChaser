@@ -312,16 +312,11 @@ function _renderMapStatus() {
 }
 
 function updateMapState() {
-  if (!mapReady) return;
+  if (!mapReady)      return;
+  if (!selectedEntry) return;   /* not ready yet (init-time only) */
   clearMapLayers();
   clearMapMarkers();
   var coords = parseCoords();
-
-  if (!selectedEntry) {
-    document.getElementById('map-popup').style.display = 'none';
-    if (coords) addObserverMarker(coords.lat, coords.lon, null);
-    return;
-  }
 
   setMapStatus('Loading path\u2026');
   loadPathChunk(selectedEntry).then(function (pathData) {
@@ -422,12 +417,6 @@ function onMapClick(lat, lon) {
 
   /* Auto-trigger location scan so the eclipse list populates */
   if (eclipseIndex.length) scanLocation();
-
-  if (!selectedEntry) {
-    clearMapMarkers();
-    addObserverMarker(lat, lon, null);
-    return;
-  }
 
   /* Single computation via computeLocal — it sets localResult, renders the
      data panel, and we then feed the same result into the map popup. */

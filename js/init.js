@@ -17,8 +17,6 @@ fetch(DATA_BASE + '/index.json?v=' + BUILD)
     /* Restore from URL hash if present, else apply default search */
     if (window.location.hash && window.location.hash.length > 1) {
       restoreFromHash();
-      /* If the hash referenced an eclipse we don't have, fall back to default. */
-      if (!selectedEntry) selectNextEclipse();
     } else {
       onSearchChanged();
       selectNextEclipse();
