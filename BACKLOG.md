@@ -87,6 +87,12 @@ Not for action during the current refactor passes.
   Consider merging into one section.
 - **Time zone instruction may be backwards** — verify the wording matches
   actual behaviour, then fix copy or behaviour.
+- **Mobile initial zoom too close** — on launch or eclipse change in mobile
+  mode, start zoomed out enough to see where on the globe you are. Overview
+  rather than closeup.
+- **Desktop map-tap rotation flash** — clicking map starts the globe rotating
+  just as the tab transition begins; you see a jarring fragment. Goes away
+  once the sidebar layout lands (no tab switch needed); deferred until then.
 
 ---
 
@@ -148,6 +154,9 @@ Not for action during the current refactor passes.
   scaled flatmap paths? Could be cheap if simplified.
 - **Drop or make-optional pre-1000 CE eclipses** — how much load/data does
   that shed? Cost/benefit.
+- **Trim unused Cormorant Garamond weights** — only `.app-title` uses it
+  (weight 300). The other four loaded weights (400, 600, italics) are dead
+  after the About-text font switch. ~70% font-payload reduction.
 
 ---
 
