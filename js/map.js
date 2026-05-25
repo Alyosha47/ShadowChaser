@@ -426,9 +426,13 @@ function onMapClick(lat, lon) {
     showMapPopup(lat, lon, out.result, out.rec);
     clearMapMarkers();
     addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
-    /* On desktop, jump to Details so the user sees the local circumstances.
+    /* On desktop (sidebar layout), if the user is on the Search sub-tab,
+       swap to Details so the local circumstances appear. Otherwise leave
+       the sidebar tab alone (they're already on Details or exploring overlays).
        On mobile, stay on the map so the user can see the pin they placed. */
-    if (window.matchMedia('(min-width: 601px)').matches) switchTab('eclipse');
+    if (window.matchMedia('(min-width: 900px)').matches) {
+      if (sidebarTab === 'search') sidebarTab = 'eclipse';
+    }
   });
 }
 
@@ -476,17 +480,19 @@ function clearMapLayers() {
 }
 
 /* Auto-redraw the map whenever the data behind it changes — but only when
-   the Map tab is actually visible. Switching to the Map tab also triggers
-   a redraw (via the activeTab subscription) so the latest state is shown. */
+   the map is actually visible. On desktop the map is always visible (sidebar
+   layout); on mobile, only when the Map tab is active. */
+function isMapVisible() {
+  return mapReady && (activeTab === 'map' ||
+                      window.matchMedia('(min-width: 900px)').matches);
+}
 function redrawIfMapVisible() {
-  if (activeTab === 'map' && mapReady) updateMapState();
+  if (isMapVisible()) updateMapState();
 }
 AppState.on('selectedEntry', redrawIfMapVisible);
 AppState.on('localResult',   redrawIfMapVisible);
 AppState.on('mapReady',      redrawIfMapVisible);
-AppState.on('activeTab', function (tab) {
-  if (tab === 'map' && mapReady) updateMapState();
-});
+AppState.on('activeTab',     redrawIfMapVisible);
 
 /* ── Geodesic densification ───────────────────────────────────────────
    MapLibre draws GeoJSON LineStrings as straight lines in lon/lat space.

@@ -16,6 +16,29 @@ document.querySelectorAll('.tab-btn').forEach(function (b) {
 });
 
 
+/* ── Sidebar sub-tab navigation (desktop only) ──────────────────────────
+   CSS uses body[data-sidebar-tab] to choose which panel is visible.
+   Buttons are present in DOM on all viewports but hidden on mobile. */
+
+function switchSidebarTab(name) {
+  sidebarTab = name;
+}
+
+AppState.on('sidebarTab', function (name) {
+  document.body.setAttribute('data-sidebar-tab', name);
+  document.querySelectorAll('.sidebar-tab-btn').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.sidebarTab === name);
+  });
+});
+
+document.querySelectorAll('.sidebar-tab-btn').forEach(function (b) {
+  b.addEventListener('click', function () { switchSidebarTab(b.dataset.sidebarTab); });
+});
+
+/* Set initial data attribute (sidebarTab default is 'eclipse'). */
+document.body.setAttribute('data-sidebar-tab', sidebarTab);
+
+
 /* ── Timezone selector ───────────────────────────────────────────────── */
 
 /* Compact list of common named zones with their standard UTC offsets (hours).

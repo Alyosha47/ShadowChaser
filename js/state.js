@@ -25,6 +25,7 @@ var AppState = (function () {
     eclipseIndex:    [],
     selectedEntry:   null,
     activeTab:       'map',
+    sidebarTab:      'eclipse',
     locationResults: null,
     scanCache:       {},
     scanCancelFlag:  false,
@@ -52,7 +53,7 @@ var AppState = (function () {
 })();
 
 /* Forwarding shims: keep existing global reads/writes working unchanged. */
-['eclipseIndex','selectedEntry','activeTab','locationResults','scanCache',
+['eclipseIndex','selectedEntry','activeTab','sidebarTab','locationResults','scanCache',
  'scanCancelFlag','currentFilter','localResult','_lookedUpAlt','map','mapReady']
   .forEach(function (key) {
     Object.defineProperty(window, key, {

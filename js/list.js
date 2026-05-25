@@ -76,7 +76,9 @@ function selectEclipse(y, m, d) {
   updateHeaderSelection();
   renderList();
   computeLocal();
-  switchTab('eclipse');
+  /* Mobile: switch to Details panel. Desktop: stay where the user is —
+     selecting from the list while on Search is part of the exploration flow. */
+  if (!window.matchMedia('(min-width: 900px)').matches) switchTab('eclipse');
 }
 
 /* Pick the next upcoming total or annular eclipse from today's date.

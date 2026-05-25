@@ -960,6 +960,87 @@
       .map-popup { display: none !important; }
     }
 
+
+    /* ── Sidebar sub-tab buttons (DOM-present on all viewports;
+          visually hidden on mobile, shown on desktop) ─────────────────── */
+
+    .sidebar-tabs { display: none; }
+
+    .sidebar-tab-btn {
+      flex:           1;
+      background:     transparent;
+      color:          var(--text-dim);
+      border:         none;
+      border-bottom:  1px solid var(--border);
+      padding:        0.5rem 0.25rem;
+      font-family:    var(--mono);
+      font-size:      0.72rem;
+      letter-spacing: 0.05em;
+      cursor:         pointer;
+      white-space:    nowrap;
+    }
+    .sidebar-tab-btn:hover  { color: var(--text); }
+    .sidebar-tab-btn.active {
+      color:         var(--gold);
+      border-bottom: 1px solid var(--gold);
+    }
+
+
+    /* ── Desktop layout: two-column grid with right-side sidebar ─────── */
+
+    @media (min-width: 900px) {
+
+      /* Two-column flex inside .tab-content: map flexes, sidebar fixed-width */
+      .tab-content {
+        display:        flex;
+        flex-direction: row;
+      }
+
+      /* Bottom tab-bar (mobile only) is hidden on desktop */
+      .tab-bar { display: none; }
+
+      /* Map: always visible, dominant left column */
+      #tab-map {
+        position: relative;
+        inset:    auto;
+        flex:     1 1 auto;
+        display:  block;
+        padding:  0;
+      }
+
+      /* Sidebar: fixed-width right column with sub-tabs on top */
+      .sidebar {
+        display:        flex;
+        flex-direction: column;
+        flex:           0 0 360px;
+        border-left:    1px solid var(--border);
+        background:     var(--bg);
+        overflow:       hidden;
+      }
+      .sidebar-tabs {
+        display:        flex;
+        flex-direction: row;
+        background:     var(--bg1);
+      }
+
+      /* Panels inside sidebar: one shown at a time based on data-sidebar-tab */
+      .sidebar .tab-panel {
+        position:  relative;
+        inset:     auto;
+        flex:      1 1 auto;
+        display:   none;
+        padding:   1rem 1.25rem 2rem;
+      }
+      .sidebar .tab-panel > * { max-width: none; margin: 0; }
+
+      body[data-sidebar-tab="search"]   #tab-search,
+      body[data-sidebar-tab="eclipse"]  #tab-eclipse,
+      body[data-sidebar-tab="mapctrl"]  #tab-mapctrl,
+      body[data-sidebar-tab="settings"] #tab-settings {
+        display: block;
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -988,16 +1069,7 @@
 
   <div class="tab-content">
 
-
-    <!-- ── Eclipse tab ────────────────────────────────────── -->
-
-    <div class="tab-panel" id="tab-eclipse">
-      <div id="data-panel">
-        <div id="data-inner"></div>
-      </div>
-    </div><!-- #tab-eclipse -->
-
-    <!-- ── Share modal ──────────────────────────────────── -->
+    <!-- ── Share modal (fixed-position, floats over everything) ─────── -->
     <div class="share-modal-backdrop" id="share-modal-backdrop">
       <div class="share-modal">
         <h3>Share Eclipse</h3>
@@ -1008,54 +1080,6 @@
         </div>
       </div>
     </div>
-
-
-    <!-- ── Search tab ────────────────────────────────────── -->
-
-    <div class="tab-panel" id="tab-search">
-      <div class="panel">
-
-        <div class="search-box">
-          <input type="text" id="search"
-                 value="today+ total annular hybrid"
-                 placeholder="today+  ·  year  ·  total  ·  s126  ·  (lat, lon)  ·  >47%">
-          <button class="search-clear" id="btn-search-clear" title="Clear search">&times;</button>
-        </div>
-
-        <div class="search-hint">
-          <strong>today+</strong> &nbsp; year month day &nbsp; <strong>s126</strong> &nbsp; <strong>&gt;47%</strong> &nbsp; <strong>(lat, lon)</strong>
-        </div>
-
-        <div class="pill-row" id="pill-row">
-          <button class="pill" id="pill-today">today+</button>
-          <button class="pill" id="pill-total">Total</button>
-          <button class="pill" id="pill-annular">Annular</button>
-          <button class="pill" id="pill-hybrid">Hybrid</button>
-          <button class="pill" id="pill-partial">Partial</button>
-          <div class="partial-slider-wrap" id="partial-slider-wrap" style="display:none">
-            <input type="range" id="partial-min" min="0" max="99" value="70" step="1">
-            <span class="partial-min-label" id="partial-min-label">&gt;70%</span>
-          </div>
-          <button class="pill pill-loc" id="pill-loc" style="display:none">&times;&nbsp;Location filter</button>
-        </div>
-
-        <div id="coords-status" style="font-family:var(--mono);font-size:0.68rem;color:var(--text-dim);margin-bottom:0.2rem;min-height:1rem"></div>
-
-        <div class="scan-bar" id="scan-bar" style="display:none">
-          <div class="scan-progress">
-            <span id="scan-msg">Scanning&hellip;</span>
-            <div class="progress-track"><div class="progress-fill" id="scan-fill"></div></div>
-          </div>
-          <button class="btn btn-ghost" id="btn-scan-cancel">Cancel</button>
-        </div>
-
-        <div class="eclipse-list" id="eclipse-list">
-          <div class="list-status">Loading catalogue&hellip;</div>
-        </div>
-        <div id="status-msg"></div>
-
-      </div><!-- /.panel -->
-    </div><!-- #tab-search -->
 
 
     <!-- ── Map tab ────────────────────────────────────────── -->
@@ -1090,6 +1114,86 @@
       </div>
 
     </div>
+
+
+    <!-- ── Sidebar wrapper (desktop only — mobile lets panels behave as siblings) -->
+    <div class="sidebar">
+
+      <!-- Sub-tab buttons (visible on desktop only via CSS) -->
+      <nav class="sidebar-tabs">
+        <button class="sidebar-tab-btn" data-sidebar-tab="search">🔍 Search</button>
+        <button class="sidebar-tab-btn active" data-sidebar-tab="eclipse">☀️ Details</button>
+        <button class="sidebar-tab-btn" data-sidebar-tab="mapctrl">🌍 Map</button>
+        <button class="sidebar-tab-btn" data-sidebar-tab="settings">⚙️ Settings</button>
+      </nav>
+
+
+      <!-- ── Eclipse tab ────────────────────────────────────── -->
+
+      <div class="tab-panel" id="tab-eclipse">
+        <div id="data-panel">
+          <div id="data-inner"></div>
+        </div>
+      </div><!-- #tab-eclipse -->
+
+
+      <!-- ── Search tab ────────────────────────────────────── -->
+
+      <div class="tab-panel" id="tab-search">
+        <div class="panel">
+
+          <div class="search-box">
+            <input type="text" id="search"
+                   value="today+ total annular hybrid"
+                   placeholder="today+  ·  year  ·  total  ·  s126  ·  (lat, lon)  ·  >47%">
+            <button class="search-clear" id="btn-search-clear" title="Clear search">&times;</button>
+          </div>
+
+          <div class="search-hint">
+            <strong>today+</strong> &nbsp; year month day &nbsp; <strong>s126</strong> &nbsp; <strong>&gt;47%</strong> &nbsp; <strong>(lat, lon)</strong>
+          </div>
+
+          <div class="pill-row" id="pill-row">
+            <button class="pill" id="pill-today">today+</button>
+            <button class="pill" id="pill-total">Total</button>
+            <button class="pill" id="pill-annular">Annular</button>
+            <button class="pill" id="pill-hybrid">Hybrid</button>
+            <button class="pill" id="pill-partial">Partial</button>
+            <div class="partial-slider-wrap" id="partial-slider-wrap" style="display:none">
+              <input type="range" id="partial-min" min="0" max="99" value="70" step="1">
+              <span class="partial-min-label" id="partial-min-label">&gt;70%</span>
+            </div>
+            <button class="pill pill-loc" id="pill-loc" style="display:none">&times;&nbsp;Location filter</button>
+          </div>
+
+          <div id="coords-status" style="font-family:var(--mono);font-size:0.68rem;color:var(--text-dim);margin-bottom:0.2rem;min-height:1rem"></div>
+
+          <div class="scan-bar" id="scan-bar" style="display:none">
+            <div class="scan-progress">
+              <span id="scan-msg">Scanning&hellip;</span>
+              <div class="progress-track"><div class="progress-fill" id="scan-fill"></div></div>
+            </div>
+            <button class="btn btn-ghost" id="btn-scan-cancel">Cancel</button>
+          </div>
+
+          <div class="eclipse-list" id="eclipse-list">
+            <div class="list-status">Loading catalogue&hellip;</div>
+          </div>
+          <div id="status-msg"></div>
+
+        </div><!-- /.panel -->
+      </div><!-- #tab-search -->
+
+
+      <!-- ── Map overlay-controls (desktop sidebar only — placeholder) -->
+
+      <div class="tab-panel" id="tab-mapctrl">
+        <div class="panel">
+          <p style="font-family:var(--mono);font-size:0.78rem;color:var(--text-dim);padding:1rem">
+            Map overlay controls &mdash; coming soon.
+          </p>
+        </div>
+      </div><!-- #tab-mapctrl -->
 
 
     <!-- ── Settings tab ────────────────────────────────────── -->
@@ -1193,6 +1297,8 @@
       </details>
 
     </div><!-- #tab-settings -->
+
+    </div><!-- .sidebar -->
 
   </div><!-- .tab-content -->
 
