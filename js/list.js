@@ -45,7 +45,7 @@ function renderList() {
            && selectedEntry.day===e.day;
     var dur = e.duration_secs > 0 ? fmtDur(e.duration_secs) : '--';
     return '<div class="eclipse-item' + (sel ? ' selected' : '') + '"'
-         + (sel ? ' onclick="clearSelection()"' : ' onclick="selectEclipse(' + e.year + ',' + e.month + ',' + e.day + ')"')
+         + (sel ? '' : ' onclick="selectEclipse(' + e.year + ',' + e.month + ',' + e.day + ')"')
          + '>'
          + '<span style="display:flex;align-items:center;justify-content:center">' + typeIcon(tc) + '</span>'
          + '<span>' + fmtDate(e) + '</span>'
@@ -80,23 +80,35 @@ function selectEclipse(y, m, d) {
     var e = eclipseIndex[i];
     if (e.year===y && e.month===m && e.day===d) { found = e; break; }
   }
+  if (!found) return;
   selectedEntry = found;
   updateHeaderSelection();
   renderList();
-  if (selectedEntry) {
-    computeLocal();
-    switchTab('eclipse');
-  } else {
-    updateEclipseTabState();
-  }
+  computeLocal();
+  switchTab('eclipse');
 }
 
-function clearSelection() {
-  selectedEntry = null;
-  localResult   = null;
-  updateHeaderSelection();
-  renderList();
-  updateEclipseTabState();
+/* Pick the next upcoming total or annular eclipse from today's date.
+   Used at cold start, and as fallback when a URL hash references an
+   eclipse we don't have in the catalogue. Returns the entry, or null
+   only if the catalogue is empty / has nothing after today. */
+function selectNextEclipse() {
+  var now = new Date();
+  var ty = now.getFullYear(), tm = now.getMonth() + 1, td = now.getDate();
+  for (var i = 0; i < eclipseIndex.length; i++) {
+    var e  = eclipseIndex[i];
+    var tc = (e.eclipse_type || '')[0].toUpperCase();
+    if (tc !== 'T' && tc !== 'A') continue;
+    if (e.year  <  ty)                                    continue;
+    if (e.year === ty && e.month <  tm)                   continue;
+    if (e.year === ty && e.month === tm && e.day < td)    continue;
+    selectedEntry = e;
+    updateHeaderSelection();
+    renderList();
+    computeLocal();
+    return e;
+  }
+  return null;
 }
 
 function updateEclipseTabState() {

@@ -85,7 +85,6 @@ function renderData(rec, _tz, _lat, _lon) {
 
   + '<div class="detail-title">' + fmtDate(selectedEntry) + '<span class="detail-title-type">' + typeLabel + '</span>'
   + '<button class="share-btn" onclick="shareEclipse()">&#x2197; Share</button>'
-  + '<button class="share-btn" onclick="clearSelection()" style="margin-right:0.35rem" title="Deselect">&#x2715;</button>'
   + '</div>'
 
   + '<div class="top-section-header">Global Circumstances</div>'

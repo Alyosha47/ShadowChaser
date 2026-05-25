@@ -203,5 +203,12 @@ function restoreFromHash() {
   }
 }
 
+/* Re-apply state when the user edits the URL hash directly. pushState uses
+   replaceState which does NOT fire hashchange, so there's no loop. */
+window.addEventListener('hashchange', function () {
+  restoreFromHash();
+  if (!selectedEntry && typeof selectNextEclipse === 'function') selectNextEclipse();
+});
+
 
 

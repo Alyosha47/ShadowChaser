@@ -50,6 +50,19 @@ Not for action during the current refactor passes.
 - **Map tap on mobile** = place pin, stay on Map tab. (Desktop keeps current
   behavior — pin + overlay updates immediately since list is visible.)
 - **Tab order** = Search · Details · Map · Settings  (reverse of current).
+- **Always-selected eclipse** — app loads with the next total selected; user
+  changes selection by picking another. Remove the × deselect button and
+  tap-selected-list-item-to-deselect. `selectedEntry` is never null after
+  initial load. Simplifies state, URL always has `e=`, removes null-branch
+  rendering paths.
+- **Desktop sidebar layout** — right column with three Photoshop-style tabs:
+  Search · Details · Map (overlay controls). Map+details visible together;
+  list pulled forward only when actively choosing.
+  - Map click switches sidebar to Details only if Search is active.
+  - Default sidebar tab on cold load: Details (eclipse is preselected).
+  - Selecting an eclipse from the list does NOT auto-switch the sidebar.
+    User stays on Search, explores via map, then taps Details/Map when ready.
+  - Mobile: unchanged tab structure for now.
 
 ---
 
@@ -85,6 +98,9 @@ Not for action during the current refactor passes.
 - Banner size — distinguish web mode vs. app mode (currently large in both).
 - Make map date more visible on mobile (currently hard to find).
 - Tabular formatting for share text.
+- **Move eclipse date to overlay in desktop mode.**
+- **Dropped pin** — make it a real 3-D-ish pin icon with a shadow instead of
+  a flat marker.
 
 ---
 
@@ -134,9 +150,11 @@ Not for action during the current refactor passes.
 ## REFACTOR — IN PROGRESS
 
 - **Pass A** ✓ done (2026-05-21) — split inline script into js/ modules.
-- **Pass B** — in progress.
+- **Pass B** ✓ done (2026-05-21) — event-driven AppState.
   - Step 1 ✓ AppState + forwarding shims.
   - Step 2 ✓ URL auto-updates via AppState event; settings accordion fixed.
-  - Step 3 — refactor map subsystem (next).
-- **Pass C** — eventual: subsystem-by-subsystem cleanup, event-driven state,
-  remove scattered `mapReady` guards.
+  - Step 3 ✓ map subsystem event-driven; 9 mapReady guards collapsed to 1.
+- **Pass C** — deferred. Loose ends: search input still DOM-driven (not on
+  AppState); map.js still 833 lines (split deferred until a bug motivates it);
+  similar event wiring possible for list/details. Likely tackled incrementally
+  alongside backlog bugs rather than as a dedicated effort.
