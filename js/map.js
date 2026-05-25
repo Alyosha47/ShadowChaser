@@ -426,7 +426,9 @@ function onMapClick(lat, lon) {
     showMapPopup(lat, lon, out.result, out.rec);
     clearMapMarkers();
     addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
-    switchTab('eclipse');
+    /* On desktop, jump to Details so the user sees the local circumstances.
+       On mobile, stay on the map so the user can see the pin they placed. */
+    if (window.matchMedia('(min-width: 601px)').matches) switchTab('eclipse');
   });
 }
 

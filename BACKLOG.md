@@ -47,8 +47,10 @@ Not for action during the current refactor passes.
 
 ## BEHAVIORAL CHANGES (decided)
 
-- **Map tap on mobile** = place pin, stay on Map tab. (Desktop keeps current
-  behavior — pin + overlay updates immediately since list is visible.)
+- **Map tap on mobile** = place pin, stay on Map tab. (Desktop currently jumps
+  to Details tab; this will be revisited once the sidebar layout lands, since
+  the map is always visible on desktop except in Settings mode — at which
+  point there's no tab to switch to.)
 - **Tab order** = Search · Details · Map · Settings  (reverse of current).
 - **Always-selected eclipse** — app loads with the next total selected; user
   changes selection by picking another. Remove the × deselect button and
