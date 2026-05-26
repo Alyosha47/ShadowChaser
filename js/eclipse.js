@@ -370,6 +370,28 @@
         : null;
     }
 
+    /* Position angle V of the contact point on the Sun's limb, measured from
+       the LOCAL ZENITH going clockwise (i.e. as seen by an observer looking up
+       at the Sun), in degrees. V = P − q, where P is celestial-north-relative
+       and q is the parallactic angle.
+
+       q = atan2(sin H, tan(lat)·cos(δ) − sin(δ)·cos H)
+       where H is the Sun's local hour angle and δ its declination, both
+       available in `fundamentalArgs` (H field is in radians, d is declination
+       in radians). */
+    function getV(t) {
+      if (t === null) return null;
+      var o   = fundamentalArgs(rec, t, lat, lonWest, alt, dT_s);
+      var P   = Math.atan2(o.u, o.v);
+      var latR = lat * Math.PI / 180;
+      var H_r  = o.H * Math.PI / 180;
+      var d_r  = o.d * Math.PI / 180;
+      var q   = Math.atan2(Math.sin(H_r),
+                           Math.tan(latR) * Math.cos(d_r) - Math.sin(d_r) * Math.cos(H_r));
+      var V   = (P - q) * 180 / Math.PI;
+      return ((V % 360) + 360) % 360;
+    }
+
     return {
       visible:    true,
       type:       type,
@@ -377,10 +399,10 @@
       osc:        osc,
       sun:        sun,
       tMax:       toUT(tMax),
-      C1:         { ut: toUT(tC1), sun: getSun(tC1) },
-      C2:         { ut: toUT(tC2), sun: getSun(tC2) },
-      C3:         { ut: toUT(tC3), sun: getSun(tC3) },
-      C4:         { ut: toUT(tC4), sun: getSun(tC4) },
+      C1:         { ut: toUT(tC1), sun: getSun(tC1), v: getV(tC1) },
+      C2:         { ut: toUT(tC2), sun: getSun(tC2), v: getV(tC2) },
+      C3:         { ut: toUT(tC3), sun: getSun(tC3), v: getV(tC3) },
+      C4:         { ut: toUT(tC4), sun: getSun(tC4), v: getV(tC4) },
       durCentral: tC2 !== null && tC3 !== null ? (tC3 - tC2) * 3600 : null,
       durPartial: tC1 !== null && tC4 !== null ? (toUT(tC4) - toUT(tC1)) * 3600 : null
     };

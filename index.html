@@ -213,16 +213,6 @@
       border-bottom:  1px solid var(--border);
     }
 
-    /* Subsection header — used for Contact Times under Local Circumstances. */
-    .subsection-header {
-      font-family:    var(--mono);
-      font-size:      0.66rem;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color:          var(--text-dim);
-      margin-bottom:  0.55rem;
-    }
-
     /* Inline coords appended to a top-section-header — normal case, smaller,
        so the location reads at a glance without claiming its own row.
        On narrow screens it wraps to its own line below the heading. */
@@ -521,90 +511,130 @@
     .badge-partial { background: rgba(110,119,136,0.15); color: var(--text-pale); border: 1px solid var(--border2); }
     .badge-hybrid  { background: rgba(92,224,160,0.15);  color: var(--green);     border: 1px solid #3a9e70; }
 
-    .data-grid {
-      display:       grid;
-      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-      gap:           0;
-      background:    var(--bg);
-      border:        1px solid var(--border);
-      border-radius: var(--radius);
-      overflow:      hidden;
-      margin-bottom: 1.25rem;
-    }
-    .data-cell {
-      background: var(--bg);
-      padding: 0.7rem 0.85rem;
-      border-right:  1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-    .data-cell-label {
+    /* ── Details panel ──────────────────────────────────────────────────
+       One type scale, one spacing scale, two columns aligned by a real
+       table. Section header, data table, subsection header, contacts
+       table — same rhythm throughout. */
+
+    /* Section headers */
+    .detail-section-h {
       font-family:    var(--mono);
-      font-size:      0.62rem;
-      letter-spacing: 0.1em;
+      font-size:      0.72rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color:          var(--gold);
+      margin:         1.5rem 0 0.6rem;
+      padding-bottom: 0.4rem;
+      border-bottom:  1px solid var(--border);
+    }
+    .detail-section-h:first-child { margin-top: 0; }
+    .detail-section-h .header-coords {
+      margin-left:    0.6rem;
+      font-size:      0.66rem;
+      letter-spacing: 0.04em;
+      text-transform: none;
+      color:          var(--text-dim);
+    }
+
+    /* Data table: label column left, value column right. Real table so
+       column edges align across all rows. */
+    .detail-table {
+      width:           100%;
+      border-collapse: collapse;
+      font-family:     var(--mono);
+      table-layout:    fixed;
+    }
+    .detail-table td {
+      padding:       0.3rem 0;
+      border-bottom: 1px solid var(--border);
+      vertical-align: baseline;
+    }
+    .detail-table tr:last-child td { border-bottom: none; }
+    .detail-table .l {
+      width:          11rem;
+      font-size:      0.66rem;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
       color:          var(--text-dim);
-      margin-bottom:  0.25rem;
+      white-space:    nowrap;
     }
-    .data-cell-value       { font-family: var(--mono); font-size: 1rem;  color: var(--gold2); }
-    .data-cell-value.large { font-size: 1.2rem; }
+    .detail-table .v {
+      font-size:   0.82rem;
+      color:       var(--gold2);
+      text-align:  right;
+      overflow:    hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
+    /* Sub-header under "Local Circumstances": the location info on its own line. */
+    .detail-subloc {
+      font-family:    var(--mono);
+      font-size:      0.7rem;
+      color:          var(--text-dim);
+      margin:         -0.35rem 0 0.6rem;   /* nudge up to hug the section head */
+      padding-bottom: 0.5rem;
+    }
+
+    /* Contact-times table — single time column (UT), header band, row stripes. */
     .contacts-table {
       width:           100%;
       border-collapse: collapse;
       font-family:     var(--mono);
       font-size:       0.8rem;
-      margin-bottom:   1rem;
+      table-layout:    auto;
     }
+    .contacts-table th,
+    .contacts-table td {
+      padding:        0.45rem 0.7rem 0.45rem 0;
+      vertical-align: middle;
+      white-space:    nowrap;
+    }
+    .contacts-table th:last-child,
+    .contacts-table td:last-child { padding-right: 0.4rem; }
     .contacts-table th {
+      background:     var(--gold-dim);
+      color:          var(--bg);
       text-align:     left;
-      font-size:      0.62rem;
+      font-size:      0.66rem;
       letter-spacing: 0.1em;
       text-transform: uppercase;
-      color:          var(--text-dim);
-      padding:        0.45rem 0.7rem;
-      border-bottom:  1px solid var(--border2);
       font-weight:    400;
+      padding-left:   0.55rem;
     }
-    .contacts-table td {
-      padding:       0.6rem 0.7rem;
-      border-bottom: 1px solid var(--border);
-      color:         var(--text);
-    }
-    .contacts-table tr:last-child td { border-bottom: none; }
-    .contacts-table .row-umbral td  { color: var(--gold2); }
-    .contacts-table .row-max    td  { color: var(--gold); }
+    .contacts-table th:first-child { padding-left: 0.55rem; }
+    .contacts-table td             { color: var(--text); padding-left: 0.55rem; }
+    .contacts-table tbody tr:nth-child(odd) td { background: rgba(255,255,255,0.025); }
+    .contacts-table td svg         { vertical-align: -5px; margin-right: 0.4rem; }
+    .contacts-table .row-umbral td { color: var(--gold2); }
+    .contacts-table .row-max    td { color: var(--gold); font-weight: 500; }
 
-    .contacts-details summary::-webkit-details-marker { display: none; }
-    .contacts-details[open] summary { color: var(--gold-dim); }
-    .subsection-header { color: var(--gold-dim); }
-
-    .note {
+    /* Footnote under the contacts table: small, dim, mono. */
+    .contacts-note {
       font-family: var(--mono);
       font-size:   0.66rem;
       color:       var(--text-dim);
-      padding:     0.5rem 0.8rem;
-      border-left: 2px solid var(--border2);
-      line-height: 1.7;
+      margin:      0.4rem 0 0;
+      padding:     0;
     }
 
-    .no-eclipse {
+    /* Empty / loading states */
+    .no-location, .no-eclipse {
       text-align: center;
-      padding:    2rem;
+      padding:    1.5rem 0.5rem;
       color:      var(--text-dim);
-      font-style: italic;
-      font-size:  1rem;
+      font-family: var(--mono);
+      font-size:  0.82rem;
     }
 
-    /* Local circumstances section within Data tab */
-    .local-section {
-      margin-top: 1.5rem;
-    }
-    .no-location {
+    .note {
+      margin-top:  1rem;
       font-family: var(--mono);
-      font-size:   0.78rem;
+      font-size:   0.66rem;
       color:       var(--text-dim);
-      font-style:  italic;
-      padding:     1rem 0;
+      padding:     0.5rem 0.7rem;
+      border-left: 2px solid var(--border);
+      line-height: 1.6;
     }
 
     /* Status message */
@@ -658,17 +688,6 @@
       padding: 0.75rem 1rem 0;
     }
 
-    /* On desktop keep all open and hide the toggle affordance */
-    @media (min-width: 601px) {
-      .settings-group { border: none; margin-bottom: 0; }
-      .settings-group-header {
-        background:     transparent;
-        padding:        0;
-        pointer-events: none;
-        display:        none;
-      }
-      .settings-group > :not(summary) { padding: 0; }
-    }
     .settings-row {
       display:     flex;
       align-items: center;
@@ -910,6 +929,14 @@
       border:        2px solid #fff;
       box-shadow:    0 0 6px rgba(180,40,0,0.5);
     }
+    .ge-dot {
+      width:         12px;
+      height:        12px;
+      border-radius: 50%;
+      background:    #cc2200;
+      border:        2px solid #fff;
+      box-shadow:    0 0 8px rgba(180,40,0,0.6);
+    }
     .sun-arrow {
       position:         absolute;
       top:              50%;
@@ -945,13 +972,10 @@
       .eclipse-item { font-size: 1rem; padding: 0.75rem; }
       .search-hint  { font-size: 0.78rem; }
       .pill         { font-size: 0.8rem; }
-      .section-label, .subsection-header, .top-section-header { font-size: 0.85rem; }
-      .data-cell-label { font-size: 0.78rem; }
-      .data-cell-value { font-size: 1.1rem; }
-
-      /* Tighter data cells on phone so more fit per row */
-      .data-cell { padding: 0.55rem 0.65rem; }
-      .data-cell-value.large { font-size: 1.1rem; }
+      .section-label, .top-section-header, .detail-section-h { font-size: 0.85rem; }
+      .detail-table .l    { font-size: 0.72rem; }
+      .detail-table .v    { font-size: 0.95rem; }
+      .detail-table td    { padding: 0.4rem 0; }
 
       /* Map locate button — slightly larger tap area on phone */
       #btn-locate { font-size: 1.2rem; padding: 0.5rem 0.8rem; }
@@ -968,21 +992,28 @@
 
     .sidebar-tab-btn {
       flex:           1;
-      background:     transparent;
+      background:     var(--bg2);
       color:          var(--text-dim);
-      border:         none;
-      border-bottom:  1px solid var(--border);
-      padding:        0.5rem 0.25rem;
+      border:         1px solid var(--border);
+      border-radius:  var(--radius) var(--radius) 0 0;
+      margin-right:   -1px;            /* tabs touch each other */
+      padding:        0.45rem 0.35rem 0.5rem;
       font-family:    var(--mono);
       font-size:      0.72rem;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
       cursor:         pointer;
       white-space:    nowrap;
+      position:       relative;
+      top:            1px;             /* sit slightly recessed */
     }
-    .sidebar-tab-btn:hover  { color: var(--text); }
+    .sidebar-tab-btn:last-child { margin-right: 0; }
+    .sidebar-tab-btn:hover      { color: var(--text); }
     .sidebar-tab-btn.active {
       color:         var(--gold);
-      border-bottom: 1px solid var(--gold);
+      background:    var(--bg);
+      border-bottom-color: var(--bg);  /* connects to panel below */
+      top:           0;                /* lifted to front */
+      z-index:       1;
     }
 
 
@@ -1020,7 +1051,9 @@
       .sidebar-tabs {
         display:        flex;
         flex-direction: row;
-        background:     var(--bg1);
+        padding:        0.5rem 0.5rem 0;
+        background:     var(--bg2);
+        border-bottom:  1px solid var(--border);
       }
 
       /* Panels inside sidebar: one shown at a time based on data-sidebar-tab */
@@ -1029,7 +1062,7 @@
         inset:     auto;
         flex:      1 1 auto;
         display:   none;
-        padding:   1rem 1.25rem 2rem;
+        padding:   0.75rem 1rem 1rem;
       }
       .sidebar .tab-panel > * { max-width: none; margin: 0; }
 
@@ -1039,6 +1072,11 @@
       body[data-sidebar-tab="settings"] #tab-settings {
         display: block;
       }
+
+      /* Hide overlays whose information now lives in the sidebar:
+         - #map-status     (eclipse name/type pill at bottom of map)
+         - #map-popup      (map-click circumstances; Details panel shows them) */
+      #map-status, #map-popup { display: none !important; }
     }
 
   </style>
@@ -1065,21 +1103,22 @@
   </nav>
 
 
+  <!-- ── Share modal (fixed-position, floats over everything) ─────────── -->
+  <div class="share-modal-backdrop" id="share-modal-backdrop">
+    <div class="share-modal">
+      <h3>Share Eclipse</h3>
+      <textarea id="share-text" readonly></textarea>
+      <div class="share-modal-btns">
+        <button class="btn btn-ghost" onclick="document.getElementById('share-modal-backdrop').classList.remove('open')">Close</button>
+        <button class="btn btn-primary" onclick="copyShareText()">Copy</button>
+      </div>
+    </div>
+  </div>
+
+
   <!-- ── Tab panels ──────────────────────────────────────────────────── -->
 
   <div class="tab-content">
-
-    <!-- ── Share modal (fixed-position, floats over everything) ─────── -->
-    <div class="share-modal-backdrop" id="share-modal-backdrop">
-      <div class="share-modal">
-        <h3>Share Eclipse</h3>
-        <textarea id="share-text" readonly></textarea>
-        <div class="share-modal-btns">
-          <button class="btn btn-ghost" onclick="document.getElementById('share-modal-backdrop').classList.remove('open')">Close</button>
-          <button class="btn btn-primary" onclick="copyShareText()">Copy</button>
-        </div>
-      </div>
-    </div>
 
 
     <!-- ── Map tab ────────────────────────────────────────── -->
@@ -1095,16 +1134,8 @@
                      font-size:1rem;cursor:pointer;backdrop-filter:blur(4px);
                      pointer-events:auto">📍</button>
 
-      <!-- Brightness control — bottom right -->
-      <div style="position:absolute;bottom:32px;right:10px;z-index:200;background:rgba(10,15,32,0.80);border-radius:6px;padding:5px 10px;display:flex;align-items:center;gap:8px;font-size:11px;color:#8ca0b5;pointer-events:auto;">
-        <span title="Map brightness">☀</span>
-        <input type="range" id="brightness-slider" min="20" max="100" value="100"
-               style="width:72px;accent-color:#5c9ee0;cursor:pointer;"
-               oninput="document.getElementById('map').style.filter='brightness('+this.value+'%)'">
-      </div>
-
       <!-- Floating overlay: shows eclipse name or "click to set location" -->
-        <div id="map-status" style="position:absolute;bottom:2.5rem;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);pointer-events:none;background:var(--bg1);padding:0.25rem 0.75rem;border-radius:99px;opacity:0.85;display:none"></div>
+        <div id="map-status" style="position:absolute;bottom:2.5rem;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);pointer-events:none;background:var(--bg2);padding:0.25rem 0.75rem;border-radius:99px;opacity:0.85;display:none"></div>
 
       <!-- Click-result popup -->
       <div class="map-popup" id="map-popup">
@@ -1196,103 +1227,112 @@
       </div><!-- #tab-mapctrl -->
 
 
-    <!-- ── Settings tab ────────────────────────────────────── -->
+      <!-- ── Settings tab ────────────────────────────────────── -->
 
-    <div class="tab-panel" id="tab-settings">
+      <div class="tab-panel" id="tab-settings">
 
       <details class="settings-group" open id="sg-about">
         <summary class="settings-group-header">About</summary>
 
-        <div class="settings-section">
-          <div class="about-text">
-            <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. Although there are many eclipse-adventure-planning tools out there, we still missed certain features — search-by-location, accurate local timezone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We’ve tried to cover all the bases in one convenient package. If you find any bugs, please let us know — and <em>don’t stare at the sun!</em></p>
-          </div>
+      <div class="settings-section">
+        <div class="about-text">
+          <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. Although there are many eclipse-adventure-planning tools out there, we still missed certain features &mdash; search-by-location, accurate local timezone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We&rsquo;ve tried to cover all the bases in one convenient package. If you find any bugs, please let us know &mdash; and <em>don&rsquo;t stare at the sun!</em></p>
         </div>
+      </div>
 
-        <div class="settings-section">
-          <div class="top-section-header">Data Sources</div>
-          <div class="about-text">
-            <p><strong>Eclipse catalogue &amp; Besselian elements</strong> &mdash; Espenak &amp; Meeus, <em>Five Millennium Canon of Solar Eclipses: &minus;1999 to +3000</em>, NASA/TP-2006-214141. Eclipse circumstances computed via the Besselian element method (Jean Meeus, <em>Astronomical Algorithms</em>, Willmann-Bell, 2nd ed. 1998, Ch. 54). No lunar limb correction applied.</p>
-            <p><strong>Delta T (&Delta;T = TT &minus; UT)</strong> &mdash; Best available source per date:
-              1973 to last month &mdash; USNO observed monthly tables (<em>deltat.data</em>);
-              last month to ~5 years out &mdash; USNO quarterly forecast (<em>deltat.preds</em>);
-              &minus;720 to 2050 (outside the USNO range) &mdash; Espenak&ndash;Meeus piecewise polynomial;
-              before &minus;720 and after 2050 &mdash; Stephenson, Morrison &amp; Hohenkerk (2016) LOD integral extrapolation.</p>
-            <p><strong>Basemap</strong> &mdash; Online: OpenFreeMap Liberty vector style (<em>openfreemap.org</em>). Offline: Natural Earth public-domain geodata (<em>naturalearthdata.com</em>).</p>
-            <p><strong>Timezone lookup</strong> &mdash; Offline polygon database via <em>tz-lookup</em>. Elevation auto-fill via Open-Elevation API when online.</p>
-          </div>
-        </div>
-
-        <div class="settings-section">
-          <div class="top-section-header">Accuracy</div>
-          <table class="syntax-table">
-            <thead><tr><th>Curve</th><th>Median error</th></tr></thead>
-            <tbody>
-              <tr><td>Centreline</td><td>~15 m</td></tr>
-              <tr><td>Umbra edges (N/S)</td><td>120&ndash;600 m</td></tr>
-              <tr><td>Penumbra edges</td><td>25 km (total) / 100+ km (annular)</td></tr>
-              <tr><td>Terminator lemniscates</td><td>3 km / 100 km at tips</td></tr>
-              <tr><td>Polar grazers (&gamma; &gt; 0.95)</td><td>Up to 35 km</td></tr>
-              <tr><td>Pre-1900</td><td>&Delta;T-limited</td></tr>
-              <tr><td>Post-2050</td><td>Increasing (&Delta;T extrapolation)</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="settings-section">
-          <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: 2026-05-19l</p>
-        </div>
+      <div class="settings-section">
+        <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: 2026-05-19l</p>
+      </div>
 
       </details>
 
-      <details class="settings-group" open id="sg-instructions">
-        <summary class="settings-group-header">Instructions</summary>
+      <details class="settings-group" id="sg-data">
+      <summary class="settings-group-header">Data</summary>
 
-        <div class="settings-section">
-          <div class="top-section-header">Search Syntax</div>
-          <div class="about-text">
-            <p>The search field accepts any combination of the following, in any order:</p>
-          </div>
-          <table class="syntax-table">
-            <thead><tr><th>Token</th><th>Examples</th><th>Notes</th></tr></thead>
-            <tbody>
-              <tr><td>Today+</td><td>today+</td><td>From today forward</td></tr>
-              <tr><td>Year</td><td>2026<br>2026-2030<br>after 2100<br>before 500<br>44BC &nbsp; 44BCE<br>44BC 10AD<br>10BCE 10CE</td><td>Single, range, or open-ended. Two years = range (no dash needed). BC/BCE and AD/CE supported.</td></tr>
-              <tr><td>Month</td><td>aug &nbsp; august &nbsp; Nov</td><td>3-letter or full name</td></tr>
-              <tr><td>Day</td><td>28</td><td>Only meaningful with a month</td></tr>
-              <tr><td>Saros</td><td>saros 126 &nbsp; s126</td><td>Requires &ldquo;saros&rdquo; or &ldquo;s&rdquo; prefix</td></tr>
-              <tr><td>Type</td><td>total &nbsp; annular &nbsp; hybrid &nbsp; partial</td><td>Multiple allowed; prefix (to, an, hy, pa) works while typing</td></tr>
-              <tr><td>Obscuration</td><td>&gt;80 &nbsp; 50+ &nbsp; &lt;30 &nbsp; 95-</td><td>With or without %</td></tr>
-              <tr><td>Coordinates</td>
-                <td>
-                  (44.858, 0.082)<br>
-                  (-19.581, -65.747)<br>
-                  (51&deg;30&rsquo;26&rdquo;N, 0&deg;07&rsquo;40&rdquo;W)<br>
-                  (51d30m26sN, 0d07m40sW)<br>
-                  (51&deg;30.44&rsquo;N, 0&deg;7.67&rsquo;W)<br>
-                  (51 30 26 N, 0 07 40 W)
-                </td>
-                <td>Tap anywhere on the map to set your location, or use the &#x1F4CD; button. Timezone and elevation are auto-filled when online.</td>
-              </tr>
-            </tbody>
-          </table>
+      <div class="settings-section">
+        <div class="top-section-header">Sources</div>
+        <div class="about-text">
+          <p><strong>Eclipse catalogue and Besselian elements</strong> are sourced from Espenak &amp; Meeus, <em>Five Millennium Canon of Solar Eclipses: &minus;1999 to +3000</em> (NASA/TP-2006-214141). Local circumstances are computed via the Besselian element method described by Jean Meeus in <em>Astronomical Algorithms</em> (Willmann-Bell, 2nd ed. 1998, Ch. 54). No lunar limb correction is applied.</p>
+          <p><strong>Delta T</strong> (&Delta;T = TT &minus; UT) drifts with the Earth&rsquo;s rotation and has its own delta over time. This code uses the best available source per date:
+            1973 to last month &mdash; USNO observed monthly tables (<em>deltat.data</em>);
+            last month to ~5 years out &mdash; USNO quarterly forecast (<em>deltat.preds</em>);
+            &minus;720 to 2050 (outside the USNO range) &mdash; Espenak&ndash;Meeus piecewise polynomial;
+            before &minus;720 and after 2050 &mdash; Stephenson, Morrison &amp; Hohenkerk (2016) LOD integral extrapolation.</p>
+          <p><strong>Basemaps</strong> are served from OpenFreeMap (Liberty vector style, <em>openfreemap.org</em>) when online, and from Natural Earth public-domain geodata (<em>naturalearthdata.com</em>) when offline.</p>
+          <p><strong>Timezones</strong> are resolved offline via the <em>tz-lookup</em> polygon database. Elevation is auto-filled by the Open-Elevation API when online.</p>
         </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="top-section-header">Tolerances</div>
+        <table class="syntax-table">
+          <thead><tr><th>Curve</th><th>Median error</th></tr></thead>
+          <tbody>
+            <tr><td>Centreline</td><td>~15 m</td></tr>
+            <tr><td>Umbra edges (N/S)</td><td>120&ndash;600 m</td></tr>
+            <tr><td>Penumbra edges</td><td>25 km (total) / 100+ km (annular)</td></tr>
+            <tr><td>Terminator lemniscates</td><td>3 km / 100 km at tips</td></tr>
+            <tr><td>Polar grazers (&gamma; &gt; 0.95)</td><td>Up to 35 km</td></tr>
+            <tr><td>Pre-1900</td><td>&Delta;T-limited</td></tr>
+            <tr><td>Post-2050</td><td>Increasing (&Delta;T extrapolation)</td></tr>
+          </tbody>
+        </table>
+      </div>
 
       </details>
 
-      <details class="settings-group" open id="sg-settings">
-        <summary class="settings-group-header">Settings</summary>
+      <details class="settings-group" id="sg-instructions">
+      <summary class="settings-group-header">Instructions</summary>
 
-        <div class="settings-section">
-          <div class="top-section-header">Time Zone</div>
-          <div class="settings-row">
-            <label for="tz">Time zone</label>
-            <select id="tz" style="max-width:18rem"></select>
-          </div>
-          <div class="about-text" style="margin-top:0.5rem">
-            <p><em>Auto</em> uses the device timezone when available, or estimates from observer longitude.</p>
-          </div>
+      <div class="settings-section">
+        <div class="about-text">
+          <p>The search field accepts any combination of the following, in any order:</p>
         </div>
+        <table class="syntax-table">
+          <thead><tr><th>Token</th><th>Examples</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Today+</td><td>today+</td><td>From today forward</td></tr>
+            <tr><td>Year</td><td>2026<br>2026-2030<br>after 2100<br>before 500<br>44BC &nbsp; 44BCE<br>44BC 10AD<br>10BCE 10CE</td><td>Single, range, or open-ended. Two years = range (no dash needed). BC/BCE and AD/CE supported.</td></tr>
+            <tr><td>Month</td><td>aug &nbsp; august &nbsp; Nov</td><td>3-letter or full name</td></tr>
+            <tr><td>Day</td><td>28</td><td>Only meaningful with a month</td></tr>
+            <tr><td>Saros</td><td>saros 126 &nbsp; s126</td><td>Requires &ldquo;saros&rdquo; or &ldquo;s&rdquo; prefix</td></tr>
+            <tr><td>Type</td><td>total &nbsp; annular &nbsp; hybrid &nbsp; partial</td><td>Multiple allowed; prefix (to, an, hy, pa) works while typing</td></tr>
+            <tr><td>Obscuration</td><td>&gt;80 &nbsp; 50+ &nbsp; &lt;30 &nbsp; 95-</td><td>With or without %</td></tr>
+            <tr><td>Coordinates</td>
+              <td>
+                (44.858, 0.082)<br>
+                (-19.581, -65.747)<br>
+                (51&deg;30&rsquo;26&rdquo;N, 0&deg;07&rsquo;40&rdquo;W)<br>
+                (51d30m26sN, 0d07m40sW)<br>
+                (51&deg;30.44&rsquo;N, 0&deg;7.67&rsquo;W)<br>
+                (51 30 26 N, 0 07 40 W)
+              </td>
+              <td>Tap anywhere on the map to set your location, or use the &#x1F4CD; button. Timezone and elevation are auto-filled when online.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      </details>
+
+      <details class="settings-group" id="sg-settings">
+      <summary class="settings-group-header">Settings</summary>
+
+      <div class="settings-section">
+        <div class="settings-row">
+          <label for="tz">Time zone</label>
+          <select id="tz" style="max-width:18rem"></select>
+        </div>
+        <div class="about-text" style="margin-top:0.5rem">
+          <p><em>Auto</em> uses the device timezone when available, or estimates from observer longitude.</p>
+        </div>
+        <div class="settings-row" style="margin-top:1rem">
+          <label for="brightness-slider">Map brightness</label>
+          <input type="range" id="brightness-slider" min="20" max="100" value="100"
+                 style="accent-color:var(--blue);cursor:pointer"
+                 oninput="document.getElementById('map').style.filter='brightness('+this.value+'%)'">
+        </div>
+      </div>
 
       </details>
 

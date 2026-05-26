@@ -1,39 +1,55 @@
 /* ── Render inline data panel ────────────────────────────────────────── */
 
 function buildContactRows(rec, res, lbl, tz) {
-  var contactRows = contactRow('C1 \u2014 Partial begins',     res.C1, '')
-    + contactRow('C2 \u2014 ' + lbl + ' begins', res.C2, 'row-umbral')
-    + '<tr class="row-max"><td>Maximum eclipse</td>'
-    + '<td>' + fmtUT(res.tMax)        + '</td>'
-    + '<td>' + fmtLocal(res.tMax, tz) + '</td>'
-    + '<td>' + fmtAng(res.sun.alt)    + '</td>'
-    + '<td>' + fmtAng(res.sun.az)     + '</td></tr>'
-    + contactRow('C3 \u2014 ' + lbl + ' ends',  res.C3, 'row-umbral')
-    + contactRow('C4 \u2014 Partial ends',        res.C4, '');
+  var type = res.type ? res.type[0].toUpperCase() : 'P';
+  var rows = [];
 
-  if (!rec) return contactRows;
-  var c = parseCoords();
-  if (!c) return contactRows;
-
-  var dT_s = rec.dt;
-  var lonW = -c.lon;
-  var alt  = _lookedUpAlt || 0;
-  var ss   = computeSunriseSunset(rec, c.lat, c.lon, alt);
-
-  function toUT(t) { return t !== null ? rec.t0 + t - dT_s / 3600 : null; }
-  function horizonRow(label, t, ut) {
-    if (ut === null) return '';
-    var az = sunAltAz(fundamentalArgs(rec, t, c.lat, lonW, alt, dT_s), c.lat).az;
-    return '<tr><td>' + label + '</td>'
-      + '<td>' + fmtUT(ut)        + '</td>'
-      + '<td>' + fmtLocal(ut, tz) + '</td>'
-      + '<td>0\u00b0</td>'
-      + '<td>' + fmtAng(az)       + '</td></tr>';
+  function pushContact(phase, c, cls) {
+    if (!c || c.ut === null || c.ut === undefined) return;
+    var s = c.sun || {};
+    rows.push({ ut: c.ut, html:
+        '<tr' + (cls ? ' class="' + cls + '"' : '') + '>'
+      + '<td>' + contactIcon(phase, type, c.v) + ' ' + phase + '</td>'
+      + '<td>' + fmtUT(c.ut)        + '</td>'
+      + '<td>' + fmtAng(s.alt)      + '</td>'
+      + '<td>' + fmtAng(s.az)       + '</td>'
+      + '</tr>' });
   }
 
-  return horizonRow('Sunrise', ss.rise, toUT(ss.rise))
-    + contactRows
-    + horizonRow('Sunset', ss.set, toUT(ss.set));
+  pushContact('C1', res.C1, '');
+  pushContact('C2', res.C2, 'row-umbral');
+  rows.push({ ut: res.tMax, html:
+      '<tr class="row-max"><td>' + contactIcon('MAX', type, null) + ' MAX</td>'
+    + '<td>' + fmtUT(res.tMax)        + '</td>'
+    + '<td>' + fmtAng(res.sun.alt)    + '</td>'
+    + '<td>' + fmtAng(res.sun.az)     + '</td></tr>' });
+  pushContact('C3', res.C3, 'row-umbral');
+  pushContact('C4', res.C4, '');
+
+  if (rec) {
+    var c = parseCoords();
+    if (c) {
+      var dT_s = rec.dt;
+      var lonW = -c.lon;
+      var alt  = _lookedUpAlt || 0;
+      var ss   = computeSunriseSunset(rec, c.lat, c.lon, alt);
+      function toUT(t) { return t !== null ? rec.t0 + t - dT_s / 3600 : null; }
+      function pushHorizon(label, t, ut, rising) {
+        if (ut === null) return;
+        var az = sunAltAz(fundamentalArgs(rec, t, c.lat, lonW, alt, dT_s), c.lat).az;
+        rows.push({ ut: ut, html:
+            '<tr><td>' + horizonIcon(rising) + ' ' + label + '</td>'
+          + '<td>' + fmtUT(ut)        + '</td>'
+          + '<td>0\u00b0</td>'
+          + '<td>' + fmtAng(az)       + '</td></tr>' });
+      }
+      pushHorizon('Sunrise', ss.rise, toUT(ss.rise), true);
+      pushHorizon('Sunset',  ss.set,  toUT(ss.set),  false);
+    }
+  }
+
+  rows.sort(function (a, b) { return a.ut - b.ut; });
+  return rows.map(function (r) { return r.html; }).join('');
 }
 
 function renderData(rec, _tz, _lat, _lon) {
@@ -48,13 +64,7 @@ function renderData(rec, _tz, _lat, _lon) {
   var typeLabel = typeName((selectedEntry.eclipse_type||'P')[0]);
 
   /* ΔT — use besselian chunk values when loaded (after computeLocal),
-     fall back to formula for display before a location is set.
-     dt_source comes from the chunk; formula fallback labels by year range. */
-  function dtSourceFallback(year) {
-    if (year > 2050)  return 'SMH\u202f2016 LOD extrapolation';
-    if (year >= -720) return 'Espenak\u2013Meeus';
-    return 'SMH\u202f2016 LOD (ancient)';
-  }
+     fall back to formula for display before a location is set. */
   function formulaDt(year) {
     var t, u;
     if (year > 2050 || year < -720) { t=(year-2000)/100; return 8.37+153.25*t+32*t*t; }
@@ -72,35 +82,8 @@ function renderData(rec, _tz, _lat, _lon) {
     u=year/100; return 10583.6-1014.41*u+33.78311*u*u-5.952053*Math.pow(u,3)-0.1798452*Math.pow(u,4)+0.022174192*Math.pow(u,5)+0.0090316521*Math.pow(u,6);
   }
   var dtVal    = rec && rec.dt     != null ? rec.dt              : formulaDt(selectedEntry.year);
-  var dtSrc    = rec && rec.dt_source      ? rec.dt_source       : dtSourceFallback(selectedEntry.year);
-  var dtCell   = dataCell('\u0394T', dtVal.toFixed(1) + '\u2009s<div style="font-size:0.62rem;color:var(--text-dim);margin-top:0.15rem;font-family:var(--mono)">' + dtSrc + '</div>');
 
-  var html = ''
-
-  + '<div class="detail-title">' + fmtDate(selectedEntry) + '<span class="detail-title-type">' + typeLabel + '</span>'
-  + '<button class="share-btn" onclick="shareEclipse()">&#x2197; Share</button>'
-  + '</div>'
-
-  + '<div class="top-section-header">Global Circumstances</div>'
-  + '<div class="data-grid">'
-  + dataCell('Eclipse type',           typeLabel)
-  + dataCell('Greatest eclipse (UT)', selectedEntry.td_ge || '--')
-  + dataCell('GE location',           coordStr(selectedEntry.lat_dd_ge, selectedEntry.lng_dd_ge))
-  + dataCell('Sun altitude at GE',    fmtAng(selectedEntry.sun_alt))
-  + dataCell('Sun azimuth at GE',     fmtAng(selectedEntry.sun_azm))
-  + dataCell('Eclipse magnitude',     selectedEntry.magnitude != null ? selectedEntry.magnitude.toFixed(4) : '--', true)
-  + dataCell('Gamma',                 selectedEntry.gamma     != null ? selectedEntry.gamma.toFixed(4)     : '--')
-  + (selectedEntry.path_width      ? dataCell('Path width',        selectedEntry.path_width.toFixed(0) + '\u2009km') : '')
-  + (selectedEntry.central_duration? dataCell('Central duration',  selectedEntry.central_duration, true) : '')
-  + dataCell('Saros', selectedEntry.saros
-               + (selectedEntry.nSeq && selectedEntry.nSer
-                  ? ': ' + selectedEntry.nSeq + '/' + selectedEntry.nSer : ''))
-  + dtCell
-  + '</div>';
-
-  /* ── Local Circumstances ─────────────────────────────────────────
-     The header itself carries the coords/alt/tz so the readout takes
-     one line less and the location is unambiguous at a glance. */
+  /* ── Local Circumstances ───────────────────────────────────────── */
   var coords = parseCoords();
   var f      = parseSearch(document.getElementById('search').value);
   var alt    = _lookedUpAlt || 0;
@@ -111,70 +94,89 @@ function renderData(rec, _tz, _lat, _lon) {
       + '\u2002\u00b7\u2002' + tzStr
     : '';
 
-  html += '<div class="local-section">';
-  html += '<div class="top-section-header">'
-        +   'Local Circumstances'
-        +   (locLine ? '<span class="header-coords">@ ' + locLine + '</span>' : '')
-        + '</div>';
+  html = '<div class="detail-title">' + fmtDate(selectedEntry) + '<span class="detail-title-type">' + typeLabel + '</span>'
+       + '<button class="share-btn" onclick="shareEclipse()">&#x2197; Share</button>'
+       + '</div>'
+
+       + '<div class="detail-section-h">Local Circumstances</div>'
+       + (locLine ? '<div class="detail-subloc">@ ' + locLine + '</div>' : '');
 
   if (!coords) {
     html += '<div class="no-location">Enter coordinates in the search field, or tap the map to choose a location.</div>';
   } else if (!localResult) {
     html += '<div class="no-location">Computing\u2026</div>';
   } else if (!localResult.visible) {
-    html += '<div class="no-eclipse">'
-          + '<div style="font-size:1.5rem;margin-bottom:.35rem">\uD83C\uDF11</div>'
-          + 'Not visible from this location.'
-          + '</div>';
+    html += '<div class="no-eclipse">\uD83C\uDF11 Not visible from this location.</div>';
   } else {
     var res = localResult;
     var lbl = typeName(res.type[0].toUpperCase());
 
     html +=
-      '<div class="data-grid">'
-    + dataCell('Magnitude',           res.mag.toFixed(4), true)
-    + dataCell('Obscuration',         res.osc.toFixed(1) + '%', true)
-    + dataCell('Sun altitude at max', fmtAng(res.sun.alt))
-    + dataCell('Sun azimuth at max',  fmtAng(res.sun.az))
-    + (res.durCentral ? dataCell('Duration (' + lbl.toLowerCase() + ')', fmtDur(res.durCentral), true) : '')
-    + (res.durPartial ? dataCell('Partial duration', fmtDur(res.durPartial)) : '')
-    + '</div>'
+      '<table class="detail-table"><tbody>'
+    +   (res.durCentral ? row('Duration (' + lbl.toLowerCase() + ')', fmtDur(res.durCentral)) : '')
+    +   (res.durPartial ? row('Partial duration', fmtDur(res.durPartial)) : '')
+    +   row('Magnitude',           res.mag.toFixed(4))
+    +   row('Obscuration',         res.osc.toFixed(1) + '%')
+    +   row('Sun alt / az at max', fmtAng(res.sun.alt) + ' / ' + fmtAng(res.sun.az))
+    + '</tbody></table>'
 
-    + '<div class="subsection-header" style="margin-top:0.75rem">Contact Times</div>'
+    + '<div class="detail-section-h">Contact Times</div>'
     + '<table class="contacts-table"><thead><tr>'
-    + '<th>Event</th><th>UT</th><th>' + tzStr + '</th><th>Sun alt</th><th>Sun az</th>'
+    + '<th>Event</th><th>UT</th><th>Alt</th><th>Az</th>'
     + '</tr></thead><tbody>'
     + buildContactRows(rec, res, lbl, tz)
     + '</tbody></table>'
+    + '<div class="contacts-note">'
+    +   (tz === 0
+          ? 'Local time = UT.'
+          : (tz > 0
+              ? 'Add ' + tz + 'h for local time (' + tzStr + ').'
+              : 'Subtract ' + (-tz) + 'h for local time (' + tzStr + ').'))
+    + '</div>'
 
     + (rec ? '<div class="note">No lunar limb correction applied.</div>' : '');
-
-
   }
 
-  html += '</div>';
+  /* ── Global Circumstances (reference data — least actionable, so last) ── */
+  html += '<div class="detail-section-h">Global Circumstances</div>'
+       + '<table class="detail-table"><tbody>'
+       +   row('Greatest eclipse (UT)', selectedEntry.td_ge || '--')
+       +   row('GE location',           coordStr(selectedEntry.lat_dd_ge, selectedEntry.lng_dd_ge))
+       +   row('Sun alt / az at GE',    fmtAng(selectedEntry.sun_alt) + ' / ' + fmtAng(selectedEntry.sun_azm))
+       +   row('Magnitude',             selectedEntry.magnitude != null ? selectedEntry.magnitude.toFixed(4) : '--')
+       +   (selectedEntry.path_width      ? row('Path width',   selectedEntry.path_width.toFixed(0) + '\u2009km') : '')
+       +   (selectedEntry.central_duration? row('Max duration', selectedEntry.central_duration) : '')
+       +   row('Saros', selectedEntry.saros
+                       + (selectedEntry.nSeq && selectedEntry.nSer
+                          ? ': ' + selectedEntry.nSeq + '/' + selectedEntry.nSer : ''))
+       +   row('\u0394T', dtVal.toFixed(1) + '\u2009s')
+       + '</tbody></table>';
+
   inner.innerHTML = html;
 }
 
 
-function dataCell(label, value, large) {
-  return '<div class="data-cell">'
-    + '<div class="data-cell-label">' + label + '</div>'
-    + '<div class="data-cell-value' + (large ? ' large' : '') + '">' + value + '</div>'
-    + '</div>';
+function row(label, value) {
+  return '<tr><td class="l">' + label + '</td><td class="v">' + value + '</td></tr>';
 }
 
-function contactRow(label, c, cls) {
-  if (!c || c.ut === null || c.ut === undefined) return '';
-  var tz = getTzOffset();
-  var s  = c.sun || {};
-  return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>'
-    + '<td>' + label + '</td>'
-    + '<td>' + fmtUT(c.ut) + '</td>'
-    + '<td>' + fmtLocal(c.ut, tz) + '</td>'
-    + '<td>' + fmtAng(s.alt) + '</td>'
-    + '<td>' + fmtAng(s.az)  + '</td>'
-    + '</tr>';
+function contactIcon(phase, type, v) {
+  /* Geometry per contact phase. v is the contact angle from the local zenith
+     measured clockwise (degrees) — V in Jubier's notation. In SVG that maps
+     to x = sin(v), y = -cos(v) (V=0° → straight up, V=90° → right). */
+  if (phase === 'MAX' || v == null) {
+    var kMax = type === 'A' ? 0.94 : type === 'T' ? 1.04 : 1.00;
+    return drawEclipseGeometry(0, 0, kMax, type, 26);
+  }
+  if (phase === 'C2' || phase === 'C3') {
+    return drawDiamondRing(v, 26);
+  }
+  /* C1 / C4: Moon overlaps Sun at angle V, leaving a visible crescent. */
+  var rad = v * Math.PI / 180;
+  var d   = 0.95;
+  var x   =  d * Math.sin(rad);
+  var y   = -d * Math.cos(rad);
+  return drawEclipseGeometry(x, y, 1.0, type, 26);
 }
 
 function coordStr(lat, lon) {

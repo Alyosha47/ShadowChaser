@@ -40,6 +40,16 @@ Not for action during the current refactor passes.
 - **Date label hard to see on map (esp. mobile)** — intersects the brightness
   slider; needs different placement or contrast.
 
+- **Contact-icon orientation (V angle)** — Icons in the contact-times table
+  render as schematic shapes (crescent/ring/corona) but their *rotation* does
+  not match Jubier's preview. Our P (Besselian position angle) matches him
+  exactly; our V (zenith-relative angle, V = P − q) does not, suggesting the
+  parallactic-angle math is wrong for non-meridian contacts. Need to look up
+  Meeus Ch 14 derivation of q directly and reimplement, rather than guess at
+  sign conventions. Until fixed, icons communicate phase TYPE (entry vs exit
+  vs maximum) but not direction-on-Sun. **REMIND ME by Monday June 1 to use
+  remaining weekly compute on this if not yet done.**
+
 ### Confirmed pre-existing
 - **Scan ignores non-location filters** — always scans all 5 centuries.
 
@@ -65,34 +75,35 @@ Not for action during the current refactor passes.
   - Selecting an eclipse from the list does NOT auto-switch the sidebar.
     User stays on Search, explores via map, then taps Details/Map when ready.
   - Mobile: unchanged tab structure for now.
+- **Desktop redundancies to remove** (now that sidebar is live):
+  - **Map-status overlay** (eclipse name/type, bottom-center) — the Details
+    panel and selected-row in the list both show this. Hide on desktop.
+  - **Date overlay** at bottom of map — same eclipse date is in the list row
+    and Details header. Hide on desktop.
 
 ---
 
 ## OPEN UX QUESTIONS
 
-- Brightness slider — is it useful? If kept, move to Settings tab?
-- Global Circumstances / Local Circumstances — table format vs. current
-  grid-of-blocks. Save space, or lose the visual variety that helps scanning?
-- Accuracy section copy: "umbral errors less than centerline" — verify.
-  Centerline error is ~15 m? Confirm and rewrite if wrong.
-- **About text unreadable** — different/odd font. Switch to the same font as
-  the rest of the app.
-- **Date-range copy confusion** — is "1973–present" not already covered by
-  "−720 to 2050"? Why list it separately?
-- **"Near-term predictions"** — vague. These aren't fuzzy boundaries; just
-  show a small table of year ranges with their source/accuracy.
-- **Credits asymmetry** — offline basemap is credited, online basemap is not.
-  Add online credit (or drop offline credit for consistency).
+- **Brightness slider** — is it useful? If kept, move to Settings sub-tab?
+- **Circumstances panel density** — Global Circumstances is large, takes a lot
+  of vertical space. On map-click the user needs to see the local circs change
+  without scrolling. Either: tighten the cell sizes / line-heights, OR switch
+  Global Circs to a compact list-table while keeping Local Circs as blocks.
+  The current shape is good for browsing one eclipse; bad for comparing
+  locations rapidly on the same eclipse.
 - **Instructions vs. Search Syntax** — are these meaningfully separate?
   Consider merging into one section.
-- **Time zone instruction may be backwards** — verify the wording matches
-  actual behaviour, then fix copy or behaviour.
 - **Mobile initial zoom too close** — on launch or eclipse change in mobile
   mode, start zoomed out enough to see where on the globe you are. Overview
   rather than closeup.
-- **Desktop map-tap rotation flash** — clicking map starts the globe rotating
-  just as the tab transition begins; you see a jarring fragment. Goes away
-  once the sidebar layout lands (no tab switch needed); deferred until then.
+- **GE dot zoom behavior** — the greatest-eclipse point scales up with zoom
+  until it fills the screen. Cap its max size in a rational way (pixel-space
+  cap rather than world-space scaling).
+- **Mobile map-click result** — with the sidebar gone on mobile, clicking the
+  map no longer gives an inline sense of "this is what changed." Add a tiny
+  microsheet that slides up showing at minimum umbral duration for the clicked
+  point. Bottom-of-map, dismissable.
 
 ---
 

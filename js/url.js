@@ -81,7 +81,7 @@ document.getElementById('btn-locate').addEventListener('click', function () {
 (function () {
   var ready = false;
   setTimeout(function () { ready = true; }, 0);
-  var groups = ['sg-about', 'sg-instructions', 'sg-settings'];
+  var groups = ['sg-about', 'sg-instructions', 'sg-data', 'sg-settings'];
   groups.forEach(function (id) {
     var el = document.getElementById(id);
     if (!el) return;

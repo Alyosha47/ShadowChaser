@@ -2,7 +2,11 @@
 
 /* `map` and `mapReady` are AppState properties; see js/state.js. */
 var pathCache      = {};
+/* `pathMarkers` are bound to the selected eclipse (e.g. greatest-eclipse dot)
+   and only change when selectedEntry changes. `mapMarkers` are bound to the
+   observer location and may be cleared independently when the user clicks. */
 var mapMarkers     = [];
+var pathMarkers    = [];
 var currentPathKey = null;
 var deckOverlay = null; /* deck.gl MapboxOverlay */
 
@@ -195,6 +199,7 @@ function initMap() {
     map = null;
     mapReady = false;
     mapMarkers = [];
+    pathMarkers = [];
   }
 
   /* Always start the map with whatever basemap is available. We load
@@ -219,7 +224,11 @@ function createMap(style, isOnline, localStyleFallback) {
   map = new maplibregl.Map({
     container: 'map',
     style: style,
-    center: [0, 30], zoom: 2, minZoom: 1, maxZoom: 18,
+    /* On narrow viewports start more zoomed-out so users can see where on the
+       globe they are. Desktop starts at the usual zoom level. */
+    center: [0, 30],
+    zoom: window.matchMedia('(min-width: 900px)').matches ? 2 : 0.6,
+    minZoom: 0.4, maxZoom: 18,
     maxPitch: 0,
     dragRotate: false,
     touchPitch: false,
@@ -316,6 +325,7 @@ function updateMapState() {
   if (!selectedEntry) return;   /* not ready yet (init-time only) */
   clearMapLayers();
   clearMapMarkers();
+  clearPathMarkers();
   var coords = parseCoords();
 
   setMapStatus('Loading path\u2026');
@@ -389,7 +399,8 @@ function loadPathChunk(entry) {
   });
 }
 
-function clearMapMarkers() { mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
+function clearMapMarkers()  { mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
+function clearPathMarkers() { pathMarkers.forEach(function(m){m.remove();}); pathMarkers=[]; }
 
 function addObserverMarker(lat, lon, sunAz) {
   var wrap=document.createElement('div');
@@ -406,6 +417,14 @@ function addObserverMarker(lat, lon, sunAz) {
   var m=new maplibregl.Marker({element:wrap,anchor:'center'})
     .setLngLat([lon,lat]).addTo(map);
   mapMarkers.push(m);
+}
+
+function addGEMarker(lat, lon) {
+  var dot = document.createElement('div');
+  dot.className = 'ge-dot';
+  var m = new maplibregl.Marker({ element: dot, anchor: 'center' })
+    .setLngLat([lon, lat]).addTo(map);
+  pathMarkers.push(m);
 }
 
 function onMapClick(lat, lon) {
@@ -798,41 +817,9 @@ function drawEclipsePath(ep) {
     }
   }
 
-  /* ── Greatest eclipse point ─────────────────────────────────────── */
+  /* ── Greatest eclipse point — pixel-space marker (zoom-invariant) ─── */
   if (ep.ge && ep.ge[0] != null) {
-    /* ScatterplotLayer is not in this deck.gl build — approximate a circle
-       as a closed polygon ring with N vertices. */
-    var geLon = ep.ge[0], geLat = ep.ge[1];
-    var N = 24, R = 0.18; /* radius in degrees — visually ~5px at zoom 3 */
-    var geRing = [];
-    for (var i = 0; i <= N; i++) {
-      var a = (i / N) * Math.PI * 2;
-      geRing.push([geLon + R * Math.cos(a), geLat + R * Math.sin(a) * 0.6]);
-    }
-    /* Outer white halo */
-    var geHalo = [];
-    for (var i = 0; i <= N; i++) {
-      var a = (i / N) * Math.PI * 2;
-      geHalo.push([geLon + R*1.9 * Math.cos(a), geLat + R*1.9 * Math.sin(a) * 0.6]);
-    }
-    layers.push(new DeckGL.SolidPolygonLayer({
-      id:           'ge-halo',
-      data:         [{ polygon: geHalo }],
-      getPolygon:   function(d) { return d.polygon; },
-      getFillColor: [255,255,255,220],
-      stroked:      false,
-      filled:       true,
-      parameters:   { depthWriteEnabled: false },
-    }));
-    layers.push(new DeckGL.SolidPolygonLayer({
-      id:           'ge-point',
-      data:         [{ polygon: geRing }],
-      getPolygon:   function(d) { return d.polygon; },
-      getFillColor: [204,34,0,255],
-      stroked:      false,
-      filled:       true,
-      parameters:   { depthWriteEnabled: false },
-    }));
+    addGEMarker(ep.ge[1], ep.ge[0]);
   }
 
   setDeckLayers(layers);
