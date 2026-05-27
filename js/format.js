@@ -46,100 +46,154 @@ function typeName(t) {
            total:'Total', annular:'Annular', hybrid:'Hybrid', partial:'Partial' }[t] || t;
 }
 
-/* Render Moon-Sun geometry as an inline SVG.
-   x, y : Moon center offset from Sun center, in Sun radii (0,0 = centered)
-   k    : Moon/Sun apparent size ratio (~0.97 = annular, ~1.03 = total)
-   type : 'T'/'A'/'H'/'P' — drives corona vs ring decoration when overlapping
-   size : pixel dimension of the SVG (square) */
-/* Diamond-ring icon: dark Moon disk fully covering the Sun, faint corona
-   ring, single bright bead at position angle p (degrees from celestial
-   north going east). Used for C2/C3 contacts. */
-function drawDiamondRing(v, size) {
-  var s = size || 18;
-  var cx = 14, cy = 14;
-  var R  = 7;                                    /* Moon/Sun radius */
-  var rad = v * Math.PI / 180;                   /* V: zenith-relative, clockwise */
-  var beadR = R + 0.7;                            /* sit bead on the corona ring */
-  var beadX = cx + beadR * Math.sin(rad);
-  var beadY = cy - beadR * Math.cos(rad);
+/**
+ * eclipseIcon — unified inline-SVG renderer for all eclipse icons.
+ *
+ * Single icon family for the search list and the contact-times table.
+ * One palette, one coordinate system, one viewBox. Returns an SVG string.
+ *
+ * Options:
+ *   type      'T'|'A'|'H'|'P'           — eclipse type
+ *   phase     'MAX'|'C1'|'C2'|'C3'|'C4' — optional; MAX or omitted = the
+ *             list-style "shape of the eclipse"; C-codes draw the
+ *             contact-specific geometry below.
+ *   magnitude number 0..~1.05           — optional; drives the Partial
+ *             offset and the Hybrid (none — fixed). Ignored otherwise.
+ *   angle     degrees, zenith-relative clockwise — required for C1-C4.
+ *             0 = up, 90 = right, 180 = down, 270 = left.
+ *   size      pixels (default 32)
+ *
+ * Render modes by (phase, type):
+ *   MAX/T          dark moon disk + soft white corona halo
+ *   MAX/A          dark interior + orange ring stroke
+ *   MAX/H          left half = corona; right half = annular ring
+ *   MAX/P          orange sun + moon offset by (1 − magnitude)
+ *   C2/C3, any T   diamond ring: dark disk + faint corona + bright bead at angle
+ *   C2/C3, any A   dark disk + orange ring + bright bead at angle (annular bead)
+ *   C1/C4          moon offset by ~0.95 sun-radii in `angle` direction
+ *                  (Sun-with-bite, orientation reflects contact direction)
+ */
+function eclipseIcon(opts) {
+  var type  = (opts.type  || 'P').toUpperCase();
+  var phase = (opts.phase || 'MAX').toUpperCase();
+  var mag   = (typeof opts.magnitude === 'number') ? opts.magnitude : null;
+  var ang   = (typeof opts.angle     === 'number') ? opts.angle     : null;
+  var SIZE  = opts.size || 32;
 
-  return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 28 28">'
-       + '<defs><filter id="dr' + s + '" x="-100%" y="-100%" width="300%" height="300%">'
-       +   '<feGaussianBlur in="SourceGraphic" stdDeviation="0.8"/></filter></defs>'
-       /* Faint corona ring (white, low opacity) */
-       + '<circle cx="' + cx + '" cy="' + cy + '" r="' + (R + 1.4) + '" fill="none" stroke="#fff" stroke-width="0.6" opacity="0.7"/>'
-       /* Dark Moon disk */
-       + '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="#0a0c10"/>'
-       /* Bright bead at p, with a small halo for the "diamond" glint */
-       + '<circle cx="' + beadX.toFixed(2) + '" cy="' + beadY.toFixed(2) + '" r="2.4" fill="#fff" filter="url(#dr' + s + ')"/>'
-       + '<circle cx="' + beadX.toFixed(2) + '" cy="' + beadY.toFixed(2) + '" r="1.4" fill="#fff"/>'
-       + '</svg>';
+  /* Coordinate system — same for every icon so the family stays consistent.
+     36-unit viewBox, sun radius 9 (50% of viewBox), so corona has room. */
+  var VB = 36, R = 9, cx = 18, cy = 18;
+
+  /* Palette — used across all icons in the family. */
+  var SUN  = '#e8a04a';   /* warm orange — sun disk / annular ring */
+  var MOON = '#0a0c10';   /* matches app background — silhouette */
+  var HALO = '#dde3ec';   /* soft white — corona */
+
+  /* Unique-id suffix for SVG filter ids (multiple icons on one page). */
+  var fid = (eclipseIcon._n = (eclipseIcon._n || 0) + 1);
+
+  var head = '<svg width="' + SIZE + '" height="' + SIZE + '" viewBox="0 0 ' + VB + ' ' + VB + '">';
+  var foot = '</svg>';
+
+  /* Convenience builders for the shared visual primitives. */
+  function coronaDef() {
+    return '<defs><filter id="cg' + fid + '" x="-50%" y="-50%" width="200%" height="200%">'
+         +   '<feGaussianBlur stdDeviation="2.6"/></filter></defs>';
+  }
+  function coronaCircle(clip) {
+    return '<circle cx="' + cx + '" cy="' + cy + '" r="' + (R + 3.5) + '" fill="' + HALO
+         + '" filter="url(#cg' + fid + ')" opacity="0.9"'
+         + (clip ? ' clip-path="url(#' + clip + ')"' : '') + '/>';
+  }
+  function moonDisk(clip) {
+    return '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="' + MOON + '"'
+         + (clip ? ' clip-path="url(#' + clip + ')"' : '') + '/>';
+  }
+  function annularRing(clip) {
+    return '<circle cx="' + cx + '" cy="' + cy + '" r="' + (R - 0.5) + '" fill="' + MOON
+         + '" stroke="' + SUN + '" stroke-width="1.8"'
+         + (clip ? ' clip-path="url(#' + clip + ')"' : '') + '/>';
+  }
+
+  /* ── C2 / C3: diamond ring ───────────────────────────────────────────
+     Dark moon fully covering, single bright bead glinting at the limb
+     at position `angle`. For annular contact, the bead sits on the
+     orange ring instead of pure white. */
+  if ((phase === 'C2' || phase === 'C3') && ang !== null) {
+    var rad   = ang * Math.PI / 180;
+    var beadR = R + 0.7;
+    var bx    = cx + beadR * Math.sin(rad);
+    var by    = cy - beadR * Math.cos(rad);
+    var beadColor = (type === 'A') ? SUN : HALO;
+    return head
+         + '<defs><filter id="cg' + fid + '" x="-100%" y="-100%" width="300%" height="300%">'
+         +   '<feGaussianBlur stdDeviation="0.8"/></filter></defs>'
+         /* Faint corona / ring outline */
+         + '<circle cx="' + cx + '" cy="' + cy + '" r="' + (R + 1.4) + '" fill="none"'
+         +   ' stroke="' + (type === 'A' ? SUN : HALO) + '" stroke-width="0.6" opacity="0.7"/>'
+         /* Dark moon */
+         + moonDisk()
+         /* Diamond bead */
+         + '<circle cx="' + bx.toFixed(2) + '" cy="' + by.toFixed(2)
+         +   '" r="2.4" fill="' + beadColor + '" filter="url(#cg' + fid + ')"/>'
+         + '<circle cx="' + bx.toFixed(2) + '" cy="' + by.toFixed(2)
+         +   '" r="1.4" fill="' + beadColor + '"/>'
+         + foot;
+  }
+
+  /* ── C1 / C4: moon overlapping sun's limb at `angle` ─────────────────
+     Show the sun with a crescent bite. Orientation reflects contact dir. */
+  if ((phase === 'C1' || phase === 'C4') && ang !== null) {
+    var rad2 = ang * Math.PI / 180;
+    var d    = 0.95;
+    var mx   = cx + d * R * Math.sin(rad2);
+    var my   = cy - d * R * Math.cos(rad2);
+    return head
+         + '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="' + SUN + '"/>'
+         + '<circle cx="' + mx.toFixed(2) + '" cy="' + my.toFixed(2) + '" r="' + R + '" fill="' + MOON + '"/>'
+         + foot;
+  }
+
+  /* ── MAX (or no phase given): list-row-style icons per type ─────────── */
+
+  switch (type) {
+    case 'T':
+      return head + coronaDef() + coronaCircle() + moonDisk() + foot;
+
+    case 'A':
+      return head + annularRing() + foot;
+
+    case 'H': {
+      /* Left half = corona; right half = annular ring. Distinct from T and A. */
+      var lc = 'hl' + fid, rc = 'hr' + fid;
+      return head
+           + '<defs>'
+           +   '<filter id="cg' + fid + '" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.6"/></filter>'
+           +   '<clipPath id="' + lc + '"><rect x="0" y="0" width="' + cx + '" height="' + VB + '"/></clipPath>'
+           +   '<clipPath id="' + rc + '"><rect x="' + cx + '" y="0" width="' + (VB - cx) + '" height="' + VB + '"/></clipPath>'
+           + '</defs>'
+           + coronaCircle(lc)
+           + annularRing(rc)
+           + moonDisk(lc)
+           + foot;
+    }
+
+    default: {
+      /* Partial: orange sun + moon offset by (1 − magnitude), clamped. */
+      var m  = (mag !== null) ? mag : 0.5;
+      var dd = Math.max(0.18, Math.min(0.92, 1 - m));
+      var mxP = cx + dd * R;
+      return head
+           + '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="' + SUN + '"/>'
+           + '<circle cx="' + mxP + '" cy="' + cy + '" r="' + R + '" fill="' + MOON + '"/>'
+           + foot;
+    }
+  }
 }
 
-function drawEclipseGeometry(x, y, k, type, size) {
-  var s = size || 18;
-  /* Coord system: Sun radius = 7 in a 28-unit viewBox. Sun fills ~50% of the
-     icon; viewBox is wide enough for contact-icon offsets (Moon center up to
-     ~1 Sun radius from Sun center) plus the corona for Total. */
-  var R   = 7;
-  var cx  = 14, cy = 14;
-  var mr  = R * (k || 1);
-  var mx  = cx + (x || 0) * R;
-  var my  = cy + (y || 0) * R;
-
-  var sunFill = '#e8c98e';                       /* sun visible disk */
-  var bg      = '#0a0c10';                       /* background — matches app */
-  var moonFill = bg;                              /* moon = silhouette = bg */
-
-  var overlapping = Math.hypot(x||0, y||0) < (1 + (k||1));
-  var centered    = Math.hypot(x||0, y||0) < 0.05;
-
-  var parts = [];
-
-  /* Total or Hybrid: corona glow when Moon is centered on Sun.
-     Hybrid is depicted as a total with a small bright ring showing through
-     the Moon's silhouette (it's annular at horizon, total near noon). */
-  if ((type === 'T' || type === 'H') && centered) {
-    parts.push('<defs><filter id="cg' + s + '" x="-100%" y="-100%" width="300%" height="300%">' +
-               '<feGaussianBlur in="SourceGraphic" stdDeviation="2.5"/></filter></defs>');
-    parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + (R + 1) + '" fill="#fff" filter="url(#cg' + s + ')"/>');
-    parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + (R + 1) + '" fill="#fff" filter="url(#cg' + s + ')"/>');
-  }
-
-  /* Sun disk */
-  parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="' + sunFill + '"/>');
-
-  /* Annular: brighter rim shows through (Moon smaller than Sun, ring visible) */
-  if (type === 'A' && centered) {
-    parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="#e07820"/>');
-  }
-
-  /* Moon disk (only if overlapping or near Sun) */
-  if (overlapping || Math.hypot(x||0, y||0) < 2.5) {
-    parts.push('<circle cx="' + mx.toFixed(2) + '" cy="' + my.toFixed(2) +
-               '" r="' + mr.toFixed(2) + '" fill="' + moonFill + '"/>');
-  }
-
-  /* Hybrid: small bright ring showing through the Moon (annular component) */
-  if (type === 'H' && centered) {
-    parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + (R * 0.55) + '" fill="#e07820"/>');
-    parts.push('<circle cx="' + cx + '" cy="' + cy + '" r="' + (R * 0.40) + '" fill="' + bg + '"/>');
-  }
-
-  return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 28 28">' +
-         parts.join('') + '</svg>';
-}
-
-function typeIcon(tc) {
-  /* Used by the search list. Renders the eclipse at maximum (Moon centered).
-     Annular k=0.94 makes the ring visible; total k=1.04 hides the Sun;
-     partial k=1.0 with offset shows a crescent. */
-  switch (tc) {
-    case 'T': return drawEclipseGeometry(0,    0, 1.04, 'T', 22);
-    case 'A': return drawEclipseGeometry(0,    0, 0.94, 'A', 20);
-    case 'H': return drawEclipseGeometry(0,    0, 1.00, 'H', 22);
-    default:  return drawEclipseGeometry(0.45, 0, 1.00, 'P', 20);
-  }
+/* Thin wrappers — keep existing call sites working. */
+function typeIcon(tc, magnitude) {
+  return eclipseIcon({ type: tc, magnitude: magnitude });
 }
 
 
@@ -150,21 +204,23 @@ function typeCode(t) {
   return t[0].toUpperCase();
 }
 
-/* Sunrise: sun cresting above horizon (mostly hidden, top visible).
-   Sunset:  sun half-dipped below horizon (about to vanish, bottom hidden). */
+/* Sunrise / Sunset icons: half-sun sitting on the horizon line with three
+   rays emanating outward. Sunset is the same shape flipped vertically so
+   the half-disc sits *below* the horizon with rays pointing down. */
 function horizonIcon(rising) {
-  /* viewBox 28x28, horizon at y=18.
-     Rising:  sun centered at y=20 (mostly below horizon, ~30% above)
-     Setting: sun centered at y=16 (mostly above horizon, ~30% below) */
-  var cy = rising ? 20 : 16;
-  return '<svg width="22" height="22" viewBox="0 0 28 28">'
-       + '<defs><clipPath id="hc' + (rising?'r':'s') + '">'
-       +   '<rect x="0" y="0" width="28" height="18"/>'
-       + '</clipPath></defs>'
-       /* Sun (clipped to above-horizon only) */
-       + '<circle cx="14" cy="' + cy + '" r="6" fill="#e8c98e" clip-path="url(#hc' + (rising?'r':'s') + ')"/>'
-       /* Horizon line */
-       + '<line x1="2" y1="18" x2="26" y2="18" stroke="#7e8fa0" stroke-width="1.5"/>'
+  var SIZE = 32, VB = 36;
+  var inner =
+      /* Rays — emanating upward from sun's top */
+      '<line x1="18" y1="6"   x2="18" y2="3"   stroke="#e8a04a" stroke-width="1.8" stroke-linecap="round"/>'
+    + '<line x1="11.5" y1="9" x2="9"  y2="6.5" stroke="#e8a04a" stroke-width="1.8" stroke-linecap="round"/>'
+    + '<line x1="24.5" y1="9" x2="27" y2="6.5" stroke="#e8a04a" stroke-width="1.8" stroke-linecap="round"/>'
+    /* Half-disc sitting on horizon */
+    + '<path d="M10,18 A8,8 0 0,1 26,18 Z" fill="#e8a04a"/>'
+    /* Horizon line */
+    + '<line x1="3" y1="18" x2="33" y2="18" stroke="#7e8fa0" stroke-width="1.6" stroke-linecap="round"/>';
+
+  return '<svg width="' + SIZE + '" height="' + SIZE + '" viewBox="0 0 ' + VB + ' ' + VB + '">'
+       + (rising ? inner : '<g transform="translate(0,' + VB + ') scale(1,-1)">' + inner + '</g>')
        + '</svg>';
 }
 

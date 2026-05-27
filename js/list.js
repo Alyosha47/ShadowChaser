@@ -39,6 +39,7 @@ function renderList() {
 
   var html = shown.map(function (e) {
     var tc  = typeCode(e.eclipse_type || 'P');
+    var ico = typeIcon(tc, e.magnitude);
     var sel = selectedEntry
            && selectedEntry.year===e.year
            && selectedEntry.month===e.month
@@ -47,7 +48,7 @@ function renderList() {
     return '<div class="eclipse-item' + (sel ? ' selected' : '') + '"'
          + (sel ? '' : ' onclick="selectEclipse(' + e.year + ',' + e.month + ',' + e.day + ')"')
          + '>'
-         + '<span style="display:flex;align-items:center;justify-content:center">' + typeIcon(tc) + '</span>'
+         + '<span style="display:flex;align-items:center;justify-content:center">' + ico + '</span>'
          + '<span>' + fmtDate(e) + '</span>'
          + '<span style="text-align:right;padding-right:.25rem">' + dur + '</span>'
          + '</div>';

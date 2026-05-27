@@ -161,22 +161,9 @@ function row(label, value) {
 }
 
 function contactIcon(phase, type, v) {
-  /* Geometry per contact phase. v is the contact angle from the local zenith
-     measured clockwise (degrees) — V in Jubier's notation. In SVG that maps
-     to x = sin(v), y = -cos(v) (V=0° → straight up, V=90° → right). */
-  if (phase === 'MAX' || v == null) {
-    var kMax = type === 'A' ? 0.94 : type === 'T' ? 1.04 : 1.00;
-    return drawEclipseGeometry(0, 0, kMax, type, 26);
-  }
-  if (phase === 'C2' || phase === 'C3') {
-    return drawDiamondRing(v, 26);
-  }
-  /* C1 / C4: Moon overlaps Sun at angle V, leaving a visible crescent. */
-  var rad = v * Math.PI / 180;
-  var d   = 0.95;
-  var x   =  d * Math.sin(rad);
-  var y   = -d * Math.cos(rad);
-  return drawEclipseGeometry(x, y, 1.0, type, 26);
+  /* Thin wrapper over eclipseIcon for the contact-times table. v is the
+     position angle from local zenith, clockwise (Jubier's V convention). */
+  return eclipseIcon({ type: type, phase: phase, angle: v, size: 26 });
 }
 
 function coordStr(lat, lon) {
