@@ -65,6 +65,10 @@ function loadBasemapData() {
       land:      r[0], ocean:    r[1], countries: r[2],
       lakes:     r[3], rivers:   r[4], cities:    r[5],
     };
+    /* Cities became available — any pending city-name token in the search
+       input couldn't resolve at first parse. Re-run the search now so
+       those tokens light up. */
+    if (typeof onSearchChanged === 'function') onSearchChanged(true);
     return basemapData;
   });
   return basemapLoading;
@@ -730,18 +734,12 @@ function drawEclipsePath(ep) {
     }));
   }
 
-  /* ── Umbra fill ─────────────────────────────────────────────────── */
-  if (isCentral && ep.umbra_n && ep.umbra_s) {
-    layers.push(new DeckGL.SolidPolygonLayer({
-      id:           'umbra-fill',
-      data:         corridorToPolygonData(ep.umbra_n, ep.umbra_s, 'umb'),
-      getPolygon:   function(d) { return d.polygon; },
-      getFillColor: uc.concat([46]),
-      stroked:      false,
-      filled:       true,
-      parameters:   { depthWriteEnabled: false },
-    }));
-  }
+  /* ── Umbra fill (disabled) ────────────────────────────────────────────
+     SolidPolygonLayer triangulates the corridor as a flat lon/lat polygon.
+     Paths that pass near a pole or cross the antimeridian produce wrong
+     fills (concentric polar rings, hemisphere-spanning sweeps). Until
+     this is properly solved, the corridor is communicated by its outline
+     paths alone (drawn below). See BACKLOG.md for the full diagnosis. */
 
   /* ── Umbra boundary lines ────────────────────────────────────────── */
   if (isCentral && ep.umbra_n && ep.umbra_s) {
@@ -796,14 +794,27 @@ function drawEclipsePath(ep) {
     }));
   }
 
-  /* ── Umbra cap lines (connect n/s horn tips) ────────────────────── */
+  /* ── Umbra cap lines (connect n/s horn tips) ──────────────────────────
+     PathLayer draws a straight line in lon/lat between the two endpoints.
+     If the two horn tips lie on opposite sides of the antimeridian, the
+     straight line wraps the long way around the globe. Shift the second
+     endpoint by ±360° if that yields a shorter line in longitude. */
   if (isCentral && ep.umbra_n && ep.umbra_s && ep.umbra_n.length && ep.umbra_s.length) {
+    function shortPath(a, b) {
+      if (!a || !b) return null;
+      var lonA = a[0], lonB = b[0];
+      while (lonB - lonA >  180) lonB -= 360;
+      while (lonB - lonA < -180) lonB += 360;
+      return [[lonA, a[1]], [lonB, b[1]]];
+    }
     var capPaths = [];
     var unFirst = ep.umbra_n[0][0], usFirst = ep.umbra_s[0][0];
-    if (unFirst && usFirst) capPaths.push({ id:'cap0', path:[unFirst,usFirst] });
+    var cap0 = shortPath(unFirst, usFirst);
+    if (cap0) capPaths.push({ id: 'cap0', path: cap0 });
     var unLS = ep.umbra_n[ep.umbra_n.length-1], usLS = ep.umbra_s[ep.umbra_s.length-1];
     var unLast = unLS[unLS.length-1], usLast = usLS[usLS.length-1];
-    if (unLast && usLast) capPaths.push({ id:'cap1', path:[unLast,usLast] });
+    var cap1 = shortPath(unLast, usLast);
+    if (cap1) capPaths.push({ id: 'cap1', path: cap1 });
     if (capPaths.length) {
       layers.push(new DeckGL.PathLayer({
         id: 'umbra-caps',

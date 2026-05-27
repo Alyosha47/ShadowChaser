@@ -197,6 +197,7 @@
       saros:     null,
       types:     null,
       coords:    null,
+      city:      null,
       obscRange: null
     };
 
@@ -381,6 +382,32 @@
     /* 10. Remaining → freetext */
     filter.text = s.replace(/\s+/g, ' ').trim();
 
+    /* 11. City lookup — if no explicit coords, walk the freetext tokens
+       and try resolving them as a city name. Tries longest combinations
+       first (up to 3 words) so "new york" beats "york". Explicit coords
+       always win. */
+    if (!filter.coords && filter.text && typeof lookupCity === 'function') {
+      var words = filter.text.split(/\s+/);
+      var kept  = [];
+      var i = 0;
+      while (i < words.length) {
+        var hit = null;
+        if (!filter.city) {
+          /* Try 3-word, then 2-word, then 1-word match at this position. */
+          for (var n = Math.min(3, words.length - i); n >= 1 && !hit; n--) {
+            hit = lookupCity(words.slice(i, i + n).join(' '));
+            if (hit) {
+              filter.city   = hit.name;
+              filter.coords = { lat: hit.lat, lon: hit.lon };
+              i += n;
+            }
+          }
+        }
+        if (!hit) { kept.push(words[i]); i++; }
+      }
+      filter.text = kept.join(' ');
+    }
+
     return filter;
   }
 
@@ -516,7 +543,9 @@
         parts.push('<' + filter.obscRange.max + '%');
       }
     }
-    if (filter.coords) {
+    if (filter.city) {
+      parts.push(filter.city.toLowerCase());
+    } else if (filter.coords) {
       parts.push('(' + filter.coords.lat.toFixed(5) + ', ' + filter.coords.lon.toFixed(5) + ')');
     }
     if (filter.text) parts.push(filter.text);

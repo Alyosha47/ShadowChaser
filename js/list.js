@@ -31,14 +31,14 @@ function renderList() {
       if (e.year > cy || (e.year===cy && e.month>cm) ||
           (e.year===cy && e.month===cm && e.day>=cd)) { anchor=i; break; }
     }
-    start = Math.max(0, anchor - 50);
+    /* Center the 500-row window on today so the user can browse both
+       past and future eclipses without typing a filter. */
+    start = Math.max(0, anchor - 250);
     shown = items.slice(start, start + 500);
   }
 
   var html = shown.map(function (e) {
-    var tc  = locationResults !== null
-            ? typeCode(e.local_type || 'P')
-            : typeCode(e.eclipse_type || 'P');
+    var tc  = typeCode(e.eclipse_type || 'P');
     var sel = selectedEntry
            && selectedEntry.year===e.year
            && selectedEntry.month===e.month
@@ -60,6 +60,16 @@ function renderList() {
   }
 
   list.innerHTML = html;
+
+  /* Center the list on the anchor row (today's row when unfiltered) so the
+     user sees today instead of the start of the window. */
+  if (anchor > 0) {
+    var rowIdx = anchor - start;
+    var rows   = list.querySelectorAll('.eclipse-item');
+    if (rows[rowIdx]) {
+      rows[rowIdx].scrollIntoView({ block: 'center' });
+    }
+  }
 }
 
 
