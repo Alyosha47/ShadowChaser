@@ -349,14 +349,20 @@ function updateMapState() {
       ['centreline','penumbra_n','penumbra_s'].forEach(function(k){
         (ep[k]||[]).forEach(function(seg){ allPts = allPts.concat(seg); });
       });
-      if (allPts.length) {
-        var lons = allPts.map(function(p){return p[0];});
-        var lats = allPts.map(function(p){return p[1];});
+      var lons = allPts.map(function(p){return p[0];});
+      var lats = allPts.map(function(p){return p[1];});
+      var lonSpan = lons.length
+        ? Math.max.apply(null,lons) - Math.min.apply(null,lons) : 0;
+      if (allPts.length && lonSpan <= 180) {
+        /* Normal case: path doesn't wrap the antimeridian. */
         map.fitBounds([
           [Math.min.apply(null,lons), Math.min.apply(null,lats)],
           [Math.max.apply(null,lons), Math.max.apply(null,lats)]
         ], { padding:40, duration:800, maxZoom:6 });
       } else if (ep.ge && ep.ge[0] != null) {
+        /* Antimeridian-crossing path (raw lon min/max would span the globe
+           the wrong way and swing the camera to the far side) — center on
+           the greatest-eclipse point instead. */
         map.flyTo({ center:ep.ge, zoom:3, duration:800 });
       }
     }
