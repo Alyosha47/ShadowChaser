@@ -84,6 +84,7 @@ function selectEclipse(y, m, d) {
   }
   if (!found) return;
   selectedEntry = found;
+  _currentRec   = null;             /* invalidate old eclipse's Besselian rec */
   updateHeaderSelection();
   renderList();
   computeLocal();

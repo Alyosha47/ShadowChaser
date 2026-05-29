@@ -1,5 +1,10 @@
 /* ── Local circumstances computation ────────────────────────────────── */
 
+/* Cached Besselian record for the selected eclipse, populated by computeLocal
+   when a location is set. renderData() reads it as a fallback so subsequent
+   renders (after pill toggles, URL restores, etc.) keep the local rows. */
+var _currentRec = null;
+
 function computeLocal() {
   var coords = parseCoords();
   if (!coords) { renderData(); return Promise.resolve(null); }
@@ -18,6 +23,7 @@ function computeLocal() {
        && r.day===selectedEntry.day) { rec=r; break; }
     }
     if (!rec) { setStatus('Record not found in data chunk.', true); return null; }
+    _currentRec = rec;
 
     try {
       localResult = computeEclipse(rec, lat, lon, alt);
@@ -58,17 +64,41 @@ function findHorizonCrossing(rec, lat, lonW, alt, dT_s, tStart, tEnd, rising) {
   return (lo + hi) / 2;
 }
 
-function computeSunriseSunset(rec, lat, lon, alt) {
-  var dT_s  = rec.dt;
-  var lonW  = -lon;  /* east-positive → west-positive for fundamentalArgs */
-  var rise = null, set = null;
-  for (var t = -18; t < 18; t++) {
+function computeSunriseSunset(rec, lat, lon, alt, tMaxRel) {
+  /* Find sunrise/sunset crossings within ±18 h of tMaxRel and return the
+     rise BEFORE the eclipse (most recent prior crossing) and the set AFTER
+     (soonest subsequent). Falls back to the nearest available crossing if
+     no event exists on the requested side. `tMaxRel` is in the relative-t
+     frame (hours from rec.t0); if omitted, centers on 0. */
+  var dT_s   = rec.dt;
+  var lonW   = -lon;
+  var center = (typeof tMaxRel === 'number') ? tMaxRel : 0;
+  var rises = [], sets = [];
+  var lo = Math.floor(center) - 18, hi = Math.floor(center) + 18;
+  for (var t = lo; t < hi; t++) {
     var a0 = sunAltAz(fundamentalArgs(rec, t,   lat, lonW, alt, dT_s), lat).alt;
     var a1 = sunAltAz(fundamentalArgs(rec, t+1, lat, lonW, alt, dT_s), lat).alt;
-    if (rise === null && a0 < 0 && a1 > 0) rise = findHorizonCrossing(rec, lat, lonW, alt, dT_s, t, t+1, true);
-    if (set  === null && a0 > 0 && a1 < 0) set  = findHorizonCrossing(rec, lat, lonW, alt, dT_s, t, t+1, false);
+    if (a0 < 0 && a1 > 0) rises.push(findHorizonCrossing(rec, lat, lonW, alt, dT_s, t, t+1, true));
+    if (a0 > 0 && a1 < 0) sets .push(findHorizonCrossing(rec, lat, lonW, alt, dT_s, t, t+1, false));
   }
-  return { rise: rise, set: set };
+  function pickBefore(arr) {
+    var best = null;
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i] <= center && (best === null || arr[i] > best)) best = arr[i];
+    }
+    if (best !== null) return best;
+    /* No crossing before center — fall back to nearest available. */
+    return arr.length ? arr[0] : null;
+  }
+  function pickAfter(arr) {
+    var best = null;
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i] >= center && (best === null || arr[i] < best)) best = arr[i];
+    }
+    if (best !== null) return best;
+    return arr.length ? arr[arr.length-1] : null;
+  }
+  return { rise: pickBefore(rises), set: pickAfter(sets) };
 }
 
 function setStatus(msg, isErr) {
@@ -95,6 +125,7 @@ function clearLocationFilter() {
   updateCoordsStatus();
   renderList();
   localResult = null;
+  _currentRec = null;
   renderData();
   pushState();   /* search value changed — keep URL in sync */
   /* Coords come from the DOM search input, not AppState — explicit redraw. */

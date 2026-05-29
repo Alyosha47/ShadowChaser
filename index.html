@@ -608,7 +608,21 @@
       padding-bottom: 0.6rem;
       border-bottom:  1px solid var(--gold-dim);
     }
+    .contacts-table .day-off {
+      font-size:  0.65em;
+      color:      var(--text-dim);
+      margin-left: 0.15rem;
+      vertical-align: super;
+      line-height: 1;
+    }
     .contacts-table th:first-child { padding-left: 0.55rem; }
+    .contacts-table th.time-mode-toggle {
+      cursor:           pointer;
+      color:            var(--gold);
+      text-decoration:  underline dotted;
+      text-underline-offset: 3px;
+    }
+    .contacts-table th.time-mode-toggle:hover { color: var(--text); }
     .contacts-table td             { color: var(--text); padding-left: 0.55rem; }
     .contacts-table tbody tr:nth-child(odd) td { background: rgba(255,255,255,0.025); }
     .contacts-table td svg         { vertical-align: -5px; margin-right: 0.4rem; }

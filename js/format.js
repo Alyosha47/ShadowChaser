@@ -19,8 +19,27 @@ function fmtUT(h) {
   return pad(hh % 24) + ':' + pad(mm) + ':' + pad(ss);
 }
 
+/* Day-aware time formatter. Renders `h` (decimal hours) as HH:MM:SS, and
+   appends ` (±Nd)` when the floor-divided day differs from `anchor`'s day.
+   Used by the contact-times table so events that fall on the previous or
+   next calendar day relative to the eclipse maximum are unambiguous. */
+function fmtUTAnchored(h, anchor) {
+  if (h === null || h === undefined || isNaN(h)) return '--';
+  var dayOff = Math.floor(h / 24) - Math.floor((anchor != null ? anchor : h) / 24);
+  var s = fmtUT(h);
+  if (dayOff !== 0) {
+    var sign = dayOff > 0 ? '+' : '\u2212';   /* real minus, not hyphen */
+    s += '<sup class="day-off">' + sign + Math.abs(dayOff) + '</sup>';
+  }
+  return s;
+}
+
 function fmtLocal(h, off) {
   return (h === null || h === undefined) ? '--' : fmtUT(h + off);
+}
+function fmtLocalAnchored(h, off, anchor) {
+  return (h === null || h === undefined) ? '--'
+    : fmtUTAnchored(h + off, anchor != null ? anchor + off : null);
 }
 
 function fmtDur(s) {

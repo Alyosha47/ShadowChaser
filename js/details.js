@@ -1,8 +1,29 @@
 /* ── Render inline data panel ────────────────────────────────────────── */
 
+/* Time-display mode for the contact-times table: 'local' (default) or 'ut'.
+   Persisted in localStorage so the user's choice survives reload. */
+var _timeMode = (function () {
+  try { return localStorage.getItem('sc.timeMode') || 'local'; }
+  catch (e) { return 'local'; }
+})();
+function setTimeMode(m) {
+  _timeMode = (m === 'ut') ? 'ut' : 'local';
+  try { localStorage.setItem('sc.timeMode', _timeMode); } catch (e) {}
+  renderData();
+}
+
 function buildContactRows(rec, res, lbl, tz) {
   var type = res.type ? res.type[0].toUpperCase() : 'P';
   var rows = [];
+  /* All event times are decimal-hour UT. fmtTime turns them into HH:MM:SS in
+     whichever mode is active, with a (±Nd) suffix for events that fall on a
+     different calendar day than tMax. */
+  var anchor = res.tMax;
+  function fmtTime(ut) {
+    return _timeMode === 'ut'
+      ? fmtUTAnchored(ut, anchor)
+      : fmtLocalAnchored(ut, tz, anchor);
+  }
 
   function pushContact(phase, c, cls) {
     if (!c || c.ut === null || c.ut === undefined) return;
@@ -10,9 +31,9 @@ function buildContactRows(rec, res, lbl, tz) {
     rows.push({ ut: c.ut, html:
         '<tr' + (cls ? ' class="' + cls + '"' : '') + '>'
       + '<td>' + contactIcon(phase, type, c.v) + ' ' + phase + '</td>'
-      + '<td>' + fmtUT(c.ut)        + '</td>'
-      + '<td>' + fmtAng(s.alt)      + '</td>'
-      + '<td>' + fmtAng(s.az)       + '</td>'
+      + '<td>' + fmtTime(c.ut)       + '</td>'
+      + '<td>' + fmtAng(s.alt)       + '</td>'
+      + '<td>' + fmtAng(s.az)        + '</td>'
       + '</tr>' });
   }
 
@@ -20,9 +41,9 @@ function buildContactRows(rec, res, lbl, tz) {
   pushContact('C2', res.C2, 'row-umbral');
   rows.push({ ut: res.tMax, html:
       '<tr class="row-max"><td>' + contactIcon('MAX', type, null) + ' MAX</td>'
-    + '<td>' + fmtUT(res.tMax)        + '</td>'
-    + '<td>' + fmtAng(res.sun.alt)    + '</td>'
-    + '<td>' + fmtAng(res.sun.az)     + '</td></tr>' });
+    + '<td>' + fmtTime(res.tMax)     + '</td>'
+    + '<td>' + fmtAng(res.sun.alt)   + '</td>'
+    + '<td>' + fmtAng(res.sun.az)    + '</td></tr>' });
   pushContact('C3', res.C3, 'row-umbral');
   pushContact('C4', res.C4, '');
 
@@ -32,16 +53,17 @@ function buildContactRows(rec, res, lbl, tz) {
       var dT_s = rec.dt;
       var lonW = -c.lon;
       var alt  = _lookedUpAlt || 0;
-      var ss   = computeSunriseSunset(rec, c.lat, c.lon, alt);
+      var tMaxRel = res.tMax - rec.t0 + dT_s / 3600;
+      var ss   = computeSunriseSunset(rec, c.lat, c.lon, alt, tMaxRel);
       function toUT(t) { return t !== null ? rec.t0 + t - dT_s / 3600 : null; }
       function pushHorizon(label, t, ut, rising) {
         if (ut === null) return;
         var az = sunAltAz(fundamentalArgs(rec, t, c.lat, lonW, alt, dT_s), c.lat).az;
         rows.push({ ut: ut, html:
             '<tr><td>' + horizonIcon(rising) + ' ' + label + '</td>'
-          + '<td>' + fmtUT(ut)        + '</td>'
+          + '<td>' + fmtTime(ut)       + '</td>'
           + '<td>0\u00b0</td>'
-          + '<td>' + fmtAng(az)       + '</td></tr>' });
+          + '<td>' + fmtAng(az)        + '</td></tr>' });
       }
       pushHorizon('Sunrise', ss.rise, toUT(ss.rise), true);
       pushHorizon('Sunset',  ss.set,  toUT(ss.set),  false);
@@ -54,6 +76,10 @@ function buildContactRows(rec, res, lbl, tz) {
 
 function renderData(rec, _tz, _lat, _lon) {
   if (!selectedEntry) return;   /* nothing to render yet (init-time only) */
+  /* Fall back to the cached Besselian record for this eclipse — callers
+     that re-render without recomputing (pill toggles, URL restore) don't
+     need to know about rec, but the contact-times table needs it. */
+  if (!rec && typeof _currentRec !== 'undefined') rec = _currentRec;
   var panel = document.getElementById('data-panel');
   var inner = document.getElementById('data-inner');
   var tz    = getTzOffset();
@@ -124,16 +150,22 @@ function renderData(rec, _tz, _lat, _lon) {
 
     + '<div class="detail-section-h">Contact Times</div>'
     + '<table class="contacts-table"><thead><tr>'
-    + '<th>Event</th><th>UT</th><th>Alt</th><th>Az</th>'
+    + '<th>Event</th>'
+    + '<th class="time-mode-toggle" onclick="setTimeMode(\''
+    +   (_timeMode === 'ut' ? 'local' : 'ut') + '\')" '
+    +   'title="Switch between local time and UT">'
+    +   (_timeMode === 'ut' ? 'UT' : 'Local')
+    + '</th>'
+    + '<th>Alt</th><th>Az</th>'
     + '</tr></thead><tbody>'
     + buildContactRows(rec, res, lbl, tz)
     + '</tbody></table>'
     + '<div class="contacts-note">'
-    +   (tz === 0
-          ? 'Local time = UT.'
-          : (tz > 0
-              ? 'Add ' + tz + 'h for local time (' + tzStr + ').'
-              : 'Subtract ' + (-tz) + 'h for local time (' + tzStr + ').'))
+    +   (_timeMode === 'ut'
+          ? 'UT shown. Tap header for local. Day offsets in parentheses.'
+          : (tz === 0
+              ? 'Local time = UT here.'
+              : 'Local time (' + tzStr + '). Tap header for UT.'))
     + '</div>'
 
     + (rec ? '<div class="note">No lunar limb correction applied.</div>' : '');
