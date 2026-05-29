@@ -262,6 +262,8 @@ function createMap(style, isOnline, localStyleFallback) {
     if (!deckOverlay) {
       deckOverlay = new DeckGL.MapboxOverlay({ layers: [], interleaved: false });
       map.addControl(deckOverlay);
+      var dc = document.getElementById('deckgl-overlay');
+      if (dc) dc.style.pointerEvents = 'none';
       if (setDeckLayers._pending) {
         deckOverlay.setProps({ layers: setDeckLayers._pending });
         setDeckLayers._pending = null;
