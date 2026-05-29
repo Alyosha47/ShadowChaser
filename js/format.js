@@ -217,7 +217,7 @@ function horizonIcon(rising) {
     /* Half-disc sitting on horizon */
     + '<path d="M10,18 A8,8 0 0,1 26,18 Z" fill="#e8a04a"/>'
     /* Horizon line */
-    + '<line x1="3" y1="18" x2="33" y2="18" stroke="#7e8fa0" stroke-width="1.6" stroke-linecap="round"/>';
+    + '<line x1="3" y1="18" x2="33" y2="18" stroke="#e8a04a" stroke-width="1.6" stroke-linecap="round"/>';
 
   return '<svg width="' + SIZE + '" height="' + SIZE + '" viewBox="0 0 ' + VB + ' ' + VB + '">'
        + (rising ? inner : '<g transform="translate(0,' + VB + ') scale(1,-1)">' + inner + '</g>')

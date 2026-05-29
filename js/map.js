@@ -440,7 +440,12 @@ function addGEMarker(lat, lon) {
 function onMapClick(lat, lon) {
   var search = document.getElementById('search');
   var f      = parseSearch(search.value);
-  search.value = filterToString(Object.assign({}, f, { coords:{lat:lat,lon:lon} }));
+  /* An explicit map click is an explicit location — drop any city name so it
+     can't re-resolve and override the clicked point on the next parse. */
+  search.value = filterToString(Object.assign({}, f, {
+    coords: { lat: lat, lon: lon },
+    city:   null
+  }));
   onSearchChanged(true);
   lookupElevationAndTz(lat, lon);
 

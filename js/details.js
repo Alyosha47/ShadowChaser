@@ -60,9 +60,6 @@ function renderData(rec, _tz, _lat, _lon) {
   var tzStr = tz >= 0 ? 'UTC+' + tz : 'UTC' + tz;
 
 
-  var typeCode  = (selectedEntry.eclipse_type||'P')[0].toLowerCase();
-  var typeLabel = typeName((selectedEntry.eclipse_type||'P')[0]);
-
   /* ΔT — use besselian chunk values when loaded (after computeLocal),
      fall back to formula for display before a location is set. */
   function formulaDt(year) {
@@ -94,7 +91,12 @@ function renderData(rec, _tz, _lat, _lon) {
       + '\u2002\u00b7\u2002' + tzStr
     : '';
 
-  html = '<div class="detail-title">' + fmtDate(selectedEntry) + '<span class="detail-title-type">' + typeLabel + '</span>'
+  var typeChar = (selectedEntry.eclipse_type||'P')[0].toUpperCase();
+  var titleIcon = eclipseIcon({ type: typeChar, magnitude: selectedEntry.magnitude, size: 26 });
+
+  html = '<div class="detail-title">'
+       + '<span class="detail-title-icon">' + titleIcon + '</span>'
+       + fmtDate(selectedEntry)
        + '<button class="share-btn" onclick="shareEclipse()">&#x2197; Share</button>'
        + '</div>'
 

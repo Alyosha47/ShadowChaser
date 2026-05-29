@@ -1,10 +1,13 @@
 /* ── Event wiring ────────────────────────────────────────────────────── */
 
-/* Search field — live filtering, Enter triggers location scan if coords present */
+/* Search field — live filtering. Height grows automatically via CSS
+   field-sizing: content (set on .search-box textarea). */
 document.getElementById('search').addEventListener('input', onSearchChanged);
 
 document.getElementById('search').addEventListener('keydown', function (e) {
   if (e.key !== 'Enter') return;
+  /* Textarea would insert a newline; we want Enter to submit-style instead. */
+  e.preventDefault();
   var c = parseCoords();
   if (c) {
     scanLocation();

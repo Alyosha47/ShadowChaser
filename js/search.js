@@ -10,8 +10,12 @@ function parseCoords() {
 
 var _scanDebounceTimer = null;
 
+/* Search field height grows automatically via CSS `field-sizing: content`.
+   No JS height management needed. */
+
 function onSearchChanged(skipCompute) {
-  var raw       = document.getElementById('search').value;
+  var s         = document.getElementById('search');
+  var raw       = s.value;
   var hadCoords = !!(currentFilter && currentFilter.coords);
   currentFilter = parseSearch(raw);
   var hasCoords = !!currentFilter.coords;

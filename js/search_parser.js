@@ -243,8 +243,8 @@
       filter.saros = parseInt(n, 10); return ' ';
     });
 
-    /* 4. Today / today+ — match the whole token including optional + */
-    s = s.replace(/\btoday\+?/gi, function () {
+    /* 4. Today / now (+ optional trailing +) — "now" is a synonym. */
+    s = s.replace(/\b(?:today|now)\+?/gi, function () {
       filter.today = true;
       filter.years = {
         min: now.getFullYear(),
@@ -261,6 +261,18 @@
         filter.years = { min: parseInt(y, 10), max: 3000 }; return ' ';
       });
       s = s.replace(/\bbefore\s+(-?\d{1,4})\b/gi, function (_, y) {
+        filter.years = { min: -1999, max: parseInt(y, 10) }; return ' ';
+      });
+      /* "1994-now" / "1994-today" — from a year up to the present. */
+      s = s.replace(/\b(-?\d{1,4})-(?:now|today)\b/gi, function (_, y) {
+        filter.years = { min: parseInt(y, 10), max: now.getFullYear() };
+        return ' ';
+      });
+      /* "1994+" — that year onward. "1994-" — up to that year. */
+      s = s.replace(/\b(-?\d{1,4})\+/g, function (_, y) {
+        filter.years = { min: parseInt(y, 10), max: 3000 }; return ' ';
+      });
+      s = s.replace(/\b(-?\d{1,4})-(?!\d)/g, function (_, y) {
         filter.years = { min: -1999, max: parseInt(y, 10) }; return ' ';
       });
       s = s.replace(/\b(\d{1,4})-(\d{1,4})\b/g, function (full, a, b) {

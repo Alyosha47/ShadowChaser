@@ -248,7 +248,10 @@
       margin-bottom:  0.35rem;
     }
 
-    input, select {
+    /* Form controls — applies to select + textarea. The only remaining inputs
+       are type=range sliders, which have their own block below and override
+       most of these properties anyway. */
+    select, textarea {
       width:         100%;
       background:    var(--bg3);
       border:        1px solid var(--border2);
@@ -261,7 +264,7 @@
       transition:    border-color 0.2s;
       appearance:    none;
     }
-    input:focus, select:focus { border-color: var(--gold-dim); }
+    select:focus, textarea:focus { border-color: var(--gold-dim); }
 
     select {
       background-image:    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7788'/%3E%3C/svg%3E");
@@ -315,15 +318,18 @@
       position:      relative;
       margin-bottom: 0.75rem;
     }
-    .search-box input {
+    .search-box textarea {
+      box-sizing:    border-box;
+      field-sizing:  content;          /* native auto-height on supporting browsers */
       padding-right: 2.5rem;
-      font-size:     0.92rem;
+      font-size:     0.75rem;
+      resize:        none;
+      overflow:      hidden;
     }
     .search-clear {
       position:   absolute;
       right:      0.5rem;
-      top:        50%;
-      transform:  translateY(-50%);
+      top:        0.5rem;
       background: none;
       border:     none;
       color:      var(--text-dim);
@@ -707,8 +713,7 @@
       margin:        0;
       white-space:   nowrap;
     }
-    .settings-row select,
-    .settings-row input[type=number] {
+    .settings-row select {
       width: auto;
       min-width: 12rem;
       max-width: 22rem;
@@ -753,24 +758,26 @@
 
 
     .detail-title {
+      display:       flex;
+      align-items:   center;
+      gap:           0.6rem;
       font-family:   var(--mono);
       font-size:     1.1rem;
       color:         var(--gold);
-      padding:       1rem 1.25rem 0.5rem;
+      padding:       0.25rem 0 0.5rem;
       border-bottom: 1px solid var(--border);
       margin-bottom: 0.5rem;
     }
-    .detail-title-type {
-      font-size:   0.78rem;
-      color:       var(--text-dim);
-      margin-left: 0.75rem;
+    .detail-title-icon {
+      display:     inline-flex;
+      align-items: center;
+      flex:        0 0 auto;
     }
 
-    #tab-eclipse { background: var(--bg); }
+    #tab-eclipse { background: transparent; }
 
     .share-btn {
-      float: right;
-      margin-top: -0.15rem;
+      margin-left: auto;
       font-size: 0.75rem;
       padding: 0.25rem 0.6rem;
       cursor: pointer;
@@ -811,13 +818,13 @@
 
     /* Inline data panel below eclipse list */
     #data-panel .panel {
-      background:    var(--bg);
+      background:    transparent;
       border:        none;
       border-radius: 0;
       margin-bottom: 0;
       padding:       0;
     }
-    #data-panel { background: var(--bg); }
+    #data-panel { background: transparent; }
 
 
     .partial-slider-wrap {
@@ -992,9 +999,10 @@
 
     .sidebar-tab-btn {
       flex:           1;
-      background:     var(--bg2);
+      background:     var(--bg);         /* recessed — darker than the lifted panel */
       color:          var(--text-dim);
       border:         1px solid var(--border);
+      border-bottom:  none;            /* a tab never needs a bottom border */
       border-radius:  var(--radius) var(--radius) 0 0;
       margin-right:   -1px;            /* tabs touch each other */
       padding:        0.45rem 0.35rem 0.5rem;
@@ -1004,16 +1012,14 @@
       cursor:         pointer;
       white-space:    nowrap;
       position:       relative;
-      top:            1px;             /* sit slightly recessed */
     }
     .sidebar-tab-btn:last-child { margin-right: 0; }
     .sidebar-tab-btn:hover      { color: var(--text); }
     .sidebar-tab-btn.active {
       color:         var(--gold);
-      background:    var(--bg);
-      border-bottom-color: var(--bg);  /* connects to panel below */
-      top:           0;                /* lifted to front */
-      z-index:       1;
+      background:    var(--bg3);         /* lifted — matches the panel, opens into it */
+      margin-bottom: -1px;              /* overlap the divider so the tab opens in */
+      z-index:       2;
     }
 
 
@@ -1045,18 +1051,18 @@
         flex-direction: column;
         flex:           0 0 360px;
         border-left:    1px solid var(--border);
-        background:     var(--bg);
+        background:     var(--bg3);    /* lifted surface — matches active tab */
         overflow:       hidden;
       }
       .sidebar-tabs {
         display:        flex;
         flex-direction: row;
         padding:        0.5rem 0.5rem 0;
-        background:     var(--bg2);
-        border-bottom:  1px solid var(--border);
+        background:     var(--bg2);    /* chrome strip behind the tab tops */
+        border-bottom:  1px solid var(--border);   /* divider = panel top edge */
       }
 
-      /* Panels inside sidebar: one shown at a time based on data-sidebar-tab */
+      /* Panels inside sidebar: one shown at a time based on data-sidebar-tab. */
       .sidebar .tab-panel {
         position:  relative;
         inset:     auto;
@@ -1174,9 +1180,8 @@
         <div class="panel">
 
           <div class="search-box">
-            <input type="text" id="search"
-                   value="today+ total annular hybrid"
-                   placeholder="today+  ·  year  ·  total  ·  s126  ·  (lat, lon)  ·  >47%">
+            <textarea id="search" rows="1"
+                      placeholder="today+  ·  year  ·  total  ·  s126  ·  (lat, lon)  ·  &gt;47%">today+ total annular hybrid</textarea>
             <button class="search-clear" id="btn-search-clear" title="Clear search">&times;</button>
           </div>
 
@@ -1291,13 +1296,14 @@
         <table class="syntax-table">
           <thead><tr><th>Token</th><th>Examples</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td>Today+</td><td>today+</td><td>From today forward</td></tr>
-            <tr><td>Year</td><td>2026<br>2026-2030<br>after 2100<br>before 500<br>44BC &nbsp; 44BCE<br>44BC 10AD<br>10BCE 10CE</td><td>Single, range, or open-ended. Two years = range (no dash needed). BC/BCE and AD/CE supported.</td></tr>
+            <tr><td>Today / now</td><td>today &nbsp; now<br>today+ &nbsp; now+<br>1994-now</td><td>From today forward, or a year up to today</td></tr>
+            <tr><td>Year</td><td>2026<br>2026-2030<br>1994+ &nbsp; 1994-<br>after 2100<br>before 500<br>44BC &nbsp; 44BCE<br>44BC 10AD<br>10BCE 10CE</td><td>Single, range, or open-ended. Two years = range (no dash needed). &ldquo;1994+&rdquo; = onward, &ldquo;1994-&rdquo; = up to. BC/BCE and AD/CE supported.</td></tr>
             <tr><td>Month</td><td>aug &nbsp; august &nbsp; Nov</td><td>3-letter or full name</td></tr>
-            <tr><td>Day</td><td>28</td><td>Only meaningful with a month</td></tr>
+            <tr><td>Date</td><td>28</td><td>Only meaningful with a month</td></tr>
             <tr><td>Saros</td><td>saros 126 &nbsp; s126</td><td>Requires &ldquo;saros&rdquo; or &ldquo;s&rdquo; prefix</td></tr>
             <tr><td>Type</td><td>total &nbsp; annular &nbsp; hybrid &nbsp; partial</td><td>Multiple allowed; prefix (to, an, hy, pa) works while typing</td></tr>
             <tr><td>Obscuration</td><td>&gt;80 &nbsp; 50+ &nbsp; &lt;30 &nbsp; 95-</td><td>With or without %</td></tr>
+            <tr><td>City</td><td>paris &nbsp; tokyo<br>new york</td><td>Sets your location from a named city. Explicit coordinates override a city if both are given.</td></tr>
             <tr><td>Coordinates</td>
               <td>
                 (44.858, 0.082)<br>

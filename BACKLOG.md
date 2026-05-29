@@ -10,9 +10,21 @@ Not for action during the current refactor passes.
 ### Known, not yet fixed
 - **June 1954 wrong icon** — total eclipse showing as partial in list.
   Investigate `eclipse_type` field in index data and/or `typeIcon()` logic.
-- **1950 antimeridian / circumpolar wrapping** — path crosses antimeridian
-  and renders incorrectly for both oval shading and umbral path. Likely needs
-  improvement in `densifyGeodesic()` or path-rendering logic.
+- **1950 antimeridian / circumpolar wrapping** — paths whose corridor or
+  oval polygons go over a pole render with phantom concentric rings around
+  the pole (1950 Sep 12 is the canonical case). Path *lines* render fine;
+  the bug is specifically in `SolidPolygonLayer` triangulation of polygons
+  whose vertices lie in a polar region. Underlying data is correct (no
+  longitude jumps; vertices step smoothly ~2°/0.01° near the pole).
+  Possible fixes to evaluate:
+   1. Split corridor and ovals at the antimeridian before passing to
+      SolidPolygonLayer.
+   2. For polygons that touch the polar cap, replace with a true polar-cap
+      polygon (vertices + the pole).
+   3. Use outline-only render for affected polygons.
+   4. Switch to `GeoJsonLayer` with proper GeoJSON Polygon types and
+      antimeridian splitting.
+  Affects: any eclipse whose path goes over either pole.
 - **Locate pin (📍 top-right of map)** — Brave blocks geolocation by default
   (must allow in brave://settings/content/location). Also `setStatus('Locating…')`
   writes to `#status-msg` which is in the Search tab → no visible feedback when
@@ -34,7 +46,12 @@ Not for action during the current refactor passes.
 - **Offline mode doesn't actually work** — frontloading the basemap only
   succeeds when reachable via local server; true-offline (e.g. phone with no
   signal) leaves no map. Whole offline story needs rethink.
-- **Page can still be pinch-zoomed** — thought this was fixed previously.
+- **Page can still be pinch-zoomed** — the viewport meta `user-scalable=no`
+  is deliberately ignored by iOS Safari (accessibility, since iOS 10), so it
+  can't block pinch. Real fix: `touch-action: pan-y` on scrollable panels
+  (allows scroll, blocks pinch) while LEAVING the map container alone (the
+  map needs pinch to zoom). Must test on a real iPhone — iOS touch handling
+  is finicky.
 - **Slow first load from local-disk server** — minutes vs. seconds. Profile
   what's actually blocking; likely a chunk-fetch pattern.
 - **Date label hard to see on map (esp. mobile)** — intersects the brightness
@@ -85,6 +102,13 @@ Not for action during the current refactor passes.
 
 ## OPEN UX QUESTIONS
 
+- **Search-syntax labels & layout** — In the search-syntax help section:
+  consider "Coordinates" → "Location" (shorter), and the
+  Obscuration/Partiality wording. CAUTION: both words appear in multiple
+  surfaces (details panel, map popup, share text, parser comments), so
+  decide the canonical term first, then change everywhere consistently —
+  don't do it piecemeal. Also: the 3-column example layout is too wide for
+  the narrow sidebar column; rethink as a narrower format.
 - **Brightness slider** — is it useful? If kept, move to Settings sub-tab?
 - **Circumstances panel density** — Global Circumstances is large, takes a lot
   of vertical space. On map-click the user needs to see the local circs change
