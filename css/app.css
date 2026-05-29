@@ -16,6 +16,7 @@
       --red:         #e05c5c;
       --blue:        #5c9ee0;
       --green:       #5ce0a0;
+      --pin-red:     #cc2200;
       --mono:        'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
       --serif:       'Cormorant Garamond', Georgia, serif;
       --radius:      4px;
@@ -761,8 +762,6 @@
       flex:        0 0 auto;
     }
 
-    #tab-eclipse { background: transparent; }
-
     .share-btn {
       margin-left: auto;
       font-size: 0.75rem;
@@ -811,7 +810,6 @@
       margin-bottom: 0;
       padding:       0;
     }
-    #data-panel { background: transparent; }
 
 
     .partial-slider-wrap {
@@ -919,7 +917,7 @@
       width:         10px;
       height:        10px;
       border-radius: 50%;
-      background:    #cc2200;
+      background:    var(--pin-red);
       border:        2px solid #fff;
       box-shadow:    0 0 6px rgba(180,40,0,0.5);
     }
@@ -927,7 +925,7 @@
       width:         12px;
       height:        12px;
       border-radius: 50%;
-      background:    #cc2200;
+      background:    var(--pin-red);
       border:        2px solid #fff;
       box-shadow:    0 0 8px rgba(180,40,0,0.6);
     }
@@ -937,7 +935,7 @@
       left:             50%;
       width:            18px;
       height:           2px;
-      background:       #cc2200;
+      background:       var(--pin-red);
       transform-origin: 0 50%;
       opacity:          0.85;
     }
@@ -946,7 +944,7 @@
       position:     absolute;
       right:        -4px;
       top:          -3px;
-      border-left:  6px solid #cc2200;
+      border-left:  6px solid var(--pin-red);
       border-top:   4px solid transparent;
       border-bottom: 4px solid transparent;
     }
