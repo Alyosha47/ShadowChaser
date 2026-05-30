@@ -117,13 +117,15 @@ function eclipseIcon(opts) {
   /* Convenience builders for the shared visual primitives. */
   function coronaDef() {
     return '<defs><filter id="cg' + fid + '" x="-50%" y="-50%" width="200%" height="200%">'
-         +   '<feGaussianBlur stdDeviation="2.6"/></filter></defs>';
+         +   '<feGaussianBlur stdDeviation="2.2"/>'
+         + '</filter></defs>';
   }
   function coronaCircle(clip) {
-    return '<circle cx="' + cx + '" cy="' + cy + '" r="' + (R + 3.5) + '" fill="' + HALO
-         + '" filter="url(#cg' + fid + ')" opacity="0.9"'
+    return '<circle cx="' + cx + '" cy="' + cy + '" r="' + (R + 4.2) + '" fill="' + HALO
+         + '" filter="url(#cg' + fid + ')" opacity="1.0"'
          + (clip ? ' clip-path="url(#' + clip + ')"' : '') + '/>';
   }
+
   function moonDisk(clip) {
     return '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="' + MOON + '"'
          + (clip ? ' clip-path="url(#' + clip + ')"' : '') + '/>';

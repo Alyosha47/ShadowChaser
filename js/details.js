@@ -65,8 +65,8 @@ function buildContactRows(rec, res, lbl, tz) {
           + '<td>0\u00b0</td>'
           + '<td>' + fmtAng(az)        + '</td></tr>' });
       }
-      pushHorizon('Sunrise', ss.rise, toUT(ss.rise), true);
-      pushHorizon('Sunset',  ss.set,  toUT(ss.set),  false);
+      pushHorizon('Rise', ss.rise, toUT(ss.rise), true);
+      pushHorizon('Set',  ss.set,  toUT(ss.set),  false);
     }
   }
 
@@ -118,7 +118,7 @@ function renderData(rec, _tz, _lat, _lon) {
     : '';
 
   var typeChar = (selectedEntry.eclipse_type||'P')[0].toUpperCase();
-  var titleIcon = eclipseIcon({ type: typeChar, magnitude: selectedEntry.magnitude, size: 26 });
+  var titleIcon = eclipseIcon({ type: typeChar, magnitude: selectedEntry.magnitude, size: 32 });
 
   html = '<div class="detail-title">'
        + '<span class="detail-title-icon">' + titleIcon + '</span>'

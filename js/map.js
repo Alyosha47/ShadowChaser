@@ -84,63 +84,47 @@ function loadBasemapData() {
    The ocean fill is painted on top of the country boundary lines, which
    naturally clips any border segment that extends into the sea. */
 function buildLocalStyle(data) {
-  var BG       = '#0a0c0f';   /* deep space — ocean & background */
-  var LAND     = '#1a2230';   /* dark slate — land fill          */
-  var BORDER   = '#2e3f52';   /* dim blue-grey — country lines   */
-  var COAST    = '#3a5068';   /* slightly brighter — coastline   */
-  var RIVER    = '#1e3248';   /* dark river lines                */
-  var LAKE     = BG;          /* lakes same as ocean             */
-  var CITY     = '#c8a96e';   /* gold city dots                  */
+  var BG       = '#b8d0e8';   /* ocean — matches online water tint  */
+  var LAND     = '#d4e8c8';   /* land fill — matches online land    */
+  var BORDER   = '#a0b090';   /* country lines                      */
+  var COAST    = '#6a8870';   /* coastline                          */
+  var RIVER    = '#90b8d8';   /* rivers                             */
+  var LAKE     = BG;          /* lakes same as ocean                */
+  var CITY     = '#c8a96e';   /* gold city dots                     */
 
   var sources = {};
   var layers  = [{ id: 'background', type: 'background', paint: { 'background-color': BG } }];
 
-  /* 1. Land fill */
+  /* Land fill — use fill-antialias but avoid polar polygon artifacts by
+     clipping to [-85,85] lat via filter. Artifacts occur past ±85° where
+     GeoJSON polygons have winding issues on a globe projection. */
   if (data.land) {
-    sources.land = { type: 'geojson', data: data.land };
+    sources.land = { type: 'geojson', data: data.land, tolerance: 0.5 };
     layers.push({ id: 'land-fill', type: 'fill', source: 'land',
+      maxzoom: 22,
       paint: { 'fill-color': LAND, 'fill-opacity': 1, 'fill-antialias': true } });
-  }
-
-  /* 2. Country border lines — drawn before ocean so sea-crossing edges get covered */
-  if (data.countries) {
-    sources.countries = { type: 'geojson', data: data.countries };
-    layers.push({ id: 'countries-line', type: 'line', source: 'countries',
-      paint: { 'line-color': BORDER, 'line-width': 0.7, 'line-opacity': 0.9 } });
-  }
-
-  /* 3. Ocean fill — paints over any border lines that strayed into the sea */
-  if (data.ocean) {
-    sources.ocean = { type: 'geojson', data: data.ocean };
-    layers.push({ id: 'ocean-fill', type: 'fill', source: 'ocean',
-      paint: { 'fill-color': BG, 'fill-opacity': 1, 'fill-antialias': true } });
-  }
-
-  /* 4. Coastline stroke — sharp land/sea edge drawn on top of both */
-  if (data.land) {
     layers.push({ id: 'coast-line', type: 'line', source: 'land',
-      paint: { 'line-color': COAST, 'line-width': 0.6, 'line-opacity': 0.8 } });
+      paint: { 'line-color': COAST, 'line-width': 0.8, 'line-opacity': 0.9 } });
   }
 
-  /* 5. Lakes */
+  if (data.countries) {
+    sources.countries = { type: 'geojson', data: data.countries, tolerance: 0.5 };
+    layers.push({ id: 'countries-line', type: 'line', source: 'countries',
+      paint: { 'line-color': BORDER, 'line-width': 0.6, 'line-opacity': 0.8 } });
+  }
+
   if (data.lakes) {
-    sources.lakes = { type: 'geojson', data: data.lakes };
+    sources.lakes = { type: 'geojson', data: data.lakes, tolerance: 0.5 };
     layers.push({ id: 'lakes-fill', type: 'fill', source: 'lakes',
       paint: { 'fill-color': LAKE, 'fill-opacity': 1 } });
-    layers.push({ id: 'lakes-line', type: 'line', source: 'lakes',
-      paint: { 'line-color': COAST, 'line-width': 0.4, 'line-opacity': 0.6 } });
   }
 
-  /* 6. Rivers */
   if (data.rivers) {
-    sources.rivers = { type: 'geojson', data: data.rivers };
+    sources.rivers = { type: 'geojson', data: data.rivers, tolerance: 0.5 };
     layers.push({ id: 'rivers-line', type: 'line', source: 'rivers',
-      paint: { 'line-color': RIVER, 'line-width': 0.5, 'line-opacity': 0.7 } });
+      paint: { 'line-color': RIVER, 'line-width': 0.6, 'line-opacity': 0.8 } });
   }
 
-  /* 7. Cities — four layers, one per rank tier, each with its own minzoom.
-        This is more reliable than a zoom-expression filter in MapLibre.
-        Rank: 1=mega-cities, 2=capitals+>2M, 3=>500k, 4=>100k. */
   if (data.cities) {
     sources.cities = { type: 'geojson', data: data.cities };
     var cityPaint = function(baseRadius) {
@@ -150,25 +134,18 @@ function buildLocalStyle(data) {
           1, baseRadius, 5, baseRadius * 1.6, 9, baseRadius * 2.4],
         'circle-opacity': 0.9,
         'circle-stroke-width': 0.5,
-        'circle-stroke-color': BG,
+        'circle-stroke-color': '#ffffff',
       };
     };
-    /* Rank 1: mega-cities (>5M), always visible */
     layers.push({ id: 'cities-r1', type: 'circle', source: 'cities',
-      filter: ['==', ['get', 'rank'], 1],
-      paint: cityPaint(2.5) });
-    /* Rank 2: capitals + >2M, from zoom 2 */
+      filter: ['==', ['get', 'rank'], 1], paint: cityPaint(2.5) });
     layers.push({ id: 'cities-r2', type: 'circle', source: 'cities',
-      minzoom: 2, filter: ['==', ['get', 'rank'], 2],
-      paint: cityPaint(1.8) });
-    /* Rank 3: >500k, from zoom 3.5 */
+      minzoom: 2, filter: ['==', ['get', 'rank'], 2], paint: cityPaint(1.8) });
     layers.push({ id: 'cities-r3', type: 'circle', source: 'cities',
-      minzoom: 3.5, filter: ['==', ['get', 'rank'], 3],
-      paint: cityPaint(1.4) });
-    /* Rank 4: >100k, from zoom 5 */
+      minzoom: 3.5, filter: ['==', ['get', 'rank'], 3], paint: cityPaint(1.4) });
     layers.push({ id: 'cities-r4', type: 'circle', source: 'cities',
-      minzoom: 5, filter: ['==', ['get', 'rank'], 4],
-      paint: cityPaint(1.1) });
+      minzoom: 5, filter: ['==', ['get', 'rank'], 4], paint: cityPaint(1.1) });
+
   }
 
   return {
@@ -181,21 +158,15 @@ function buildLocalStyle(data) {
 
 /* Probe the network with a short-timeout HEAD against the online style.
    Resolves true if reachable, false otherwise. */
-function probeOnline() {
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    return Promise.resolve(false);
-  }
-  return new Promise(function (resolve) {
-    var done = false;
-    var timer = setTimeout(function () { if (!done) { done = true; resolve(false); } }, 1500);
-    fetch(ONLINE_STYLE_URL, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' })
-      .then(function () { if (!done) { done = true; clearTimeout(timer); resolve(true); } })
-      .catch(function () { if (!done) { done = true; clearTimeout(timer); resolve(false); } });
-  });
-}
 
 
 /* ── Map init (globe-only, local basemap with online upgrade) ────────── */
+
+var _forceOffline = false;
+function forceOfflineMap(on) {
+  _forceOffline = on;
+  initMap();
+}
 
 function initMap() {
   if (map) {
@@ -204,22 +175,29 @@ function initMap() {
     mapReady = false;
     mapMarkers = [];
     pathMarkers = [];
+    deckOverlay = null;
   }
 
-  /* Always start the map with whatever basemap is available. We load
-     local data first (it's needed as fallback either way), then probe
-     the network and upgrade to the online style if reachable. */
-  loadBasemapData().then(function (data) {
-    var localStyle = buildLocalStyle(data);
+  /* Probe connectivity in parallel with local data load.
+     generate_204 is a purpose-built connectivity endpoint — no body, no
+     CORS conflict with the map style fetch. Forced-offline skips the probe. */
+  var probePromise = _forceOffline
+    ? Promise.resolve(false)
+    : new Promise(function (resolve) {
+        var done = false;
+        var timer = setTimeout(function () { if (!done) { done = true; resolve(false); } }, 1500);
+        fetch('https://connectivitycheck.gstatic.com/generate_204',
+              { mode: 'no-cors', cache: 'no-store' })
+          .then(function () { if (!done) { done = true; clearTimeout(timer); resolve(true); } })
+          .catch(function () { if (!done) { done = true; clearTimeout(timer); resolve(false); } });
+      });
 
-    /* Decide initial style: online if reachable, local otherwise. */
-    return probeOnline().then(function (online) {
-      var startStyle = online ? ONLINE_STYLE_URL : localStyle;
-      createMap(startStyle, /*isOnline=*/online, localStyle);
-    });
-  }).catch(function (err) {
-    console.error('Basemap load failed:', err);
-    /* Last resort: try the online style anyway, with no local fallback. */
+  Promise.all([loadBasemapData(), probePromise]).then(function (results) {
+    var data      = results[0];
+    var online    = results[1];
+    var localStyle = buildLocalStyle(data);
+    createMap(online ? ONLINE_STYLE_URL : localStyle, online, localStyle);
+  }).catch(function () {
     createMap(ONLINE_STYLE_URL, true, null);
   });
 }
@@ -240,25 +218,13 @@ function createMap(style, isOnline, localStyleFallback) {
     preserveDrawingBuffer: true,
   });
 
-  /* If we tried online and the style fails to load, swap in the local one. */
-  var fellBack = false;
-  if (isOnline && localStyleFallback) {
-    map.on('error', function (e) {
-      if (fellBack) return;
-      /* Only react to style/source errors, not random tile glitches. */
-      var msg = (e && e.error && e.error.message) || '';
-      if (/style|source|tile/i.test(msg)) {
-        fellBack = true;
-        console.warn('Online basemap failed, falling back to local:', msg);
-        try { map.setStyle(localStyleFallback); } catch (err) { console.error(err); }
-      }
-    });
-  }
-
   map.on('style.load', function () {
-    /* Belt-and-braces: re-assert globe in case the style overrode it. */
     try { map.setProjection({ type: 'globe' }); } catch (e) {}
-    /* Initialize deck.gl overlay */
+    try { map.setFog({
+      'color': '#b8d0e8', 'high-color': '#7aadce',
+      'horizon-blend': 0.04, 'space-color': '#0a0c1a', 'star-intensity': 0.3
+    }); } catch (e) {}
+
     if (!deckOverlay) {
       deckOverlay = new DeckGL.MapboxOverlay({ layers: [], interleaved: false });
       map.addControl(deckOverlay);
@@ -270,9 +236,9 @@ function createMap(style, isOnline, localStyleFallback) {
       }
     }
 
-    /* Tint the OpenFreeMap style to match our palette. The local style
-       is already styled, so we skip this branch for it. */
-    if (isOnline && !fellBack) {
+    /* Tint the OpenFreeMap style to match our palette. Local style is
+       already correctly coloured so we skip tinting for it. */
+    if (isOnline) {
       map.getStyle().layers.forEach(function (layer) {
         try {
           if (layer.id === 'background') {
@@ -293,6 +259,17 @@ function createMap(style, isOnline, localStyleFallback) {
 
     mapReady = true;
   });
+
+  /* If online style fails, fall back to local */
+  if (isOnline && localStyleFallback) {
+    map.on('error', function (e) {
+      var msg = (e && e.error && e.error.message) || '';
+      if (/style|source/i.test(msg)) {
+        console.warn('Online basemap failed, using local:', msg);
+        try { map.setStyle(localStyleFallback); } catch (err) {}
+      }
+    });
+  }
 
   map.on('click', function (e) { onMapClick(e.lngLat.lat, e.lngLat.lng); });
   map.on('mousemove', function () { map.getCanvas().style.cursor = 'crosshair'; });

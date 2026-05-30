@@ -92,8 +92,8 @@
       flex-shrink:   0;
       display:       flex;
       height:        var(--tab-h);
-      border-bottom: 1px solid var(--border);
-      background:    var(--bg2);
+      border-bottom: 1px solid var(--border2);
+      background:    #070911;
     }
 
     .tab-btn {
@@ -112,9 +112,9 @@
     }
     .tab-btn:hover    { color: var(--text); }
     .tab-btn.active   {
-      color:        var(--gold);
+      color:        var(--gold2);
       border-bottom-color: var(--gold);
-      background:   rgba(200,169,110,0.05);
+      background:   var(--bg);
     }
 
 
@@ -599,7 +599,7 @@
     .contacts-table th.time-mode-toggle:hover { color: var(--text); }
     .contacts-table td             { color: var(--text); padding-left: 0.55rem; }
     .contacts-table tbody tr:nth-child(odd) td { background: rgba(255,255,255,0.025); }
-    .contacts-table td svg         { vertical-align: -5px; margin-right: 0.4rem; }
+    .contacts-table td svg         { vertical-align: middle; margin-right: 0.4rem; }
     .contacts-table .row-umbral td { color: var(--gold2); }
     .contacts-table .row-max    td { color: var(--gold); font-weight: 500; }
 
@@ -689,12 +689,12 @@
       padding:     0.6rem 0;
       border-bottom: 1px solid var(--border);
       font-family: var(--mono);
-      font-size:   0.78rem;
+      font-size:   0.72rem;
     }
     .settings-row:last-child { border-bottom: none; }
     .settings-row label {
       flex:          0 0 auto;
-      font-size:     0.78rem;
+      font-size:     0.72rem;
       text-transform: none;
       letter-spacing: 0;
       color:         var(--text);
@@ -705,6 +705,8 @@
       width: auto;
       min-width: 12rem;
       max-width: 22rem;
+      font-size: 0.72rem;
+      font-family: var(--mono);
     }
 
     .about-text {
@@ -713,30 +715,61 @@
       line-height: 1.6;
       color:       var(--text);
     }
+    .settings-group .about-text { font-size: 0.72rem; color: var(--text-dim); }
     .about-text p  { margin-bottom: 0.75rem; }
     .about-text a  { color: var(--gold); text-decoration: none; }
     .about-text a:hover { text-decoration: underline; }
 
+    .syntax-dl {
+      margin:      0.5rem 0 0;
+      padding:     0;
+    }
+    .syntax-entry {
+      display:     grid;
+      grid-template-columns: 5.5rem 1fr;
+      gap:         0 0.75rem;
+      padding:     0.35rem 0;
+      align-items: baseline;
+    }
+    .syntax-entry dt {
+      font-family:    var(--mono);
+      font-size:      0.68rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color:          var(--gold2);
+      padding-top:    0.1rem;
+      align-self:     start;
+    }
+    .syntax-entry dd {
+      margin:      0;
+      font-family: var(--mono);
+      font-size:   0.73rem;
+      color:       var(--text);
+      line-height: 1.65;
+    }
+
+
+    /* Tolerances table (reuses syntax-table class) */
     .syntax-table {
       width:           100%;
       border-collapse: collapse;
       font-family:     var(--mono);
-      font-size:       0.76rem;
+      font-size:       0.72rem;
       margin:          0.75rem 0;
     }
     .syntax-table th {
-      text-align:    left;
-      color:         var(--text-dim);
-      font-size:     0.65rem;
+      text-align:     left;
+      color:          var(--text-dim);
+      font-size:      0.65rem;
       letter-spacing: 0.1em;
       text-transform: uppercase;
-      padding:       0.4rem 0.6rem;
-      border-bottom: 1px solid var(--border2);
-      font-weight:   400;
+      padding:        0.4rem 0.5rem;
+      border-bottom:  1px solid var(--border2);
+      font-weight:    400;
     }
     .syntax-table td {
-      padding:       0.45rem 0.6rem;
-      border-bottom: 1px solid var(--border);
+      padding:        0.4rem 0.5rem;
+      border-bottom:  1px solid var(--border);
       vertical-align: top;
     }
     .syntax-table tr:last-child td { border-bottom: none; }
@@ -779,26 +812,47 @@
     .share-modal-backdrop {
       display: none;
       position: fixed; inset: 0;
-      background: rgba(0,0,0,0.7);
+      background: rgba(0,0,0,0.75);
       z-index: 1000;
       align-items: center;
       justify-content: center;
     }
     .share-modal-backdrop.open { display: flex; }
     .share-modal {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 1.25rem;
-      max-width: 420px;
-      width: 90%;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem 1.5rem;
+      max-width: 460px;
+      width: 92%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
     }
-    .share-modal h3 { margin: 0 0 0.75rem; font-family: var(--mono); color: var(--gold); font-size: 0.9rem; }
+    .share-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    .share-modal-title {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gold2);
+    }
+    .share-modal-close {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-dim); font-size: 1.2rem; line-height: 1;
+      padding: 0 0.2rem;
+    }
+    .share-modal-close:hover { color: var(--text); }
     .share-modal textarea {
       width: 100%; box-sizing: border-box;
-      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius);
       color: var(--text); font-family: var(--mono); font-size: 0.72rem;
-      padding: 0.5rem; resize: none; height: 140px;
+      line-height: 1.6;
+      padding: 0.75rem; resize: none; height: 180px;
     }
     .share-modal-btns { display: flex; gap: 0.5rem; margin-top: 0.75rem; justify-content: flex-end; }
 
@@ -984,12 +1038,12 @@
 
     .sidebar-tab-btn {
       flex:           1;
-      background:     var(--bg);         /* recessed — darker than the lifted panel */
+      background:     var(--bg2);
       color:          var(--text-dim);
       border:         1px solid var(--border);
-      border-bottom:  none;            /* a tab never needs a bottom border */
+      border-bottom:  none;
       border-radius:  var(--radius) var(--radius) 0 0;
-      margin-right:   -1px;            /* tabs touch each other */
+      margin-right:   -1px;
       padding:        0.45rem 0.35rem 0.5rem;
       font-family:    var(--mono);
       font-size:      0.72rem;
@@ -1002,8 +1056,8 @@
     .sidebar-tab-btn:hover      { color: var(--text); }
     .sidebar-tab-btn.active {
       color:         var(--gold);
-      background:    var(--bg3);         /* lifted — matches the panel, opens into it */
-      margin-bottom: -1px;              /* overlap the divider so the tab opens in */
+      background:    #1a2030;
+      margin-bottom: -1px;
       z-index:       2;
     }
 
@@ -1036,15 +1090,15 @@
         flex-direction: column;
         flex:           0 0 360px;
         border-left:    1px solid var(--border);
-        background:     var(--bg3);    /* lifted surface — matches active tab */
+        background:     #1a2030;
         overflow:       hidden;
       }
       .sidebar-tabs {
         display:        flex;
         flex-direction: row;
         padding:        0.5rem 0.5rem 0;
-        background:     var(--bg2);    /* chrome strip behind the tab tops */
-        border-bottom:  1px solid var(--border);   /* divider = panel top edge */
+        background:     #040508;
+        border-bottom:  1px solid var(--border);
       }
 
       /* Panels inside sidebar: one shown at a time based on data-sidebar-tab. */

@@ -1,45 +1,60 @@
 /* ── Share ───────────────────────────────────────────────────────────── */
 
-function buildShareText() {
-  var lines = [];
-  var e = selectedEntry;
-  var typeLabel = typeName((e.eclipse_type||'P')[0]);
-
-  lines.push('Solar Eclipse — ' + fmtDate(e) + ' (' + typeLabel + ')');
-  lines.push('');
-
-  /* Global */
-  lines.push('Greatest eclipse: ' + (e.td_ge || '--') + ' UT');
-  if (e.lat_dd_ge != null && e.lng_dd_ge != null)
-    lines.push('GE location: ' + coordStr(e.lat_dd_ge, e.lng_dd_ge));
-  if (e.magnitude != null) lines.push('Magnitude: ' + e.magnitude.toFixed(4));
-  if (e.central_duration) lines.push('Central duration: ' + e.central_duration);
-  if (e.path_width) lines.push('Path width: ' + e.path_width.toFixed(0) + ' km');
-
-  /* Local */
+function buildShareUrl() {
+  var parts = [];
+  if (selectedEntry && selectedEntry.cat_no != null)
+    parts.push('e=' + Math.round(selectedEntry.cat_no));
   var coords = parseCoords();
+  if (coords)
+    parts.push('q=' + encodeURIComponent('(' + coords.lat.toFixed(5) + ',' + coords.lon.toFixed(5) + ')'));
+  var tz = document.getElementById('tz').value;
+  if (tz !== 'auto') parts.push('tz=' + encodeURIComponent(tz));
+  var base = window.location.origin + window.location.pathname;
+  return parts.length ? base + '#' + parts.join('&') : base;
+}
+
+function buildShareText() {
+  var e = selectedEntry;
+  var typeLabel = typeName((e.eclipse_type || 'P')[0]);
+  var coords = parseCoords();
+  var T = '\t';
+  var lines = [];
+
+  lines.push(fmtDate(e) + ' \u2014 ' + typeLabel + ' Solar Eclipse');
+  lines.push('');
+  lines.push('Greatest Eclipse:');
+  if (e.central_duration)              lines.push(T + 'Duration:' + T  + e.central_duration);
+  if (e.td_ge)                         lines.push(T + 'Time:' + T + T  + e.td_ge + ' UT');
+  if (e.lat_dd_ge != null && e.lng_dd_ge != null)
+                                       lines.push(T + 'Location:' + T  + coordStr(e.lat_dd_ge, e.lng_dd_ge));
+  if (e.magnitude != null)             lines.push(T + 'Magnitude:' + T + e.magnitude.toFixed(4));
+  if (e.path_width)                  { lines.push(''); lines.push('Path width:' + T + T + e.path_width.toFixed(0) + ' km'); }
+
   if (coords && localResult && localResult.visible) {
     var r = localResult;
     lines.push('');
-    lines.push('Local (' + coordStr(coords.lat, coords.lon) + ')');
-    lines.push('Type: ' + typeName(r.type[0].toUpperCase()));
-    lines.push('Magnitude: ' + r.mag.toFixed(4) + '  Obscuration: ' + r.osc.toFixed(1) + '%');
-    if (r.C1) lines.push('C1 (partial begins): ' + fmtUT(r.C1.ut) + ' UT');
-    if (r.C2) lines.push('C2 (umbral begins):  ' + fmtUT(r.C2.ut) + ' UT');
-    lines.push('Maximum:             ' + fmtUT(r.tMax) + ' UT');
-    if (r.C3) lines.push('C3 (umbral ends):    ' + fmtUT(r.C3.ut) + ' UT');
-    if (r.C4) lines.push('C4 (partial ends):   ' + fmtUT(r.C4.ut) + ' UT');
+    lines.push('At ' + coordStr(coords.lat, coords.lon) + ':');
+    lines.push(T + 'Type:' + T + T        + typeName(r.type[0].toUpperCase()));
+    lines.push(T + 'Magnitude:' + T       + r.mag.toFixed(4));
+    lines.push(T + 'Obscuration:' + T     + r.osc.toFixed(1) + '%');
+    if (r.C1) lines.push(T + 'C1 partial:' + T + fmtUT(r.C1.ut) + ' UT');
+    if (r.C2) lines.push(T + 'C2 total:' + T + T + fmtUT(r.C2.ut) + ' UT');
+              lines.push(T + 'Maximum:' + T + T   + fmtUT(r.tMax)  + ' UT');
+    if (r.C3) lines.push(T + 'C3 total:' + T + T + fmtUT(r.C3.ut) + ' UT');
+    if (r.C4) lines.push(T + 'C4 partial:' + T   + fmtUT(r.C4.ut) + ' UT');
   }
 
   lines.push('');
-  lines.push(window.location.href);
+  lines.push(buildShareUrl());
+  lines.push('');
+  lines.push('ShadowChaser app by followtheshadow.com');
   return lines.join('\n');
 }
 
 function copyShareText() {
   var text = document.getElementById('share-text').value;
   navigator.clipboard.writeText(text).then(function () {
-    var btn = document.querySelector('.share-modal-btns .btn-primary');
+    var btn = document.getElementById('share-copy-btn');
     var orig = btn.textContent;
     btn.textContent = 'Copied!';
     setTimeout(function () { btn.textContent = orig; }, 1500);
@@ -49,43 +64,16 @@ function copyShareText() {
 function shareEclipse() {
   var text = buildShareText();
 
-  /* Grab map screenshot */
-  var canvas = map && map.getCanvas ? map.getCanvas() : null;
-  var imageFile = null;
-
-  function doShare() {
-    if (navigator.share) {
-      var shareData = { title: 'ShadowChaser', text: text, url: window.location.href };
-      if (imageFile) shareData.files = [imageFile];
-      navigator.share(shareData).catch(function (err) {
-        if (err.name !== 'AbortError') fallbackShare(text);
-      });
-    } else {
-      fallbackShare(text);
-    }
-  }
-
-  if (canvas) {
-    try {
-      canvas.toBlob(function (blob) {
-        if (blob) {
-          imageFile = new File([blob], 'eclipse-path.png', { type: 'image/png' });
-          /* Check browser supports sharing files */
-          if (navigator.canShare && !navigator.canShare({ files: [imageFile] })) {
-            imageFile = null;
-          }
-        }
-        doShare();
-      }, 'image/png');
-    } catch (e) {
-      doShare();
-    }
+  if (navigator.share) {
+    navigator.share({ text: text }).catch(function (err) {
+      if (err.name !== 'AbortError') openFallbackModal(text);
+    });
   } else {
-    doShare();
+    openFallbackModal(text);
   }
 }
 
-function fallbackShare(text) {
+function openFallbackModal(text) {
   document.getElementById('share-text').value = text;
   document.getElementById('share-modal-backdrop').classList.add('open');
 }

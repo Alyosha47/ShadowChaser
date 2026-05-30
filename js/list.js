@@ -1,5 +1,7 @@
 /* ── Eclipse list ────────────────────────────────────────────────────── */
 
+function currentYear() { return new Date().getFullYear(); }
+
 function renderList() {
   var list = document.getElementById('eclipse-list');
 
@@ -10,6 +12,15 @@ function renderList() {
   }
 
   var source = locationResults !== null ? locationResults : eclipseIndex;
+
+  /* Apply search-range restriction unless the user has an explicit year filter */
+  if (!currentFilter.years) {
+    var RANGES = { modern: [1500, 2500], past500: [currentYear() - 500, currentYear() + 100],
+                   twomill: [-1000, 3000] };
+    var rng = RANGES[searchRange];
+    if (rng) source = source.filter(function (e) { return e.year >= rng[0] && e.year <= rng[1]; });
+  }
+
   var items  = applyFilter(source, currentFilter);
 
   if (items.length === 0) {

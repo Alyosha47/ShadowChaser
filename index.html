@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="build" content="2026-05-19l">
+  <meta name="build" content="2026-05-29u">
   <title>ShadowChaser</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
@@ -24,7 +24,7 @@
   <script src="./deck.min.js"></script>
   <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-05-19l">
+  <link rel="stylesheet" href="css/app.css?v=2026-05-29u">
 </head>
 <body>
 
@@ -51,15 +51,17 @@
   <!-- ── Share modal (fixed-position, floats over everything) ─────────── -->
   <div class="share-modal-backdrop" id="share-modal-backdrop">
     <div class="share-modal">
-      <h3>Share Eclipse</h3>
-      <textarea id="share-text" readonly></textarea>
+      <div class="share-modal-header">
+        <span class="share-modal-title">Share Eclipse</span>
+        <button class="share-modal-close" onclick="document.getElementById('share-modal-backdrop').classList.remove('open')">&times;</button>
+      </div>
+      <textarea id="share-text" readonly spellcheck="false"></textarea>
       <div class="share-modal-btns">
         <button class="btn btn-ghost" onclick="document.getElementById('share-modal-backdrop').classList.remove('open')">Close</button>
-        <button class="btn btn-primary" onclick="copyShareText()">Copy</button>
+        <button class="btn btn-primary" id="share-copy-btn" onclick="copyShareText()">Copy</button>
       </div>
     </div>
   </div>
-
 
   <!-- ── Tab panels ──────────────────────────────────────────────────── -->
 
@@ -180,12 +182,13 @@
 
       <div class="settings-section">
         <div class="about-text">
-          <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. Although there are many eclipse-adventure-planning tools out there, we still missed certain features &mdash; search-by-location, accurate local timezone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We&rsquo;ve tried to cover all the bases in one convenient package. If you find any bugs, please let us know &mdash; and <em>don&rsquo;t stare at the sun!</em></p>
+          <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. Although there are many eclipse-adventure-planning tools out there, we still missed certain features &mdash; search-by-location, accurate local timezone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We&rsquo;ve tried to cover all the bases in one convenient package.</p>
+          <p>Tuned to iPhone and never tested on Android &mdash; let us know if you have any suggestions. If you find any bugs, <a href="mailto:app@followtheshadow.com">drop us a line</a> &mdash; and <em>don&rsquo;t stare at the sun!</em></p>
         </div>
       </div>
 
       <div class="settings-section">
-        <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: 2026-05-19l</p>
+        <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: 2026-05-29u</p>
       </div>
 
       </details>
@@ -230,32 +233,41 @@
 
       <div class="settings-section">
         <div class="about-text">
-          <p>The search field accepts any combination of the following, in any order:</p>
+          <p>Combine any of these in the search field, in any order:</p>
         </div>
-        <table class="syntax-table">
-          <thead><tr><th>Token</th><th>Examples</th><th>Notes</th></tr></thead>
-          <tbody>
-            <tr><td>Today / now</td><td>today &nbsp; now<br>today+ &nbsp; now+<br>1994-now</td><td>From today forward, or a year up to today</td></tr>
-            <tr><td>Year</td><td>2026<br>2026-2030<br>1994+ &nbsp; 1994-<br>after 2100<br>before 500<br>44BC &nbsp; 44BCE<br>44BC 10AD<br>10BCE 10CE</td><td>Single, range, or open-ended. Two years = range (no dash needed). &ldquo;1994+&rdquo; = onward, &ldquo;1994-&rdquo; = up to. BC/BCE and AD/CE supported.</td></tr>
-            <tr><td>Month</td><td>aug &nbsp; august &nbsp; Nov</td><td>3-letter or full name</td></tr>
-            <tr><td>Date</td><td>28</td><td>Only meaningful with a month</td></tr>
-            <tr><td>Saros</td><td>saros 126 &nbsp; s126</td><td>Requires &ldquo;saros&rdquo; or &ldquo;s&rdquo; prefix</td></tr>
-            <tr><td>Type</td><td>total &nbsp; annular &nbsp; hybrid &nbsp; partial</td><td>Multiple allowed; prefix (to, an, hy, pa) works while typing</td></tr>
-            <tr><td>Obscuration</td><td>&gt;80 &nbsp; 50+ &nbsp; &lt;30 &nbsp; 95-</td><td>With or without %</td></tr>
-            <tr><td>City</td><td>paris &nbsp; tokyo<br>new york</td><td>Sets your location from a named city. Explicit coordinates override a city if both are given.</td></tr>
-            <tr><td>Coordinates</td>
-              <td>
-                (44.858, 0.082)<br>
-                (-19.581, -65.747)<br>
-                (51&deg;30&rsquo;26&rdquo;N, 0&deg;07&rsquo;40&rdquo;W)<br>
-                (51d30m26sN, 0d07m40sW)<br>
-                (51&deg;30.44&rsquo;N, 0&deg;7.67&rsquo;W)<br>
-                (51 30 26 N, 0 07 40 W)
-              </td>
-              <td>Tap anywhere on the map to set your location, or use the &#x1F4CD; button. Timezone and elevation are auto-filled when online.</td>
-            </tr>
-          </tbody>
-        </table>
+        <dl class="syntax-dl">
+          <div class="syntax-entry">
+            <dt>Today</dt>
+            <dd>today &nbsp; now &nbsp; today+ &nbsp; 1994-now</dd>
+          </div>
+          <div class="syntax-entry">
+            <dt>Year</dt>
+            <dd>2026 &nbsp; 2026&ndash;2030 &nbsp; 1994+ &nbsp; 1994&ndash;<br>
+                after 2100 &nbsp; before 500 &nbsp; 44BC &nbsp; 10BCE&ndash;10CE</dd>
+          </div>
+          <div class="syntax-entry">
+            <dt>Month</dt>
+            <dd>aug &nbsp; august &nbsp; Nov &nbsp; 28</dd>
+          </div>
+          <div class="syntax-entry">
+            <dt>Saros</dt>
+            <dd>saros 126 &nbsp; s126</dd>
+          </div>
+          <div class="syntax-entry">
+            <dt>Type</dt>
+            <dd>total &nbsp; annular &nbsp; hybrid &nbsp; partial</dd>
+          </div>
+          <div class="syntax-entry">
+            <dt>Obscuration</dt>
+            <dd>&gt;80 &nbsp; 50+ &nbsp; &lt;30 &nbsp; 95&ndash;</dd>
+          </div>
+          <div class="syntax-entry">
+            <dt>Location</dt>
+            <dd>paris &nbsp; new york<br>
+                (44.858, 0.082) &nbsp; (-19.581, -65.747)<br>
+                (51&deg;30&rsquo;26&rdquo;N, 0&deg;07&rsquo;40&rdquo;W)</dd>
+          </div>
+        </dl>
       </div>
 
       </details>
@@ -272,10 +284,21 @@
           <p><em>Auto</em> uses the device timezone when available, or estimates from observer longitude.</p>
         </div>
         <div class="settings-row" style="margin-top:1rem">
-          <label for="brightness-slider">Map brightness</label>
-          <input type="range" id="brightness-slider" min="20" max="100" value="100"
-                 style="accent-color:var(--blue);cursor:pointer"
-                 oninput="document.getElementById('map').style.filter='brightness('+this.value+'%)'">
+          <label for="search-range">Search range</label>
+          <select id="search-range" style="max-width:18rem">
+            <option value="modern">Modern era (1500–2500)</option>
+            <option value="past500">±500 years from today</option>
+            <option value="twomill">Extended (−1000 to 3000)</option>
+            <option value="all">All (~11,800 eclipses)</option>
+          </select>
+        </div>
+        <div class="about-text" style="margin-top:0.5rem">
+          <p>Limits which eclipses appear in results. Smaller ranges search faster. An explicit year in your search always overrides this.</p>
+        </div>
+        <div class="settings-row" style="margin-top:1rem">
+          <label for="map-toggle">Force offline map</label>
+          <input type="checkbox" id="map-toggle" style="cursor:pointer;accent-color:var(--blue)"
+                 onchange="forceOfflineMap(this.checked)">
         </div>
       </div>
 
@@ -289,10 +312,10 @@
 
 
 <!-- search_parser.js provides parseSearch(), applyFilter(), filterToString() -->
-<script src="js/search_parser.js?v=2026-05-19l"></script>
+<script src="js/search_parser.js?v=2026-05-29u"></script>
 
 <!-- eclipse.js provides computeEclipse(), fundamentalArgs(), sunAltAz(), findMaximum() -->
-<script src="js/eclipse.js?v=2026-05-19l"></script>
+<script src="js/eclipse.js?v=2026-05-29u"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
      Single source of truth for BUILD. Must match <meta name="build"> at top.
@@ -300,19 +323,19 @@
 <script>
 'use strict';
 var DATA_BASE = './data';
-var BUILD     = '2026-05-19l';
+var BUILD     = '2026-05-29u';
 </script>
-<script src="js/format.js?v=2026-05-19l"></script>
-<script src="js/state.js?v=2026-05-19l"></script>
-<script src="js/cities.js?v=2026-05-19l"></script>
-<script src="js/tabs.js?v=2026-05-19l"></script>
-<script src="js/search.js?v=2026-05-19l"></script>
-<script src="js/list.js?v=2026-05-19l"></script>
-<script src="js/local.js?v=2026-05-19l"></script>
-<script src="js/details.js?v=2026-05-19l"></script>
-<script src="js/url.js?v=2026-05-19l"></script>
-<script src="js/map.js?v=2026-05-19l"></script>
-<script src="js/share.js?v=2026-05-19l"></script>
-<script src="js/init.js?v=2026-05-19l"></script>
+<script src="js/format.js?v=2026-05-29u"></script>
+<script src="js/state.js?v=2026-05-29u"></script>
+<script src="js/cities.js?v=2026-05-29u"></script>
+<script src="js/tabs.js?v=2026-05-29u"></script>
+<script src="js/search.js?v=2026-05-29u"></script>
+<script src="js/list.js?v=2026-05-29u"></script>
+<script src="js/local.js?v=2026-05-29u"></script>
+<script src="js/details.js?v=2026-05-29u"></script>
+<script src="js/url.js?v=2026-05-29u"></script>
+<script src="js/map.js?v=2026-05-29u"></script>
+<script src="js/share.js?v=2026-05-29u"></script>
+<script src="js/init.js?v=2026-05-29u"></script>
 </body>
 </html>

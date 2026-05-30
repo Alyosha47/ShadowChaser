@@ -3,6 +3,18 @@
 buildTzSelect();
 initMap(); /* Map is the default tab — initialise immediately */
 
+/* Search-range select */
+(function () {
+  var sel = document.getElementById('search-range');
+  if (!sel) return;
+  sel.value = searchRange;
+  sel.addEventListener('change', function () {
+    AppState.set('searchRange', sel.value);
+    localStorage.setItem('sc.searchRange', sel.value);
+    renderList();
+  });
+})();
+
 fetch(DATA_BASE + '/index.json?v=' + BUILD)
   .then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
