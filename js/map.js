@@ -55,15 +55,14 @@ function loadBasemapData() {
   var base = DATA_BASE + '/basemap/';
   basemapLoading = Promise.all([
     fetchGz(base + 'land.geojson.gz?v='      + BUILD),
-    fetchGz(base + 'ocean.geojson.gz?v='     + BUILD),
     fetchGz(base + 'countries.geojson.gz?v=' + BUILD),
     fetchGz(base + 'lakes.geojson.gz?v='     + BUILD),
     fetchGz(base + 'rivers.geojson.gz?v='    + BUILD),
     fetchGz(base + 'cities.geojson.gz?v='    + BUILD),
   ]).then(function (r) {
     basemapData = {
-      land:      r[0], ocean:    r[1], countries: r[2],
-      lakes:     r[3], rivers:   r[4], cities:    r[5],
+      land:      r[0], countries: r[1],
+      lakes:     r[2], rivers:    r[3], cities: r[4],
     };
     /* Cities became available — any pending city-name token in the search
        input couldn't resolve at first parse. Re-run the search now so
@@ -74,15 +73,51 @@ function loadBasemapData() {
   return basemapLoading;
 }
 
+/* Build seam-free line geometry from polygon fill data.
+
+   The antimeridian split that fixes globe FILL artifacts inserts edges along
+   the ±180° meridian and a ring of vertices around the poles. Those edges are
+   correct for filling, but when stroked as coastline/borders they appear as
+   meridian lines crossing land and a small circle at the pole. We rebuild the
+   outlines as lines, breaking the path wherever an edge lies on the seam or
+   the polar cap so those artifact edges are never drawn. Fill is unaffected. */
+function seamFreeLines(fc) {
+  if (!fc || !fc.features) return fc;
+  var SEAM = 179.9, POLE = 89.9, feats = [];
+  function isCut(a, b) {
+    var seam = Math.abs(a[0]) >= SEAM && Math.abs(b[0]) >= SEAM && (a[0] > 0) === (b[0] > 0);
+    var pole = Math.abs(a[1]) >= POLE && Math.abs(b[1]) >= POLE;
+    return seam || pole;
+  }
+  function emit(run) {
+    if (run.length > 1) feats.push({ type: 'Feature', properties: {},
+      geometry: { type: 'LineString', coordinates: run } });
+  }
+  function addRing(ring) {
+    var run = ring.length ? [ring[0]] : [];
+    for (var i = 1; i < ring.length; i++) {
+      if (isCut(ring[i - 1], ring[i])) { emit(run); run = [ring[i]]; }
+      else run.push(ring[i]);
+    }
+    emit(run);
+  }
+  fc.features.forEach(function (f) {
+    var g = f.geometry; if (!g) return;
+    var polys = g.type === 'Polygon' ? [g.coordinates]
+              : g.type === 'MultiPolygon' ? g.coordinates : [];
+    polys.forEach(function (poly) { poly.forEach(addRing); });
+  });
+  return { type: 'FeatureCollection', features: feats };
+}
+
 /* Build a MapLibre style spec from whatever basemap data we have.
    Colours match the existing dark theme.
 
-   Layer order matters for the borders-into-sea fix:
-     background → land fill → country lines → ocean fill (clips sea-borders)
-     → coastline stroke → lakes → rivers → cities
+   Layer order:
+     background (ocean colour) → land fill → coastline → country lines
+     → lakes → rivers → cities
 
-   The ocean fill is painted on top of the country boundary lines, which
-   naturally clips any border segment that extends into the sea. */
+   The background colour is the ocean; there is no separate ocean layer. */
 function buildLocalStyle(data) {
   var BG       = '#b8d0e8';   /* ocean — matches online water tint  */
   var LAND     = '#d4e8c8';   /* land fill — matches online land    */
@@ -95,20 +130,21 @@ function buildLocalStyle(data) {
   var sources = {};
   var layers  = [{ id: 'background', type: 'background', paint: { 'background-color': BG } }];
 
-  /* Land fill — use fill-antialias but avoid polar polygon artifacts by
-     clipping to [-85,85] lat via filter. Artifacts occur past ±85° where
-     GeoJSON polygons have winding issues on a globe projection. */
+  /* Land fill. Polar/antimeridian fill artifacts are fixed at the data level
+     (antimeridian-split, correctly-wound polygons), so no lat filter is
+     needed here. */
   if (data.land) {
     sources.land = { type: 'geojson', data: data.land, tolerance: 0.5 };
+    sources.coast = { type: 'geojson', data: seamFreeLines(data.land), tolerance: 0.5 };
     layers.push({ id: 'land-fill', type: 'fill', source: 'land',
       maxzoom: 22,
       paint: { 'fill-color': LAND, 'fill-opacity': 1, 'fill-antialias': true } });
-    layers.push({ id: 'coast-line', type: 'line', source: 'land',
+    layers.push({ id: 'coast-line', type: 'line', source: 'coast',
       paint: { 'line-color': COAST, 'line-width': 0.8, 'line-opacity': 0.9 } });
   }
 
   if (data.countries) {
-    sources.countries = { type: 'geojson', data: data.countries, tolerance: 0.5 };
+    sources.countries = { type: 'geojson', data: seamFreeLines(data.countries), tolerance: 0.5 };
     layers.push({ id: 'countries-line', type: 'line', source: 'countries',
       paint: { 'line-color': BORDER, 'line-width': 0.6, 'line-opacity': 0.8 } });
   }
@@ -224,6 +260,8 @@ function createMap(style, isOnline, localStyleFallback) {
       'color': '#b8d0e8', 'high-color': '#7aadce',
       'horizon-blend': 0.04, 'space-color': '#0a0c1a', 'star-intensity': 0.3
     }); } catch (e) {}
+
+    map.on('render', hideFarSideMarkers);
 
     if (!deckOverlay) {
       deckOverlay = new DeckGL.MapboxOverlay({ layers: [], interleaved: false });
@@ -386,6 +424,29 @@ function loadPathChunk(entry) {
     console.error('loadPathChunk failed for', chunkName, err);
     return null;
   });
+}
+
+/* HTML markers (observer dot, greatest-eclipse dot) are DOM overlays with no
+   depth against the WebGL globe, so MapLibre draws them on top even when their
+   location is on the far side of the planet (setFog only occludes WebGL, not
+   DOM). Hide any marker whose point lies more than 90° great-circle from the
+   globe centre — i.e. on the hemisphere facing away from the camera. Cheap;
+   runs on every 'render'. */
+function hideFarSideMarkers() {
+  if (!map) return;
+  var c = map.getCenter();
+  var clat = c.lat * Math.PI / 180, clon = c.lng * Math.PI / 180;
+  function update(m) {
+    var ll = m.getLngLat();
+    var lat = ll.lat * Math.PI / 180, lon = ll.lng * Math.PI / 180;
+    var cosd = Math.sin(clat) * Math.sin(lat) +
+               Math.cos(clat) * Math.cos(lat) * Math.cos(lon - clon);
+    var vis = cosd < 0 ? 'hidden' : 'visible';
+    var el = m.getElement();
+    if (el.style.visibility !== vis) el.style.visibility = vis;
+  }
+  mapMarkers.forEach(update);
+  pathMarkers.forEach(update);
 }
 
 function clearMapMarkers()  { mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
