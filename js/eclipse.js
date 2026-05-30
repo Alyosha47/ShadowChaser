@@ -375,10 +375,19 @@
        at the Sun), in degrees. V = P − q, where P is celestial-north-relative
        and q is the parallactic angle.
 
-       q = atan2(sin H, tan(lat)·cos(δ) − sin(δ)·cos H)
-       where H is the Sun's local hour angle and δ its declination, both
-       available in `fundamentalArgs` (H field is in radians, d is declination
-       in radians). */
+       ⚠ STILL WRONG as of 2026-05-29. Two formula variants have been tried:
+         (a) atan2(sin H, tan(lat)·cos(d) − sin(d)·cos H)         — earlier
+         (b) atan2(sin H, cos(lat)·tan(d) − sin(lat)·cos H)        — Meeus 14.1
+       (b) is the textbook-correct parallactic angle. Neither matches Jubier.
+       Test case 2023-04-20 from 8.36°S 127.06°E:
+         Jubier V:   C1=11.5  C2=3.1   C3=9.5   C4=2.1
+         Variant (b): C1=14.87 C2=88.66 C3=250.59 C4=292.54
+       C1 is close (~3° off), other contacts wildly different — suggests a
+       separate sign/quadrant issue with P at the inner-cone contacts (C2/C3)
+       and at egress (C4), not just q. Needs careful Meeus-Ch-14 trace, not
+       sign-flip guessing. See HANDOFF.md "V-angle math" for full context.
+
+       o.H and o.d are in DEGREES from fundamentalArgs. */
     function getV(t) {
       if (t === null) return null;
       var o   = fundamentalArgs(rec, t, lat, lonWest, alt, dT_s);
@@ -387,7 +396,7 @@
       var H_r  = o.H * Math.PI / 180;
       var d_r  = o.d * Math.PI / 180;
       var q   = Math.atan2(Math.sin(H_r),
-                           Math.tan(latR) * Math.cos(d_r) - Math.sin(d_r) * Math.cos(H_r));
+                           Math.cos(latR) * Math.tan(d_r) - Math.sin(latR) * Math.cos(H_r));
       var V   = (P - q) * 180 / Math.PI;
       return ((V % 360) + 360) % 360;
     }
