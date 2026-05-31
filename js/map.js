@@ -9,6 +9,7 @@ var mapMarkers     = [];
 var pathMarkers    = [];
 var currentPathKey = null;
 var deckOverlay = null; /* deck.gl MapboxOverlay */
+var _deckLayers = null; /* last layers array pushed to the overlay */
 
 /* ── Basemap loading ──────────────────────────────────────────────────
    We support two basemap modes:
@@ -273,6 +274,7 @@ function createMap(style, isOnline, localStyleFallback) {
     }); } catch (e) {}
 
     map.on('render', updateMarkerOcclusion);
+    map.on('zoom', updateOvalVisibility);
 
     if (!deckOverlay) {
       deckOverlay = new DeckGL.MapboxOverlay({ layers: [], interleaved: false });
@@ -690,12 +692,31 @@ function densifySegment(seg) {
    of deck.gl layer objects whenever the eclipse changes.               */
 
 function setDeckLayers(layers) {
+  _deckLayers = layers;
   if (deckOverlay) {
     deckOverlay.setProps({ layers: layers });
   } else {
     /* Overlay not yet initialized — store and apply when ready */
     setDeckLayers._pending = layers;
   }
+}
+
+/* Toggle just the umbra-ovals layer's visibility when zoom crosses
+   OVAL_HIDE_ZOOM. deck.gl diffs layers by reference, so we clone that one layer
+   with the new `visible` value into a fresh array and re-push. Markers are
+   MapLibre objects, not deck layers, so they are untouched. */
+function updateOvalVisibility() {
+  if (!deckOverlay || !_deckLayers) return;
+  var vis = map.getZoom() < OVAL_HIDE_ZOOM;
+  var changed = false;
+  var next = _deckLayers.map(function (L) {
+    if (L && L.id === 'umbra-ovals' && L.props.visible !== vis) {
+      changed = true;
+      return L.clone({ visible: vis });
+    }
+    return L;
+  });
+  if (changed) setDeckLayers(next);
 }
 
 /* Flatten segments into a single array of paths for PathLayer */
@@ -759,6 +780,13 @@ function corridorToPolygonData(nSegs, sSegs, id) {
 
 
 
+
+/* Umbra ovals are informative at regional/global zoom but counterproductive up
+   close (they darken the very point being inspected). Hide them past a zoom
+   threshold. The ovals layer is built with visible: zoom < OVAL_HIDE_ZOOM, and
+   a 'zoom' listener toggles that one layer's visibility via setProps when the
+   threshold is crossed — touching only the deck layers, not markers. */
+var OVAL_HIDE_ZOOM = 7;
 
 function drawEclipsePath(ep) {
   clearMapLayers();
@@ -830,6 +858,7 @@ function drawEclipsePath(ep) {
       layers.push(new DeckGL.SolidPolygonLayer({
         id:                 'umbra-ovals',
         data:               ovalData,
+        visible:            map.getZoom() < OVAL_HIDE_ZOOM,
         getPolygon:         function(d) { return d.polygon; },
         getFillColor:       ovalFill,
         getLineColor:       ovalLine,

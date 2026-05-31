@@ -72,6 +72,14 @@ and the implemented "decided behavioral changes").
 
 ---
 
+## REVISIT AFTER LIVING WITH IT (decide once it's been used a while)
+- **Umbra ovals: blink-off vs fade.** Currently they blink off at zoom ≥ 7
+  (`OVAL_HIDE_ZOOM` in map.js; `visible` prop toggled on the `zoom` event via
+  `layer.clone`). Switching to a gradual alpha fade is the same machinery, just more
+  `setProps` calls through the fade band — not wasteful, purely a feel preference. Live
+  with the blink; switch to fade only if the cutoff feels abrupt. Threshold is a
+  one-number change.
+
 ## OPEN UX QUESTIONS (deliberation; decide before coding)
 
 - **Coordinates → "Location" rename + merge.** Consider renaming "Coordinates" to
@@ -87,14 +95,6 @@ and the implemented "decided behavioral changes").
   or switch Global Circs to a compact list-table while keeping Local Circs as blocks.
 - **GE-dot zoom behavior** — the dot scales up with zoom until it fills the screen. Cap
   its max size in pixel space rather than world space.
-- **Magnitude ovals fade at high zoom (decided, not yet built).** The semi-transparent
-  magnitude ovals (partial-eclipse shading rings) should fade out as the user zooms in —
-  once they would either darken the specific point being inspected, or cover enough screen
-  real estate that the shading becomes counterproductive rather than informative. Fade by
-  zoom level (and/or by fraction of viewport covered); the ovals are most useful at
-  global/regional zoom and just get in the way close up. NB this is the *oval* fill
-  (#R3-related but separate from the onion-ring bug); coordinate with whatever fill
-  decision #R3 lands on.
 - **Mobile map-click microsheet** — with no sidebar on mobile, a map click gives no inline
   "this is what changed." Add a small dismissable bottom-of-map sheet showing at least
   umbral duration for the clicked point.
