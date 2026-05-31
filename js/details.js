@@ -227,9 +227,10 @@ function lookupElevationAndTz(lat, lon) {
     }
   }
 
-  /* Elevation — Open-Elevation API (online only, silently fails offline).
-     Stored on _lookedUpAlt and used as a fallback by local-circumstance
-     calculations. Not written to the search string. */
+  /* Elevation — Open-Elevation API (online only). Skip entirely when offline:
+     the request would just fail and surface a network error on map click. The
+     tz lookup above is fully local and has already run. */
+  if (isOffline()) return;
   fetch('https://api.open-elevation.com/api/v1/lookup?locations=' + lat + ',' + lon)
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {

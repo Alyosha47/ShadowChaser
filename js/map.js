@@ -204,6 +204,16 @@ function forceOfflineMap(on) {
   initMap();
 }
 
+/* Single source of truth for "are we offline?" — consulted by the map
+   connectivity probe and by any feature that would otherwise fire a doomed
+   network request (e.g. elevation lookup). Conservative: true only when we
+   KNOW we're offline (force-offline toggle, or the device reports no
+   connection). A device that claims online still gets the active probe below,
+   so this never produces a false "online". */
+function isOffline() {
+  return _forceOffline || navigator.onLine === false;
+}
+
 function initMap() {
   if (map) {
     map.remove();
@@ -216,8 +226,9 @@ function initMap() {
 
   /* Probe connectivity in parallel with local data load.
      generate_204 is a purpose-built connectivity endpoint — no body, no
-     CORS conflict with the map style fetch. Forced-offline skips the probe. */
-  var probePromise = _forceOffline
+     CORS conflict with the map style fetch. Known-offline (forced or device)
+     skips the probe entirely. */
+  var probePromise = isOffline()
     ? Promise.resolve(false)
     : new Promise(function (resolve) {
         var done = false;
