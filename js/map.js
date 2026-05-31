@@ -366,21 +366,18 @@ function updateMapState() {
       ['centreline','penumbra_n','penumbra_s'].forEach(function(k){
         (ep[k]||[]).forEach(function(seg){ allPts = allPts.concat(seg); });
       });
-      var lons = allPts.map(function(p){return p[0];});
-      var lats = allPts.map(function(p){return p[1];});
-      var lonSpan = lons.length
-        ? Math.max.apply(null,lons) - Math.min.apply(null,lons) : 0;
-      if (allPts.length && lonSpan <= 180) {
-        /* Normal case: path doesn't wrap the antimeridian. */
+      if (allPts.length) {
+        /* Unwrap every longitude into a continuous window around the greatest-
+           eclipse meridian (else the first point) so antimeridian-crossing
+           paths give a correct centre and span instead of wrapping the wrong
+           way round the globe. One code path for all eclipses. */
+        var anchor = (ep.ge && ep.ge[0] != null) ? ep.ge[0] : allPts[0][0];
+        var lons = allPts.map(function(p){ return anchor + (((p[0]-anchor)%360+540)%360-180); });
+        var lats = allPts.map(function(p){ return p[1]; });
         map.fitBounds([
           [Math.min.apply(null,lons), Math.min.apply(null,lats)],
           [Math.max.apply(null,lons), Math.max.apply(null,lats)]
         ], { padding:40, duration:800, maxZoom:6 });
-      } else if (ep.ge && ep.ge[0] != null) {
-        /* Antimeridian-crossing path (raw lon min/max would span the globe
-           the wrong way and swing the camera to the far side) — center on
-           the greatest-eclipse point instead. */
-        map.flyTo({ center:ep.ge, zoom:3, duration:800 });
       }
     }
   }).catch(function () { setMapStatus('Could not load path'); });
