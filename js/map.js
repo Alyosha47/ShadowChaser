@@ -272,7 +272,7 @@ function createMap(style, isOnline, localStyleFallback) {
       'horizon-blend': 0.04, 'space-color': '#0a0c1a', 'star-intensity': 0.3
     }); } catch (e) {}
 
-    map.on('render', hideFarSideMarkers);
+    map.on('render', updateMarkerOcclusion);
 
     if (!deckOverlay) {
       deckOverlay = new DeckGL.MapboxOverlay({ layers: [], interleaved: false });
@@ -434,24 +434,24 @@ function loadPathChunk(entry) {
   });
 }
 
-/* HTML markers (observer dot, greatest-eclipse dot) are DOM overlays with no
-   depth against the WebGL globe, so MapLibre draws them on top even when their
-   location is on the far side of the planet (setFog only occludes WebGL, not
-   DOM). Hide any marker whose point lies more than 90° great-circle from the
-   globe centre — i.e. on the hemisphere facing away from the camera. Cheap;
-   runs on every 'render'. */
-function hideFarSideMarkers() {
-  if (!map) return;
-  var c = map.getCenter();
-  var clat = c.lat * Math.PI / 180, clon = c.lng * Math.PI / 180;
+/* HTML markers (observer dot, greatest-eclipse dot) are DOM overlays. MapLibre
+   v5 fades an occluded marker to opacityWhenCovered (default 0.2) but leaves it
+   faintly visible AND still clickable — so a marker on the far side of the globe
+   can be seen through the planet and can capture a click meant for the surface
+   (placing a pin). Use MapLibre's own globe-aware occlusion test as the SINGLE
+   predicate for both hiding and disabling interaction, so the two can never
+   disagree (the prior bug: a hand-rolled 90° test diverged from the true
+   horizon, leaving a band that was clickable but visually behind the globe).
+   Runs on every 'render'. */
+function updateMarkerOcclusion() {
+  if (!map || !map.transform || !map.transform.isLocationOccluded) return;
   function update(m) {
-    var ll = m.getLngLat();
-    var lat = ll.lat * Math.PI / 180, lon = ll.lng * Math.PI / 180;
-    var cosd = Math.sin(clat) * Math.sin(lat) +
-               Math.cos(clat) * Math.cos(lat) * Math.cos(lon - clon);
-    var vis = cosd < 0 ? 'hidden' : 'visible';
-    var el = m.getElement();
-    if (el.style.visibility !== vis) el.style.visibility = vis;
+    var occluded = map.transform.isLocationOccluded(m.getLngLat());
+    var el  = m.getElement();
+    var vis = occluded ? 'hidden' : 'visible';
+    var pe  = occluded ? 'none'   : 'auto';
+    if (el.style.visibility    !== vis) el.style.visibility    = vis;
+    if (el.style.pointerEvents !== pe)  el.style.pointerEvents = pe;
   }
   mapMarkers.forEach(update);
   pathMarkers.forEach(update);
