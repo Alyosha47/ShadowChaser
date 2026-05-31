@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="build" content="2026-05-29u">
+  <meta name="build" content="2026-05-31a">
   <title>ShadowChaser</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
@@ -20,11 +20,13 @@
       src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2'); }
   </style>
   <link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0b0e14">
   <script src="vendor/maplibre-gl-5.5.0.js"></script>
   <script src="vendor/deck.min.js"></script>
   <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-05-29u">
+  <link rel="stylesheet" href="css/app.css?v=2026-05-31a">
 </head>
 <body>
 
@@ -312,10 +314,10 @@
 
 
 <!-- search_parser.js provides parseSearch(), applyFilter(), filterToString() -->
-<script src="js/search_parser.js?v=2026-05-29u"></script>
+<script src="js/search_parser.js?v=2026-05-31a"></script>
 
 <!-- eclipse.js provides computeEclipse(), fundamentalArgs(), sunAltAz(), findMaximum() -->
-<script src="js/eclipse.js?v=2026-05-29u"></script>
+<script src="js/eclipse.js?v=2026-05-31a"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
      Single source of truth for BUILD. Must match <meta name="build"> at top.
@@ -323,19 +325,24 @@
 <script>
 'use strict';
 var DATA_BASE = './data';
-var BUILD     = '2026-05-30h';
+var BUILD     = '2026-05-31a';
+<script>
+  if ('serviceWorker' in navigator) {
+    addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD));
+  }
 </script>
-<script src="js/format.js?v=2026-05-29u"></script>
-<script src="js/state.js?v=2026-05-29u"></script>
-<script src="js/cities.js?v=2026-05-29u"></script>
-<script src="js/tabs.js?v=2026-05-29u"></script>
-<script src="js/search.js?v=2026-05-29u"></script>
-<script src="js/list.js?v=2026-05-29u"></script>
-<script src="js/local.js?v=2026-05-29u"></script>
-<script src="js/details.js?v=2026-05-29u"></script>
-<script src="js/url.js?v=2026-05-29u"></script>
-<script src="js/map.js?v=2026-05-29u"></script>
-<script src="js/share.js?v=2026-05-29u"></script>
-<script src="js/init.js?v=2026-05-29u"></script>
+</script>
+<script src="js/format.js?v=2026-05-31a"></script>
+<script src="js/state.js?v=2026-05-31a"></script>
+<script src="js/cities.js?v=2026-05-31a"></script>
+<script src="js/tabs.js?v=2026-05-31a"></script>
+<script src="js/search.js?v=2026-05-31a"></script>
+<script src="js/list.js?v=2026-05-31a"></script>
+<script src="js/local.js?v=2026-05-31a"></script>
+<script src="js/details.js?v=2026-05-31a"></script>
+<script src="js/url.js?v=2026-05-31a"></script>
+<script src="js/map.js?v=2026-05-31a"></script>
+<script src="js/share.js?v=2026-05-31a"></script>
+<script src="js/init.js?v=2026-05-31a"></script>
 </body>
 </html>
