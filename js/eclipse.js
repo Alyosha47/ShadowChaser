@@ -370,34 +370,45 @@
         : null;
     }
 
-    /* Position angle V of the contact point on the Sun's limb, measured from
-       the LOCAL ZENITH going clockwise (i.e. as seen by an observer looking up
-       at the Sun), in degrees. V = P − q, where P is celestial-north-relative
-       and q is the parallactic angle.
+    /* Position angle V of the contact point on the Sun's limb, expressed as
+       degrees CLOCKWISE FROM THE LOCAL ZENITH (12 o'clock = up) — the angle
+       the contact-icon renderer consumes directly (bead at sin/−cos of V).
 
-       ⚠ STILL WRONG as of 2026-05-29. Two formula variants have been tried:
-         (a) atan2(sin H, tan(lat)·cos(d) − sin(d)·cos H)         — earlier
-         (b) atan2(sin H, cos(lat)·tan(d) − sin(lat)·cos H)        — Meeus 14.1
-       (b) is the textbook-correct parallactic angle. Neither matches Jubier.
-       Test case 2023-04-20 from 8.36°S 127.06°E:
-         Jubier V:   C1=11.5  C2=3.1   C3=9.5   C4=2.1
-         Variant (b): C1=14.87 C2=88.66 C3=250.59 C4=292.54
-       C1 is close (~3° off), other contacts wildly different — suggests a
-       separate sign/quadrant issue with P at the inner-cone contacts (C2/C3)
-       and at egress (C4), not just q. Needs careful Meeus-Ch-14 trace, not
-       sign-flip guessing. See HANDOFF.md "V-angle math" for full context.
+       Derivation (validated against Jubier 2023-04-20 from 8.356°S 127.063°E):
+         P = atan2(u, v)  — contact PA from celestial north, CCW (east).
+         q = atan2(sin H, cos φ·tan δ − sin φ·cos H)  — Meeus 14.1 parallactic.
+         V = 180 − P − q.
+       The 180 − (…) folds two frame conventions in one step: subtracting q
+       rotates from the celestial-north frame into the zenith frame, and the
+       180−/negation converts that astronomical PA (CCW-east, on-sky) into the
+       icon's clockwise-from-top screen convention.
+
+       NB Jubier's printed "V" column is a CLOCK POSITION (0–12, no degree
+       sign), i.e. V_deg / 30. Earlier sessions compared our degrees against
+       that clock value and concluded the math was wrong — it wasn't the angle,
+       it was the units. P (incl. C2/C3) was correct all along.
+
+       Exterior vs interior contacts: atan2(u, v) gives the shadow-axis
+       direction, correct for the exterior contacts C1/C4 (bite on the side the
+       Moon enters/leaves). At the interior contacts C2/C3 (totality boundary)
+       the last/first bead of light is on the diametrically opposite limb, so P
+       gets +180 there. Callers pass interior=true for C2/C3.
+
+       Verification vs Jubier (clock×30):  C1 345/345  C2 93/93
+       C3 285/285  C4 ~65/63  — within clock rounding (±3°) + alt/az rounding.
 
        o.H and o.d are in DEGREES from fundamentalArgs. */
-    function getV(t) {
+    function getV(t, interior) {
       if (t === null) return null;
-      var o   = fundamentalArgs(rec, t, lat, lonWest, alt, dT_s);
-      var P   = Math.atan2(o.u, o.v);
+      var o    = fundamentalArgs(rec, t, lat, lonWest, alt, dT_s);
+      var P    = Math.atan2(o.u, o.v);
       var latR = lat * Math.PI / 180;
       var H_r  = o.H * Math.PI / 180;
       var d_r  = o.d * Math.PI / 180;
-      var q   = Math.atan2(Math.sin(H_r),
-                           Math.cos(latR) * Math.tan(d_r) - Math.sin(latR) * Math.cos(H_r));
-      var V   = (P - q) * 180 / Math.PI;
+      var q    = Math.atan2(Math.sin(H_r),
+                            Math.cos(latR) * Math.tan(d_r) - Math.sin(latR) * Math.cos(H_r));
+      var V    = 180 - (P + q) * 180 / Math.PI;
+      if (interior) V += 180;   /* C2/C3 bead on opposite limb — see above */
       return ((V % 360) + 360) % 360;
     }
 
@@ -409,8 +420,8 @@
       sun:        sun,
       tMax:       toUT(tMax),
       C1:         { ut: toUT(tC1), sun: getSun(tC1), v: getV(tC1) },
-      C2:         { ut: toUT(tC2), sun: getSun(tC2), v: getV(tC2) },
-      C3:         { ut: toUT(tC3), sun: getSun(tC3), v: getV(tC3) },
+      C2:         { ut: toUT(tC2), sun: getSun(tC2), v: getV(tC2, true) },
+      C3:         { ut: toUT(tC3), sun: getSun(tC3), v: getV(tC3, true) },
       C4:         { ut: toUT(tC4), sun: getSun(tC4), v: getV(tC4) },
       durCentral: tC2 !== null && tC3 !== null ? (tC3 - tC2) * 3600 : null,
       durPartial: tC1 !== null && tC4 !== null ? (toUT(tC4) - toUT(tC1)) * 3600 : null
