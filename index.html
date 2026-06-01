@@ -326,11 +326,9 @@
 'use strict';
 var DATA_BASE = './data';
 var BUILD     = '2026-05-31a';
-<script>
-  if ('serviceWorker' in navigator) {
-    addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD));
-  }
-</script>
+if ('serviceWorker' in navigator) {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD, { updateViaCache: 'none' }));
+}
 </script>
 <script src="js/format.js?v=2026-05-31a"></script>
 <script src="js/state.js?v=2026-05-31a"></script>

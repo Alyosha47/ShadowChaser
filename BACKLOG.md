@@ -17,10 +17,13 @@
 3. The handoff references this file by item ("4 candidate approaches in BACKLOG.md");
    that detail lives here so the handoff stays scannable.
 
-Last pruned: 2026-05-31 (removed everything closed through that session — V-angle,
-offline antimeridian/seam/marker/elevation fixes, contact-icon set, city search, list
-defaults, June 1954 icon, mobile initial-zoom, brightness slider, About mailto/Android,
-and the implemented "decided behavioral changes").
+Last pruned: 2026-05-31 (later session — removed completed infra: MapLibre vendoring and
+the PWA/service-worker keystone, both now done; updated #R4 offline story and the scan
+note to reflect the SW; added the pro full-offline-download feature idea and the
+connectivity-module refactor trigger). Earlier same-day prune removed everything closed
+through that session — V-angle, offline antimeridian/seam/marker/elevation fixes,
+contact-icon set, city search, list defaults, June 1954 icon, mobile initial-zoom,
+brightness slider, About mailto/Android, and the implemented "decided behavioral changes".
 
 ---
 
@@ -46,11 +49,12 @@ and the implemented "decided behavioral changes").
   panels (allows scroll, blocks pinch) while LEAVING the map container alone (the map
   needs pinch to zoom). Must test on a real iPhone — iOS touch handling is finicky.
 
-- **#R4 / offline story.** Offline basemap not working on mobile is one symptom of a
-  larger gap: front-loading the basemap only succeeds when reachable via a local server;
-  true-offline (phone with no signal) leaves no map. The whole offline story needs a
-  rethink → ties to PWA / service worker + vendoring MapLibre locally (see Infra). Mobile
-  symptom parked until desktop is stable.
+- **#R4 / offline story.** Desktop true-offline is now SOLVED (service worker caches the
+  app shell + globe basemap + 1900–2100 eclipse data; verified offline in Incognito).
+  Remaining: a real-device airplane-mode test on the phone (the actual field scenario), and
+  the installed-PWA experience (splash/icons — provisional icons exist; final art pending).
+  If mobile shows a gap, it's likely an install/registration or viewport detail, not the
+  caching design.
 
 - **Locate-pin (📍, top-right of map).** Brave blocks geolocation by default (allow in
   `brave://settings/content/location`). Also `setStatus('Locating…')` writes to
@@ -64,7 +68,9 @@ and the implemented "decided behavioral changes").
   intersected the (now-removed) brightness slider. Reposition.
 
 - **Scan ignores non-location filters** — always scans all 5 centuries regardless of
-  other active filters. Pre-existing.
+  other active filters. Pre-existing. (NB: offline this is now harmless noise rather than
+  errors — the SW precaches all 50 besselian centuries, so the scan finds every chunk
+  offline. The inefficiency of scanning all centuries when filters could narrow it remains.)
 
 - **GE dot skew (VERIFY).** Greatest-eclipse dot was reported offset from where it should
   be. Unconfirmed whether still present after this session's marker work — verify before
@@ -157,13 +163,20 @@ and the implemented "decided behavioral changes").
 ---
 
 ## INFRA (durable; keystones of the offline goal)
-- **Vendor MapLibre locally** — currently loaded from unpkg CDN (`maplibre-gl@5.5.0`),
-  which breaks true offline. Must become a local file.
-- **PWA / service worker** — the keystone for offline-in-the-field.
-- **Production bundling** (single JS/CSS) — relevant given the offline goal.
+- **Production bundling** (single JS/CSS) — relevant given the offline goal. NB the service
+  worker now precaches the individual files fine, so this is optimization, not a blocker.
 - **Offline city labels** — MapLibre symbol layers need PBF glyphs; system fonts aren't
   available to the WebGL renderer, so offline is dots-only. Bundle Noto Sans PBF glyphs
-  (~2–3MB) or find an alternative.
+  (~2–3MB) or find an alternative. (The basemap dots/borders themselves are now cached
+  offline by the service worker.)
+- **Pro "download everything for the field" toggle** — a Settings option (while online) to
+  precache the *full* paths set (~274MB) so any eclipse, any era draws offline. Today the SW
+  caches only the 1900–2100 path range + all besselian; out-of-range eclipses draw offline
+  only if viewed online first. Deferred deliberately: the load-once-online → cached-forever
+  behavior already covers the realistic field case (you research an eclipse before chasing
+  it), and a full-download toggle needs progress UI, quota handling, partial-failure
+  recovery, and a clear-cache control. Build only if a real user asks. (Dedicated-iPad
+  "extreme offline" scenario lives here too.)
 
 ---
 
@@ -184,3 +197,8 @@ and the implemented "decided behavioral changes").
   - Similar event wiring possible for list/details.
   - `AppState.on()` exists but has no subscribers — wire only when a feature demands it,
     don't pre-emptively rewire.
+  - **Connectivity state** is three OR'd signals in `isOffline()` (`_forceOffline`,
+    `_probedOffline`, `navigator.onLine`). Fine for one probe. If a *second*
+    connectivity-dependent feature appears (e.g. cloud-cover #F2 needing live vs cached
+    data), that's the trigger to promote it to a small connectivity module with periodic
+    re-probe + subscribers — not before.

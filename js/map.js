@@ -205,14 +205,20 @@ function forceOfflineMap(on) {
   initMap();
 }
 
+/* Probe-confirmed connectivity: null = unknown, false = the connectivity probe
+   actually failed (genuinely offline). navigator.onLine is unreliable — it stays
+   true under DevTools throttling and on many devices with no real connection — so
+   the active generate_204 probe is the source of truth. A regained-connection
+   event clears it so we re-probe rather than stay stuck offline. */
+var _probedOffline = null;
+addEventListener('online', function () { _probedOffline = null; });
+
 /* Single source of truth for "are we offline?" — consulted by the map
    connectivity probe and by any feature that would otherwise fire a doomed
-   network request (e.g. elevation lookup). Conservative: true only when we
-   KNOW we're offline (force-offline toggle, or the device reports no
-   connection). A device that claims online still gets the active probe below,
-   so this never produces a false "online". */
+   network request (e.g. elevation lookup). True when force-offline is set, the
+   probe confirmed offline, or the device reports no connection. */
 function isOffline() {
-  return _forceOffline || navigator.onLine === false;
+  return _forceOffline || _probedOffline === true || navigator.onLine === false;
 }
 
 function initMap() {
@@ -243,6 +249,7 @@ function initMap() {
   Promise.all([loadBasemapData(), probePromise]).then(function (results) {
     var data      = results[0];
     var online    = results[1];
+    _probedOffline = (online === false);   // share the probe verdict with isOffline()
     var localStyle = buildLocalStyle(data);
     createMap(online ? ONLINE_STYLE_URL : localStyle, online, localStyle);
   }).catch(function () {
