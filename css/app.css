@@ -55,6 +55,18 @@
       background:    var(--bg);
     }
 
+    /* Installed PWA: drop the branding banner — the OS launch splash + the
+       About panel cover identity; don't waste standalone screen space on it.
+       Media query covers modern browsers; .is-standalone (set in index.html)
+       is the fallback for older iOS, which lacks display-mode. Zero --header-h
+       too so the panel max-height calc (uses --header-h) reclaims the space. */
+    @media all and (display-mode: standalone) {
+      :root { --header-h: 0rem; }
+      .app-header { display: none; }
+    }
+    .is-standalone { --header-h: 0rem; }      /* .is-standalone sits on <html> = :root */
+    .is-standalone .app-header { display: none; }
+
     .app-header::before {
       content:   '\2609';
       font-size: 1.8rem;
@@ -1007,6 +1019,11 @@
     /* ── Responsive ──────────────────────────────────────────────────── */
 
     @media (max-width: 600px) {
+      /* Compact banner on mobile browser — screen space is precious.
+         Shrinking --header-h also frees the panel max-height calc below. */
+      :root { --header-h: 3.5rem; }
+      .app-header        { gap: 0.6rem; padding: 0 1rem; }
+      .app-header::before { font-size: 1.3rem; }
       .app-title    { font-size: 1.1rem; }
       .app-subtitle { display: none; }
       .tab-btn      { font-size: 1.1rem; letter-spacing: 0; }
