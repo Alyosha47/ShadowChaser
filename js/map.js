@@ -273,6 +273,14 @@ function createMap(style, isOnline, localStyleFallback) {
     preserveDrawingBuffer: true,
   });
 
+  /* Globe spins on its AXIS only. The two-finger twist gesture rotates bearing,
+     which on a globe lets you roll it to any orientation (upside down, off-axis)
+     — and deck.gl's path overlay doesn't follow a bearing-rolled globe, so the
+     path drifts permanently out of register (mobile-only; desktop has no such
+     gesture). dragRotate / pitch are already disabled above; this disables the
+     touch twist while KEEPING pinch-zoom. */
+  map.touchZoomRotate.disableRotation();
+
   map.on('style.load', function () {
     try { map.setProjection({ type: 'globe' }); } catch (e) {}
     try { map.setFog({

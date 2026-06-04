@@ -17,7 +17,7 @@
 3. The handoff references this file by item ("4 candidate approaches in BACKLOG.md");
    that detail lives here so the handoff stays scannable.
 
-Last pruned: 2026-05-31 (later session — removed completed infra: MapLibre vendoring and
+Last pruned: 2026-06-02 (later session — removed completed infra: MapLibre vendoring and
 the PWA/service-worker keystone, both now done; updated #R4 offline story and the scan
 note to reflect the SW; added the pro full-offline-download feature idea and the
 connectivity-module refactor trigger). Earlier same-day prune removed everything closed
@@ -113,7 +113,9 @@ brightness slider, About mailto/Android, and the implemented "decided behavioral
 ---
 
 ## FEATURES — EASY
-- Banner size — distinguish web mode vs app mode (currently large in both).
+- **Banner wastes too much vertical space on mobile** — screen space is precious on a phone;
+  the banner is too tall. Tighten it for mobile (and distinguish web mode vs app/PWA mode —
+  currently large in both). Reclaim the space for the map.
 - Make map date more visible on mobile; move eclipse date to an overlay in desktop mode
   (and hide the redundant desktop map-status/date overlays now that the sidebar shows
   them).

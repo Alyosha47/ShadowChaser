@@ -1019,12 +1019,13 @@
     /* ── Responsive ──────────────────────────────────────────────────── */
 
     @media (max-width: 600px) {
-      /* Compact banner on mobile browser — screen space is precious.
-         Shrinking --header-h also frees the panel max-height calc below. */
-      :root { --header-h: 3.5rem; }
-      .app-header        { gap: 0.6rem; padding: 0 1rem; }
-      .app-header::before { font-size: 1.3rem; }
-      .app-title    { font-size: 1.1rem; }
+      /* Minimal banner on mobile browser — screen space is precious (browser
+         chrome already eats the top). Shrinking --header-h also frees the
+         panel max-height calc. (In installed PWA the banner is hidden entirely.) */
+      :root { --header-h: 2.2rem; }
+      .app-header         { gap: 0.4rem; padding: 0 0.7rem; }
+      .app-header::before { font-size: 0.95rem; }
+      .app-title    { font-size: 0.88rem; letter-spacing: 0.02em; }
       .app-subtitle { display: none; }
       .tab-btn      { font-size: 1.1rem; letter-spacing: 0; }
       .tab-label    { display: none; }

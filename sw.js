@@ -16,7 +16,8 @@ const CORE = [
   'css/app.css',
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
       'search','list','local','details','share','map','url','init'].map(n => `js/${n}.js`),
-  'vendor/maplibre-gl-5.5.0.js',
+  'vendor/maplibre-gl-csp-5.5.0.js',
+  'vendor/maplibre-gl-csp-worker-5.5.0.js',
   'vendor/maplibre-gl-5.5.0.css',
   'vendor/deck.min.js',
   ...['CormorantGaramond-Italic','CormorantGaramond-Light','CormorantGaramond-LightItalic',
@@ -84,12 +85,27 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // tiles, connectivity probe, APIs → untouched
 
-  // Reload while offline: a navigation → serve the cached app shell.
+  // Navigations: network-first but TIME-BOUNDED. Online → fresh index.html (picks
+  // up new deploys/worker). If the device already reports offline, serve the cached
+  // shell instantly (no doomed fetch). Otherwise try the network but race it against
+  // a short timer, since iOS may leave an offline fetch hanging rather than failing.
   if (req.mode === 'navigate') {
-    e.respondWith(
-      caches.match('index.html', { cacheName: CACHE, ignoreSearch: true })
-        .then(r => r || fetch(req))
-    );
+    e.respondWith((async function () {
+      var shell = function () {
+        return caches.match('index.html', { cacheName: CACHE, ignoreSearch: true });
+      };
+      if (navigator.onLine === false) return (await shell()) || Response.error();
+      try {
+        return await Promise.race([
+          fetch(req),
+          new Promise(function (_, reject) {
+            setTimeout(function () { reject(new Error('nav-timeout')); }, 2500);
+          })
+        ]);
+      } catch (e) {
+        return (await shell()) || Response.error();
+      }
+    })());
     return;
   }
 
