@@ -94,7 +94,7 @@ self.addEventListener('fetch', e => {
       var shell = function () {
         return caches.match('index.html', { cacheName: CACHE, ignoreSearch: true });
       };
-      if (navigator.onLine === false) return (await shell()) || Response.error();
+      if (navigator.onLine === false) return (await shell()) || offlinePage();
       try {
         return await Promise.race([
           fetch(req),
@@ -103,7 +103,7 @@ self.addEventListener('fetch', e => {
           })
         ]);
       } catch (e) {
-        return (await shell()) || Response.error();
+        return (await shell()) || offlinePage();
       }
     })());
     return;
@@ -125,3 +125,30 @@ self.addEventListener('fetch', e => {
     })
   );
 });
+
+/* Friendly offline fallback for a navigation that can't be served from cache
+   (the worker is alive but the app shell isn't cached yet). Fully self-contained
+   — no external assets — so it renders with zero cache. */
+function offlinePage() {
+  var html =
+    '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>ShadowChaser — offline</title><style>' +
+    'html,body{margin:0;height:100%}' +
+    'body{background:#0b0e14;color:#e8e6e0;display:flex;align-items:center;' +
+    'justify-content:center;text-align:center;' +
+    'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;padding:1.5rem}' +
+    '.wrap{max-width:22rem}' +
+    '.sun{font-size:3rem;color:#c8a96e;text-shadow:0 0 40px rgba(200,169,110,.5)}' +
+    'h1{font-size:1.15rem;font-weight:600;margin:1rem 0 .5rem;letter-spacing:.02em}' +
+    'p{font-size:.95rem;line-height:1.5;color:#a8a6a0;margin:0}' +
+    '</style></head><body><div class="wrap">' +
+    '<div class="sun">\u2609</div>' +
+    '<h1>ShadowChaser is offline</h1>' +
+    '<p>Connect to the internet once to download maps for offline use.</p>' +
+    '</div></body></html>';
+  return new Response(html, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  });
+}
