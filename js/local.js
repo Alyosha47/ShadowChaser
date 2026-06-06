@@ -107,6 +107,17 @@ function setStatus(msg, isErr) {
   el.className   = isErr ? 'err' : '';
 }
 
+/* Locate feedback must appear where the locate button is — on the map — not only
+   on the Search tab's status line, which mobile users can't see while on the Map
+   tab. Writes to the existing on-map overlay. */
+function setMapStatus(msg, isErr) {
+  var el = document.getElementById('map-status');
+  if (!el) return;
+  el.textContent     = msg || '';
+  el.style.display   = msg ? 'block' : 'none';
+  el.style.color     = isErr ? '#ff9b9b' : 'var(--text-dim)';
+}
+
 
 /* ── Location scan ───────────────────────────────────────────────────── */
 

@@ -35,7 +35,11 @@
       font-family: var(--mono);
       font-size:   1rem;
       line-height: 1.6;
-      height:      100vh;
+      /* Pin to the viewport. Plain height:100vh lets iOS Safari scroll the page up
+         to tuck its address bar away, dragging the banner + tab bar off-screen
+         (out of reach). position:fixed locks the app so that can't happen. */
+      position:    fixed;
+      inset:       0;
       overflow:    hidden;
       display:     flex;
       flex-direction: column;
@@ -1019,14 +1023,12 @@
     /* ── Responsive ──────────────────────────────────────────────────── */
 
     @media (max-width: 600px) {
-      /* Minimal banner on mobile browser — screen space is precious (browser
-         chrome already eats the top). Shrinking --header-h also frees the
-         panel max-height calc. (In installed PWA the banner is hidden entirely.) */
-      :root { --header-h: 2.2rem; }
-      .app-header         { gap: 0.4rem; padding: 0 0.7rem; }
-      .app-header::before { font-size: 0.95rem; }
-      .app-title    { font-size: 0.88rem; letter-spacing: 0.02em; }
-      .app-subtitle { display: none; }
+      /* Hide the branding banner on mobile browser — screen space is precious and
+         Safari's own chrome already eats the top, so the tab bar becomes the top
+         edge. --header-h:0 lets the panel max-height calc reclaim the space.
+         (In the installed PWA the banner is already hidden via display-mode.) */
+      :root { --header-h: 0rem; }
+      .app-header   { display: none; }
       .tab-btn      { font-size: 1.1rem; letter-spacing: 0; }
       .tab-label    { display: none; }
       .tab-panel    { padding: 0.75rem 0.75rem 6rem; }

@@ -56,11 +56,11 @@ document.getElementById('btn-scan-cancel').addEventListener('click', function ()
 });
 
 document.getElementById('btn-locate').addEventListener('click', function () {
-  if (!navigator.geolocation) { setStatus('Geolocation not available.', true); return; }
-  setStatus('Locating\u2026');
+  if (!navigator.geolocation) { setStatus('Geolocation not available.', true); setMapStatus('Geolocation not available.', true); return; }
+  setStatus('Locating\u2026'); setMapStatus('Locating\u2026');
   navigator.geolocation.getCurrentPosition(function (pos) {
     try { window._deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) {}
-    setStatus('');
+    setStatus(''); setMapStatus('');
     var lat = pos.coords.latitude;
     var lon = pos.coords.longitude;
     var search = document.getElementById('search');
@@ -74,8 +74,16 @@ document.getElementById('btn-locate').addEventListener('click', function () {
       clearMapMarkers();
       addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
     });
-  }, function () {
-    setStatus('Location unavailable.', true);
+  }, function (err) {
+    /* Surface WHY it failed — on Safari it's usually a permission denial
+       (code 1), which behaves differently than in the installed PWA. */
+    var msg = 'Location unavailable.';
+    if (err) {
+      if (err.code === 1) msg = 'Location permission denied. Enable it in Settings \u2192 Safari \u2192 Location, or in the address-bar site settings.';
+      else if (err.code === 2) msg = 'Location unavailable (position could not be determined).';
+      else if (err.code === 3) msg = 'Location timed out. Try again.';
+    }
+    setStatus(msg, true); setMapStatus(msg, true);
   }, { enableHighAccuracy: true, timeout: 15000 });
 });
 
