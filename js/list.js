@@ -72,21 +72,7 @@ function renderList() {
   }
 
   list.innerHTML = html;
-
-  /* renderList NEVER scrolls on its own — that's what caused the jump when the
-     query was blanked (X, manual erase, URL edit) and the list re-rendered. The
-     selected eclipse is the scroll anchor, and scrolling to it happens only when
-     the selection actually changes (see scrollSelectedToTop, called from
-     selectEclipse / selectNextEclipse). A bare re-render leaves scroll untouched. */
-}
-
-/* Scroll the selected eclipse's row to the top of the list. Called only on a real
-   selection change, never on a plain re-render. */
-function scrollSelectedToTop() {
-  var list = document.getElementById('eclipse-list');
-  if (!list || !selectedEntry) return;
-  var rows = list.querySelectorAll('.eclipse-item.selected');
-  if (rows[0]) rows[0].scrollIntoView({ block: 'start' });
+  /* No scroll here: the list never moves on its own. */
 }
 
 
@@ -103,7 +89,6 @@ function selectEclipse(y, m, d) {
   _currentRec   = null;             /* invalidate old eclipse's Besselian rec */
   updateHeaderSelection();
   renderList();
-  scrollSelectedToTop();            /* selection changed → bring it to the top */
   computeLocal();
   /* Mobile: switch to Details panel. Desktop: stay where the user is —
      selecting from the list while on Search is part of the exploration flow. */

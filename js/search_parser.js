@@ -464,9 +464,14 @@
       }
 
       /* Type — eclipse_type can be a single letter (T/A/H/P) or a subtype
-         like Tm, As, H3, Pb. Classify by the first character. */
+         like Tm, As, H3, Pb. Classify by the first character.
+         With an obscuration filter present, "total/annular" means the eclipse's
+         GLOBAL classification (total/annular SOMEWHERE) and obscuration governs
+         what's visible at the location — so a spot in the partial zone of a total
+         eclipse still qualifies. Without an obscuration filter, a scanned location
+         uses the LOCAL type, so "total" means "total as seen from here". */
       if (filter.types && filter.types.length) {
-        var raw  = e.local_type || e.eclipse_type || '';
+        var raw  = (filter.obscRange ? e.eclipse_type : (e.local_type || e.eclipse_type)) || '';
         var full = TYPE_MAP[raw.charAt(0).toUpperCase()] || raw.toLowerCase();
         if (filter.types.indexOf(full) < 0) return false;
       }

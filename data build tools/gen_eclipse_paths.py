@@ -293,8 +293,17 @@ def umbral_pts(rec, t):
         bstates.append((ti, bstate(rec, ti)))
 
     LEVEL = 1.0 - 1e-9
-    n = _bisect_edge_cached(rec, cl[0], cl[1], perp_n, LEVEL, bstates)
-    s = _bisect_edge_cached(rec, cl[0], cl[1], perp_s, LEVEL, bstates)
+    # search_m: at high gamma / high latitude the umbra can bow asymmetrically,
+    # so one limit sits further from the centreline than path_width/2 implies.
+    # Measured worst case is ~1.28x path_width/2; 1.5x gives a comfortable margin
+    # while keeping the search window tight for normal eclipses.
+    # Floor at 300 km (the original default) so narrow/short totals are unchanged.
+    half_width_m = rec.get('path_width', 0) * 500.0   # path_width km -> half in metres
+    search_m = max(half_width_m * 1.5, 300_000)
+    n = _bisect_edge_cached(rec, cl[0], cl[1], perp_n, LEVEL, bstates,
+                             search_m=search_m)
+    s = _bisect_edge_cached(rec, cl[0], cl[1], perp_s, LEVEL, bstates,
+                             search_m=search_m)
     return n, s
 
 
@@ -886,11 +895,23 @@ def _bisect_umbra_at_t(rec, p_lat, p_lon, bearing_rad, t,
 
     p must be inside the umbra at t (magnitude == 1.0).
     Returns (lat, lon) or None if the umbra doesn't end within search_m.
+
+    Near the terminator (end of path / high-gamma eclipses) the umbral
+    boundary is reached at the horizon: the bisect must stop at the
+    terminator (zeta=0) rather than overshooting into the below-horizon
+    region where _magnitude_at returns 0, which previously produced
+    wildly incorrect oval points on those bearings.
     """
     R_E = R_EARTH_M
     lat0 = p_lat * DEG; lon0 = p_lon * DEG
     cos_lat0 = math.cos(lat0); sin_lat0 = math.sin(lat0)
     cos_b = math.cos(bearing_rad); sin_b = math.sin(bearing_rad)
+
+    X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
+    sin_d = math.sin(d_r); cos_d = math.cos(d_r)
+    rho1 = math.sqrt(1.0 - E2 * cos_d * cos_d)
+    sin_d1 = sin_d / rho1
+    cos_d1 = math.sqrt(1.0 - E2) * cos_d / rho1
 
     def at_dist(d):
         ang = d / R_E
@@ -901,15 +922,48 @@ def _bisect_umbra_at_t(rec, p_lat, p_lon, bearing_rad, t,
                                   math.cos(ang) - sin_lat0*sin_lat2)
         return (lat2/DEG, ((lon2/DEG + 180) % 360) - 180)
 
+    def zeta_at(lat_deg, lon_deg):
+        lat_gd = lat_deg * DEG
+        tan_lat_gc = math.tan(lat_gd) * math.sqrt(1.0 - E2)
+        lat_gc = math.atan(tan_lat_gc)
+        H_deg = (lon_deg + mu - 0.00417807 * dt_s) % 360
+        if H_deg > 180: H_deg -= 360
+        H = H_deg * DEG
+        return (math.sin(lat_gc)*sin_d1
+                + math.cos(lat_gc)*math.cos(H)*cos_d1)
+
     # Confirm starting point is inside (mag == 1.0)
     if _magnitude_at(rec, p_lat, p_lon, t) < 1.0 - 1e-9:
         return None
 
-    # Probe outward to find a point outside
+    # Find terminator distance: binary search for where zeta crosses 0.
+    # Search up to half Earth circumference — the terminator could be far
+    # beyond the nominal search_m on grazing/end-of-path bearings.
+    HALF_CIRC = math.pi * R_E
+    term_m = HALF_CIRC
+    if zeta_at(*at_dist(HALF_CIRC)) > 0:
+        term_m = HALF_CIRC  # terminator beyond half-circumference, unlikely
+    else:
+        t_lo, t_hi = 0.0, HALF_CIRC
+        for _ in range(iters):
+            tm = 0.5 * (t_lo + t_hi)
+            if zeta_at(*at_dist(tm)) > 0:
+                t_lo = tm
+            else:
+                t_hi = tm
+        term_m = t_lo  # last point still above horizon
+
+    # Probe outward up to the terminator.
+    # If the umbra extends all the way to the horizon on this bearing,
+    # the terminator point IS the oval boundary — use it directly.
     lo = 0.0
-    hi = search_m
+    hi = min(search_m, term_m)
     if _magnitude_at(rec, *at_dist(hi), t) >= 1.0 - 1e-9:
-        return None  # umbra extends past search distance — caller will skip
+        # Still inside umbra at search_m — expand to terminator
+        hi = term_m
+    if _magnitude_at(rec, *at_dist(hi), t) >= 1.0 - 1e-9:
+        # Umbra reaches the horizon: terminator is the boundary
+        return at_dist(term_m)
 
     for _ in range(iters):
         mid = 0.5 * (lo + hi)
@@ -934,6 +988,10 @@ def umbra_ovals(rec, oval_step_min=OVAL_STEP_MIN, N=48):
     Each entry is a [[lon, lat], ...] closed ring (N+1 pts).
     """
     step = oval_step_min / 60.0
+    # search_m: scale with path width so the bisector isn't capped before
+    # reaching the edge on wide/grazing eclipses (same logic as umbral_pts).
+    half_width_m = rec.get('path_width', 0) * 500.0
+    oval_search_m = max(half_width_m * 1.5, 400_000)
     ovals = []
     t = rec['tmin']
     while t <= rec['tmax'] + 1e-9:
@@ -947,17 +1005,44 @@ def umbra_ovals(rec, oval_step_min=OVAL_STEP_MIN, N=48):
         if _magnitude_at(rec, cl_lat, cl_lon, t) < 1.0 - 1e-9:
             t += step; continue
 
-        ring = []
+        # Initial ring: N evenly-spaced bearings
+        raw = []  # (bearing_rad, lat, lon)
         bad = False
         for i in range(N):
             bearing = 2.0 * math.pi * i / N
-            edge = _bisect_umbra_at_t(rec, cl_lat, cl_lon, bearing, t)
+            edge = _bisect_umbra_at_t(rec, cl_lat, cl_lon, bearing, t,
+                                      search_m=oval_search_m)
             if edge is None:
                 bad = True; break
-            ring.append([round(edge[1], 4), round(edge[0], 4)])
-        if not bad and len(ring) >= 3:
-            ring.append(ring[0])
-            ovals.append(ring)
+            raw.append((bearing, edge[0], edge[1]))
+        if bad or len(raw) < 3:
+            t += step; continue
+
+        # Adaptive refinement: subdivide any edge longer than MAX_DEG degrees
+        # (≈33 km). Highly elongated end-of-path ovals need extra points at
+        # the tips; normal mid-path ovals add almost none.
+        MAX_DEG = 0.3
+        for _ in range(4):
+            refined = [raw[0]]
+            changed = False
+            for j in range(1, len(raw)):
+                b0, la0, lo0 = refined[-1]
+                b1, la1, lo1 = raw[j]
+                if math.sqrt((la1-la0)**2 + (lo1-lo0)**2) > MAX_DEG:
+                    b_mid = (b0 + b1) / 2
+                    e = _bisect_umbra_at_t(rec, cl_lat, cl_lon, b_mid, t,
+                                           search_m=oval_search_m)
+                    if e:
+                        refined.append((b_mid, e[0], e[1]))
+                        changed = True
+                refined.append((b1, la1, lo1))
+            raw = refined
+            if not changed:
+                break
+
+        ring = [[round(lo, 4), round(la, 4)] for _, la, lo in raw]
+        ring.append(ring[0])
+        ovals.append(ring)
         t += step
     return ovals
 
