@@ -17,6 +17,11 @@
 3. The handoff references this file by item ("4 candidate approaches in BACKLOG.md");
    that detail lives here so the handoff stays scannable.
 
+Last touched: 2026-06-07 — added the "Corridor sampling artifacts" bug entry (generator
+perpendicular-bisect limitation; rejected-strategies ledger + guarded-local-kink-re-solve
+candidate). No pruning this pass (the truncated-N-limit and below-horizon-oval fixes were
+never in this file, so nothing to remove; their closure is in the handoff).
+
 Last pruned: 2026-06-02 (later session — removed completed infra: MapLibre vendoring and
 the PWA/service-worker keystone, both now done; updated #R4 offline story and the scan
 note to reflect the SW; added the pro full-offline-download feature idea and the
@@ -28,6 +33,51 @@ brightness slider, About mailto/Android, and the implemented "decided behavioral
 ---
 
 ## BUGS — open (detail; status in handoff)
+
+- **Corridor sampling artifacts (generator — perpendicular-bisect limitation).** The umbra
+  corridor (`umbra_n`/`umbra_s` in `data build tools/gen_eclipse_paths.py`) is traced by
+  bisecting perpendicular to the centreline at each time step. Every resulting vertex is a
+  true magnitude-1 point (verified via `_max_magnitude`) — the DATA is accurate. But
+  perpendicular-from-centreline under-samples the true totality boundary where geometry is
+  awkward, in two manifestations:
+   - **Elongated-end tip protrusion** (canonical 2026-08-12): near a limb the umbral oval
+     elongates hugely along-track (~650 km major axis); its along-track tips are true mag-1
+     points that pierce the corridor flank (~25 km worst; 15 oval pts outside the polygon —
+     2017 has 13 benign cap protrusions for comparison). The polyline chords past the bulge.
+   - **Persistent kinks** (2611-09-28 N limit ~98°; 1001-03-27): the bisect returns a valid
+     mag-1 point displaced ~10–14 km from the smooth trend. Finer step_min reduces but never
+     removes it (~60° residual); the bearing finite-difference (dt=0.0001 h ≈ 0.36 s) is
+     noise-prone and adds ~36° on top.
+  Physical prior (settled, USER): an eclipse path is a smooth shadow on a sphere — there are
+  NO real corners, so any kink is a method artifact.
+  NOT the same as #R3 (that is a deck.gl *renderer* triangulation bug on polar *fills*; this
+  is a *generator* *sampling* issue affecting the vertices themselves).
+  **Rejected strategies (all built & tested on real records):**
+   1. Contour-walk the max-over-time mag=1 contour from the perpendicular seed → 176–180°
+      spikes near poles (perp axis ill-defined there).
+   2. Perpendicular level-set refinement (insert mag-1 points where the chord midpoint is
+      interior) → spikes; the tips protrude *along-track*, so perpendicular insertion is the
+      wrong direction.
+   3. Sparse-oval polygon union (Shapely) → 164° junction notches (the 9 stored ovals don't
+      overlap).
+   4. Dense-oval union (171 ovals) → broken by polar lon/lat planar degeneracy (path reaches
+      87°N; a near-pole oval spans 80° of longitude).
+   5. Global bearing-dt change (0.0001→0.001 h) → whack-a-mole: fixes 2611 (98°→61°) but
+      regresses 1001-03-27 (39°→47°). Do NOT ship a global dt change.
+  **Candidate fix — guarded local kink re-solve (monotone-safe, accuracy-preserving):** a
+  POST-pass (does not touch the shared walk). Detect kink vertices (turn > threshold); at
+  each, re-bisect the boundary along the bearing perpendicular to the *neighbour trend* (the
+  reliable smooth local direction) instead of the noisy centreline tangent; **replace the
+  vertex only if the new point is a true mag-1 bisect result AND reduces the turn**, else
+  keep the original. By construction it can only improve or no-op → clean eclipses stay
+  byte-identical (no regression possible), every output point stays a true boundary solution
+  (accuracy preserved). Test bar before shipping: kinks measurably reduced; every replaced
+  vertex re-verified mag-1; 2017/2026 byte-identical; regression sweep shows no path gains a
+  NEW kink. (Does NOT address the along-track tip protrusion — that needs the envelope fix.)
+  **Full fix (deferred):** trace the totality boundary as a smooth envelope in a local
+  equal-area projection (handles poles), then re-split into N/S — fixes the whole class
+  (tips + kinks) at the source. Large and stability-risky (the union attempts show the
+  failure modes); only worth it if the artifacts justify it. The data is accurate as-is.
 
 - **#R3 1950 polar "onion-ring" (deck.gl SolidPolygonLayer).** Path *lines* render fine;
   corridor + oval *fills* whose vertices lie in a polar region render as phantom

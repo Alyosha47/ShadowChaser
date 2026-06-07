@@ -1,20 +1,31 @@
-# ShadowChaser — Session Handoff — 2026-05-31 (standalone, authoritative)
+# ShadowChaser — Session Handoff — 2026-06-07 (standalone, authoritative)
 
 > ## ▶ START HERE (next session)
-> **State:** the **service worker / PWA is DONE and verified offline on a real iPhone**
-> (airplane mode + WiFi off → globe + present-day eclipse, no signal). MapLibre is now the
-> official CSP build. See §"SERVICE WORKER / PWA — DONE" at the bottom — especially THE
-> PERMISSIONS LESSON (the iOS "black map" was production file perms, not code). Confirm the
-> working tree is committed/pushed (§DEPLOY CHECKLIST commit block) if not already.
-> **The offline foundation is complete.** The frontier is now **feature scoping** — #F2
-> cloud-cover is the killer feature (~2 sessions of design first, USER's call) — plus small
-> UI wins (the mobile banner wastes too much vertical space — see BACKLOG Features-Easy).
-> See §"AFTER — the frontier".
+> **State:** offline foundation complete (SW/PWA verified on a real iPhone). Since then:
+> the **path generator is corrected and adopted** (closes the truncated-N-limit bug and the
+> below-horizon-oval bug — see §SESSION 2026-06-07), the repo is **de-bloated** (generated
+> paths no longer git-tracked), and mobile fixes shipped (search-list scroll anchoring,
+> geolocation feedback on map, minimal banner). The frontier is still **feature scoping** —
+> #F2 cloud-cover is the killer feature (~2 sessions of design first, USER's call).
+> **One open DATA item, classified as polish not correctness:** the umbra corridor under-
+> samples the totality boundary at awkward geometry (elongated-end tip protrusion ~25 km on
+> 2026-08-12; persistent ~60° kinks e.g. 2611-09-28, 1001-03-27). **Every corridor vertex is
+> a true magnitude-1 point — the data is accurate; the artifacts are sampling, not error.**
+> Four fix strategies were tested and rejected (detail + the safe candidate in BACKLOG under
+> "Corridor sampling artifacts"). Do NOT touch the shared corridor walk for a partial fix —
+> global tweaks are whack-a-mole (a dt change fixed 2611 and broke 1001).
 > **Before writing code:** skim §CRITICAL USER PREFERENCES and §RECURRING ANTI-PATTERNS —
 > they are the difference between a good session and a frustrating one.
 
-**Last updated:** 2026-06-02 (Opus 4.8) — service worker / PWA built & verified offline on
-iOS (CSP MapLibre build, network-first nav, BUILD `2026-05-31c`); fixed `isOffline()` to
+**Last updated:** 2026-06-07 (Opus 4.8) — adopted the corrected path generator (`data build
+tools/gen_eclipse_paths.py`: umbra `search_m` now scales with path width, fixing the
+truncated north umbral limit at high gamma; oval bisect stops at the terminator, fixing
+below-horizon oval points); de-bloated the repo (stopped git-tracking `data/paths`, added
+`.gitignore`); characterized the corridor sampling-artifact bug (BACKLOG). Prior 2026-06-02:
+search-list scroll anchoring + geolocation map feedback (commit 9bf843a); navigator.onLine
+basemap pick, SW fallback page, minimal banner (9be31ca, BUILD 2026-06-02i).
+**Earlier:** 2026-06-02 — service worker / PWA built & verified offline on
+iOS (CSP MapLibre build, network-first nav); fixed `isOffline()` to
 honor the connectivity probe; root-caused the iOS black map to production file permissions
 (403 on new folders). Prior 2026-05-31 sessions: offline-globe fixes, V-angle math,
 far-side markers, oval blink-off, vendoring.
@@ -22,8 +33,9 @@ far-side markers, oval blink-off, vendoring.
 **This document is complete and self-contained.** It supersedes all prior `HANDOFF*.md`
 files (the dated ones in repo root — `HANDOFF-2026_05_18b.md`, `HANDOFF-2026_05_19.md` —
 are stale and can be archived/deleted).
-**BUILD cache-buster:** lives in `index.html` as `var BUILD = '...'` (currently
-`2026-05-31a`) and is appended as `?v=BUILD` to every `js/*` and `data/*` fetch. **Bump it
+**BUILD cache-buster:** lives in `index.html` as `var BUILD = '...'` (last labeled commit:
+`2026-06-02i` — verify the live value in index.html before deploying) and is appended as
+`?v=BUILD` to every `js/*` and `data/*` fetch. **Bump it
 on every deploy** (convention: `YYYY-MM-DD` + letter). If a fix "doesn't appear," 90% of
 the time BUILD wasn't bumped or the browser wasn't hard-refreshed. NB vendored libs in
 `vendor/` deliberately carry NO `?v=` — their version is in the filename.
@@ -35,6 +47,55 @@ candidate fixes, UX-question deliberations, the feature idea-pool, perf/data not
 the refactor ledger; it accretes and is pruned, never restates status. When this handoff
 says "candidates in BACKLOG.md," the detail is there. When an item is fixed, it is deleted
 from BACKLOG.md (the handoff records the closure) — no "DONE" tombstones in the backlog.
+
+---
+
+## SESSION 2026-06-07 (what changed)
+
+### Path generator corrected & adopted — `data build tools/gen_eclipse_paths.py`
+The prior working file was an older copy; the corrected version (developed in a previous
+session as "v2") is now the single canonical generator (renamed over the old one, committed
+`61d05fc`). Two real fixes vs the old file:
+- **Umbra `search_m` scales with path width** (`max(path_width_km · 500 · 1.5, 300 km)`)
+  instead of a fixed 300 km. At high gamma / high latitude the umbra bows asymmetrically and
+  one limit sits >300 km from the centreline; the fixed window truncated the **north umbral
+  limit** (canonical case 2600-05-05, path key 10926: N limit was 111 pts / 12° lon vs S
+  limit 388 pts / 100°). Now traced full-length.
+- **Oval bisect stops at the terminator** (`zeta=0`) instead of overshooting below the
+  horizon — fixes wildly-placed oval points near the limb.
+There is now exactly ONE generator file; the old duplicate caused a session of chasing the
+wrong baseline. Do not reintroduce a `_v2`/`_v3` suffix — version history is git's job.
+
+### Repo de-bloated — generated paths no longer tracked
+`data/paths/` (~274 MB of `*.json.gz`) was git-tracked, so every regeneration committed a
+fresh full copy into history forever (gzip can't delta-compress). Paths are **build
+artifacts** — source of truth is `data/besselian/` + the generator, and deploy is via SFTP,
+not git. So: added `.gitignore` (`data/paths/`, `.DS_Store`, `*.pyc`, `__pycache__/`) and
+`git rm -r --cached data/paths` (files stay on disk; only untracked). This stops growth; it
+does NOT shrink existing history (that needs a destructive `git filter-repo --path
+data/paths --invert-paths` + force-push — deferred unless the ~274 MB actually hurts).
+
+### Corridor sampling-artifact bug — characterized, NOT fixed (detail in BACKLOG)
+The umbra corridor (`umbra_n`/`umbra_s`) is built by bisecting **perpendicular to the
+centreline** at each time step. This is **accurate** — every corridor vertex evaluates to
+magnitude = 1.0000 (verified via `_max_magnitude`). But perpendicular-from-centreline
+under-samples the true totality boundary at awkward geometry, in two visible ways:
+- **Elongated-end tip protrusion** (2026-08-12): the last ovals are hugely elongated
+  along-track (~650 km major axis); their along-track tips pierce the corridor flank by up
+  to ~25 km (15 oval pts outside the polygon; 2017 has 13 too — benign caps). The protruding
+  points are themselves true magnitude-1 points the polyline chords past.
+- **Persistent kinks** (2611-09-28 N limit ~98°, 1001-03-27): the perpendicular bisect lands
+  on a valid mag-1 point displaced from the smooth trend. Finer sampling reduces but doesn't
+  remove it (~60° residual). The bearing finite-diff (dt=0.0001 h ≈ 0.36 s) adds noise.
+**Physical truth (USER): eclipse paths are always smooth — a shadow on a sphere — so any
+kink is a method artifact, not real geometry.** Four accurate-fix strategies were built and
+tested on real data, all rejected (contour-walk → pole spikes; perpendicular level-set
+refinement → wrong-axis spikes; sparse-oval polygon union → junction notches; dense-oval
+union → polar lon/lat degeneracy). A global bearing-dt change is **whack-a-mole** (dt=0.001
+fixed 2611 but regressed 1001-03-27). The genuine fix is a spherical-geometry **envelope
+trace** (large, deferred). A **safe partial** is spec'd in BACKLOG (guarded local kink
+re-solve, monotone-safe post-pass). Verdict: the dataset is accurate; this is polish. See
+BACKLOG "Corridor sampling artifacts" for the full ledger and the candidate fix.
 
 ---
 
@@ -87,6 +148,7 @@ file splitting, and most bug-fix follow-ups in the (now untangled) code.
 ```
 ShadowChaser/
 ├── index.html          (HTML only; CSS external; holds BUILD constant)
+├── .gitignore          (data/paths/, .DS_Store, *.pyc, __pycache__/ — added 2026-06-07)
 ├── BACKLOG.md          (durable detail — bugs' candidate fixes, UX questions, features)
 ├── HANDOFF.md          (this file)
 ├── HANDOFF-2026_05_18b.md, HANDOFF-2026_05_19.md  (STALE — archive/delete)
@@ -105,9 +167,13 @@ ShadowChaser/
 │   │   ├── rivers.geojson.gz      (clean)
 │   │   ├── cities.geojson.gz
 │   │   └── ocean.geojson.gz       (ORPHANED — fetch removed; safe to delete)
-│   └── besselian/      (per-century eclipse element records, e.g. 2001_2100.json)
-├── data build tools/   (dev scratch — index good.html, test1999.html still ref unpkg;
-│                        NOT shipped, ignore for the offline goal)
+│   ├── besselian/      (per-century eclipse element records, e.g. 2001_2100.json) — SOURCE
+│   │                    OF TRUTH for paths; tracked in git
+│   └── paths/          (generated *.json.gz corridors — NOT git-tracked as of 2026-06-07;
+│                        build artifacts, regenerate from besselian + generator, deploy SFTP)
+├── data build tools/   (dev scratch; also holds gen_eclipse_paths.py — the canonical,
+│                        corrected path generator (see §SESSION 2026-06-07). The .html files
+│                        still ref unpkg; NOT shipped, ignore for the offline goal)
 └── js/
     ├── cities.js       (lookupCity, lazy index from basemapData.cities)
     ├── details.js      (renderData, buildContactRows, contactIcon, lookupElevationAndTz;
@@ -453,9 +519,20 @@ the values above.
   Polish: tab/chrome contrast; Rise/Set labels; corona brightness; search-instruction
   layout + canonical "Obscuration"; search-range setting; share rewrite; About mailto +
   Android note; share-link encoding (e= + coords only, no full search state).
+- **(2026-06-07) Truncated north umbral limit** — fixed by width-scaled `search_m` in the
+  generator (was a fixed 300 km search window). **Below-horizon oval points** — fixed by
+  stopping the oval bisect at the terminator. **Repo bloat** — `data/paths` untracked +
+  `.gitignore` added. See §SESSION 2026-06-07.
 
 ### Real bugs still open
 - The desktop real-bug tier is **clear.** #R1 (below) was reclassified to polish.
+- **Corridor sampling artifacts (generator; classified POLISH, not correctness).** The
+  umbra corridor under-samples the totality boundary at awkward geometry: elongated-end tip
+  protrusion (~25 km, 2026-08-12) and persistent kinks (2611-09-28, 1001-03-27). Every
+  corridor vertex is a true magnitude-1 point — accurate data, sampling artifact only. Four
+  fix strategies tested & rejected; genuine fix is an envelope trace (deferred); safe
+  partial (guarded local kink re-solve) spec'd in BACKLOG "Corridor sampling artifacts". Do
+  NOT apply a global bearing-dt change — whack-a-mole (fixes 2611, breaks 1001).
 - **#R3 Polar eclipse corridor "onion-ring" (deck.gl).** 1950-09-12 corridor + ovals
   render as polar onion rings. deck.gl SolidPolygonLayer mis-triangulates polar polygons
   even with clean unwrapped data. Current workaround: corridor fill DISABLED (path lines
