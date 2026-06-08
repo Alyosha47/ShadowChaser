@@ -64,7 +64,17 @@ brightness slider, About mailto/Android, and the implemented "decided behavioral
       87°N; a near-pole oval spans 80° of longitude).
    5. Global bearing-dt change (0.0001→0.001 h) → whack-a-mole: fixes 2611 (98°→61°) but
       regresses 1001-03-27 (39°→47°). Do NOT ship a global dt change.
-  **Candidate fix — guarded local kink re-solve (monotone-safe, accuracy-preserving):** a
+  **UPDATE 2026-06-07: the candidate below was BUILT AND TESTED on real records — it does
+  NOT work. Do not re-attempt it.** Root cause found: the kink is not coarse stepping —
+  `umbral_pts` (perpendicular bisect) returns *displaced* mag-1 points in the awkward region
+  itself. Evidence: (1) the smooth neighbour-midpoint is mag-1 but sits ~10 km INSIDE totality
+  (sagitta of a 42 km walk gap) so using it underclaims; (2) edge-snapping from interpolated
+  points wanders/fails at exactly these spots; (3) fine-time resampling of `umbral_pts` stays
+  noisy (~106° interior on 2611). Relocate / densify / time-subdivide all fail because they
+  all lean on the same unstable bisect. CONCLUSION: **kinks and the tip protrusion share one
+  root and need the same envelope rewrite — there is no cheap separable kink fix.**
+
+  ~~Candidate fix — guarded local kink re-solve (monotone-safe, accuracy-preserving):~~ a
   POST-pass (does not touch the shared walk). Detect kink vertices (turn > threshold); at
   each, re-bisect the boundary along the bearing perpendicular to the *neighbour trend* (the
   reliable smooth local direction) instead of the noisy centreline tangent; **replace the
