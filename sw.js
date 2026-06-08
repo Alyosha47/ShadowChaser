@@ -20,8 +20,7 @@ const CORE = [
   'vendor/maplibre-gl-csp-worker-5.5.0.js',
   'vendor/maplibre-gl-5.5.0.css',
   'vendor/deck.min.js',
-  ...['CormorantGaramond-Italic','CormorantGaramond-Light','CormorantGaramond-LightItalic',
-      'CormorantGaramond-Regular','CormorantGaramond-SemiBold','JetBrainsMono-Regular']
+  ...['CormorantGaramond-Light','JetBrainsMono-Regular']
       .map(n => `fonts/${n}.woff2`),
   // Offline globe basemap (ocean.geojson.gz is orphaned — not cached).
   'data/basemap/land.geojson.gz',
