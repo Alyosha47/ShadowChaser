@@ -141,6 +141,24 @@ def _geo_to_fund(lat_gd_deg, lon_deg, d_r, mu, dt_s):
     return xi, eta1 * rho1, zeta1, rho1
 
 
+def _magnitude_at_bs(rec, lat, lon, bs):
+    """Eclipse magnitude at (lat,lon) for a precomputed Bessel state bs."""
+    X, _, Y, _, d_r, mu, dt_s, L1, L2 = bs
+    xi_p, eta_p, zeta_p, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
+    if zeta_p <= 0: return 0.0
+    dx = xi_p - X
+    dy = (eta_p - Y) / rho1
+    m = math.sqrt(dx*dx + dy*dy)
+    L1p = L1 - zeta_p * rec['tan_f1']
+    L2p = L2 - zeta_p * rec['tan_f2']
+    if m >= L1p: return 0.0
+    if L2p < 0 and m <= -L2p: return 1.0
+    if L2p > 0 and m <= L2p: return 1.0
+    denom = L1p + L2p
+    if abs(denom) < 1e-12: return 0.0
+    return (L1p - m) / denom
+
+
 def _magnitude_at(rec, lat, lon, t):
     """Eclipse magnitude at geographic (lat, lon) at time t.
     Uses Bessel formula: (L1' - m) / (L1' + L2') where L1', L2' are cone radii
@@ -249,62 +267,130 @@ def penumbral_pts(rec, t):
     return n, s
 
 
+def _gc_step(lat, lon, brg, d_m):
+    """Great-circle step d_m metres from (lat,lon) along bearing brg (rad)."""
+    ang = d_m / R_EARTH_M; la = lat*DEG; lo = lon*DEG
+    sl = math.sin(la)*math.cos(ang) + math.cos(la)*math.sin(ang)*math.cos(brg)
+    la2 = math.asin(max(-1.0, min(1.0, sl)))
+    lo2 = lo + math.atan2(math.sin(brg)*math.sin(ang)*math.cos(la),
+                          math.cos(ang) - math.sin(la)*sl)
+    return la2/DEG, ((lo2/DEG + 180) % 360) - 180
+
+
+def _gc_bearing(a, b):
+    """Initial great-circle bearing (rad) from a=(lat,lon) to b=(lat,lon)."""
+    la1 = a[0]*DEG; la2 = b[0]*DEG; dlon = (b[1]-a[1])*DEG
+    return math.atan2(math.sin(dlon)*math.cos(la2),
+                      math.cos(la1)*math.sin(la2) - math.sin(la1)*math.cos(la2)*math.cos(dlon))
+
+
+def _snap_to_edge(rec, lat, lon, b_out, level, R=22000.0):
+    """Snap (lat,lon) onto the exact max_magnitude==level contour with a short
+    local search (+/- R metres) along outward bearing b_out.
+
+    Robust + fast: locate the true peak-eclipse time t* at the envelope point
+    once (whole-eclipse coarse+bisect). Each local candidate then has its own
+    peak found by a short bisect *seeded at t** (candidates within R km peak
+    within a few hundredths of an hour of t*, same basin) -- exact to
+    convergence, no fixed-grid jitter, and far cheaper than re-scanning the
+    whole eclipse per candidate."""
+    tmin, tmax = rec['tmin'], rec['tmax']
+    nC = 40; bt = tmin; bm = -1.0
+    for i in range(nC + 1):
+        ti = tmin + (tmax - tmin) * i / nC
+        m = _magnitude_at(rec, lat, lon, ti)
+        if m > bm: bm = m; bt = ti
+    dt = (tmax - tmin) / nC
+    for _ in range(16):
+        for sgn in (-1, 1):
+            ti = bt + sgn * dt / 2
+            m = _magnitude_at(rec, lat, lon, ti)
+            if m > bm: bm = m; bt = ti
+        dt *= 0.5
+    tstar = bt
+    def peakmag(la, lo):
+        # coarse scan over a window around t*, then bisect-refine -> reach-robust
+        H = 0.4; nL = 8; b2 = tstar; bm2 = -1.0
+        for i in range(nL + 1):
+            ti = tstar - H + 2.0 * H * i / nL
+            mm = _magnitude_at(rec, la, lo, ti)
+            if mm > bm2: bm2 = mm; b2 = ti
+        d2 = 2.0 * H / nL
+        for _ in range(12):
+            for sgn in (-1, 1):
+                ti = b2 + sgn * d2 / 2
+                mm = _magnitude_at(rec, la, lo, ti)
+                if mm > bm2: bm2 = mm; b2 = ti
+            d2 *= 0.5
+        return bm2
+    def fval(d):
+        p = _gc_step(lat, lon, b_out, d)
+        return peakmag(p[0], p[1]) - level
+    if fval(0.0) >= 0.0:
+        if fval(R) >= 0.0: return _gc_step(lat, lon, b_out, R)
+        a, b = 0.0, R
+    else:
+        if fval(-R) < 0.0: return (lat, lon)
+        a, b = -R, 0.0
+    for _ in range(18):
+        m = (a + b) / 2
+        if fval(m) >= 0.0: a = m
+        else: b = m
+    return _gc_step(lat, lon, b_out, (a + b) / 2)
+
+
 def umbral_pts(rec, t):
     """Umbra north/south geographic limit points at time t.
 
-    Method: walk along centreline at this t, find the perpendicular bearing
-    to the centreline ground motion, then bisect along that perpendicular
-    to find where the maximum eclipse magnitude (over all t in eclipse)
-    equals 1.0 - epsilon. This is the proper boundary of the totality
-    region — the locus of points that *just barely* see totality.
+    Envelope-of-the-moving-shadow method. In the fundamental plane the umbra
+    is a circle of radius |L2'| about the axis (X,Y) moving at velocity
+    (X',Y'); the two limits are the circle edge in the direction perpendicular
+    to the axis motion, tilted by the envelope-of-circles tangency angle
+    arcsin((dr/dt)/|V|) for the changing radius. zeta (and hence the radius)
+    is solved by a short fixed-point iteration. Each analytic point is then
+    snapped the last few km onto the exact max_magnitude==1 contour.
 
-    Compared to the bessel-perp formula (which approximates the umbra
-    boundary as perpendicular-to-velocity), this magnitude-based method
-    handles polar grazers and edge geometry correctly and gives sub-200m
-    accuracy where bessel-perp gave 1-3km.
-
-    Optimization: precompute Bessel state (X, Y, d, mu, L1, L2, etc.) at a
-    grid of t values within a tight window around `t`, then evaluate
-    magnitude at many candidate (lat, lon) points using the cached state.
-    A point near centreline at time t experiences max eclipse near time t,
-    so a tight window suffices.
+    This is smooth by construction (analytic, per-time, no ray-casting and no
+    point-to-point chaining) and matches Jubier to sub-km, including polar
+    grazers where the previous perpendicular-bisection finder under-shot by
+    up to ~300 km and introduced kinks.
     """
-    cl = centreline_pt(rec, t)
+    X, Xp, Y, Yp, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
+    cl = f2g(X, Y, d_r, mu, dt_s)
     if cl is None: return None, None
-    cl_a = centreline_pt(rec, t - 0.0001)
-    cl_b = centreline_pt(rec, t + 0.0001)
-    if cl_a is None or cl_b is None: return None, None
-
-    lat1 = cl_a[0]*DEG; lat2 = cl_b[0]*DEG
-    dlon = (cl_b[1] - cl_a[1])*DEG
-    bx = math.sin(dlon)*math.cos(lat2)
-    by = math.cos(lat1)*math.sin(lat2) - math.sin(lat1)*math.cos(lat2)*math.cos(dlon)
-    bearing = math.atan2(bx, by)
-    perp_n = bearing - math.pi/2
-    perp_s = bearing + math.pi/2
-
-    # Precompute bstate at 25 t values within window
-    t_lo = max(rec['tmin'], t - 0.02)
-    t_hi = min(rec['tmax'], t + 0.02)
-    N_T = 25
-    bstates = []
-    for i in range(N_T):
-        ti = t_lo + (t_hi - t_lo) * i / (N_T - 1)
-        bstates.append((ti, bstate(rec, ti)))
-
+    cos_d = math.cos(d_r)
+    rho1 = math.sqrt(1.0 - E2*cos_d*cos_d)
+    Cu, Cw = X, Y/rho1                 # shadow centre in circle-frame (u, w)
+    Vu, Vw = Xp, Yp/rho1               # shadow velocity in circle-frame
+    sp = math.hypot(Vu, Vw)
+    if sp < 1e-12: return None, None
+    Vhu, Vhw = Vu/sp, Vw/sp
+    dL2dt = rec['l21'] + 2*rec['l22']*t
     LEVEL = 1.0 - 1e-9
-    # search_m: at high gamma / high latitude the umbra can bow asymmetrically,
-    # so one limit sits further from the centreline than path_width/2 implies.
-    # Measured worst case is ~1.28x path_width/2; 1.5x gives a comfortable margin
-    # while keeping the search window tight for normal eclipses.
-    # Floor at 300 km (the original default) so narrow/short totals are unchanged.
-    half_width_m = rec.get('path_width', 0) * 500.0   # path_width km -> half in metres
-    search_m = max(half_width_m * 1.5, 300_000)
-    n = _bisect_edge_cached(rec, cl[0], cl[1], perp_n, LEVEL, bstates,
-                             search_m=search_m)
-    s = _bisect_edge_cached(rec, cl[0], cl[1], perp_s, LEVEL, bstates,
-                             search_m=search_m)
-    return n, s
+    out = []
+    for side in (+1, -1):
+        z = 1.0 - Cu*Cu - Cw*Cw
+        zeta = math.sqrt(z) if z > 0 else 1e-6
+        u = w = None
+        for _ in range(16):
+            q = L2 - zeta*rec['tan_f2']
+            r = abs(q); sgn = 1.0 if q >= 0 else -1.0
+            dzdt = -(u*Vu + w*Vw)/zeta if (u is not None and zeta > 1e-9) else 0.0
+            drdt = sgn*(dL2dt - rec['tan_f2']*dzdt)
+            cphi = max(-1.0, min(1.0, drdt/sp))
+            sphi = math.sqrt(1.0 - cphi*cphi)
+            nu = cphi*Vhu + side*sphi*(-Vhw)
+            nw = cphi*Vhw + side*sphi*(Vhu)
+            u = Cu + r*nu; w = Cw + r*nw
+            zz = 1.0 - u*u - w*w
+            if zz <= 0: zeta = 1e-6; break
+            zeta = math.sqrt(zz)
+        if u is None: out.append(None); continue
+        e = f2g(u, w*rho1, d_r, mu, dt_s)
+        if e is None: out.append(None); continue
+        b_out = _gc_bearing(cl, e)
+        out.append(_snap_to_edge(rec, e[0], e[1], b_out, LEVEL))
+    return out[0], out[1]
 
 
 def _max_magnitude_cached(rec, lat, lon, bstates):
