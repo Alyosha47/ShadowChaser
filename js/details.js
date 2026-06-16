@@ -239,12 +239,12 @@ function buildSunTrack(rec, lat, lon, altM, res) {
   var minA = Math.min.apply(null, uaz), maxA = Math.max.apply(null, uaz);
   var minH = Math.min(0, Math.min.apply(null, alts));
   var maxH = Math.max.apply(null, alts);
-  var padA = Math.max(2, (maxA - minA) * 0.10);
-  var padH = Math.max(2, (maxH - minH) * 0.12);
+  var padA = Math.max(1, (maxA - minA) * 0.04);
+  var padH = Math.max(1, (maxH - minH) * 0.05);
   minA -= padA; maxA += padA; maxH += padH;
   minH = Math.min(minH, 0);
 
-  var W = 320, H = 200, L = 34, R = 10, T = 12, B = 26;
+  var W = 320, H = 200, L = 16, R = 16, T = 16, B = 16;
   function px(uazi) { return L + (uazi - minA) / (maxA - minA) * (W - L - R); }
   function py(alti) { return T + (1 - (alti - minH) / (maxH - minH)) * (H - T - B); }
 
@@ -311,20 +311,22 @@ function buildSunTrack(rec, lat, lon, altM, res) {
   var sky0 = document.getElementById('st-sky0');
   var sky1 = document.getElementById('st-sky1');
 
-  /* Sky colour as a function of sun altitude: day → twilight → night. Returns
-     [topColor, bottomColor]. Bottom (horizon) goes warm at low sun. */
-  function skyColors(altDeg) {
+  /* Sky colour as a function of how deep the eclipse is at this instant.
+     Uncovered sky is normal daylight; as magnitude rises the sky dims and
+     cools, going to deep twilight/near-night at totality — the real
+     experience of the light draining out as the Moon covers the Sun.
+     Returns [topColor, bottomColor]. */
+  function skyColors(mag) {
     function mix(a, b, t) {
       t = Math.max(0, Math.min(1, t));
       return 'rgb(' + Math.round(a[0]+(b[0]-a[0])*t) + ',' + Math.round(a[1]+(b[1]-a[1])*t)
            + ',' + Math.round(a[2]+(b[2]-a[2])*t) + ')';
     }
     var dayTop=[64,132,196],   dayBot=[150,194,224];
-    var duskTop=[40,46,96],    duskBot=[206,118,66];
-    var nightTop=[7,9,20],     nightBot=[18,22,44];
-    if (altDeg >= 12)      return [mix(duskTop,dayTop,(altDeg-12)/30), mix(duskBot,dayBot,(altDeg-12)/30)];
-    else if (altDeg >= 0)  return [mix(nightTop,duskTop,altDeg/12),    mix(nightBot,duskBot,altDeg/12)];
-    else                   return [ 'rgb(7,9,20)', 'rgb(14,17,34)' ];
+    var darkTop=[14,16,34],    darkBot=[34,30,52];
+    /* Light falls off slowly then fast near totality (perceptual ~mag^3). */
+    var t = Math.pow(Math.max(0, Math.min(1, mag)), 3);
+    return [ mix(dayTop, darkTop, t), mix(dayBot, darkBot, t) ];
   }
 
   function fmtHM(ut) {
@@ -336,8 +338,8 @@ function buildSunTrack(rec, lat, lon, altM, res) {
   function draw(i) {
     var p = pts[i];
     var cx = px(uaz[i]), cy = py(p.alt), r = 12;
-    /* Sky background tracks the sun's current altitude. */
-    var sc = skyColors(p.alt);
+    /* Sky background tracks how deep the eclipse is right now. */
+    var sc = skyColors(p.mag);
     sky0.setAttribute('stop-color', sc[0]);
     sky1.setAttribute('stop-color', sc[1]);
     /* Sun disc + Moon bite. The Moon overlaps from direction V (clockwise from
