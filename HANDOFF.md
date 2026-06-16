@@ -16,7 +16,7 @@
 > is sub-km vs Jubier and reaches the tips. The ONLY blocker is a polyline-topology
 > sub-problem: splitting the traced closed loop into clean N/S limit polylines on
 > corridor-shaped eclipses (simple cases like 2033 already split perfectly). See §SESSION
-> 2026-06-16 and BACKLOG "Umbral grazing-tip zigzag".
+> 2026-06-16 and TODO "Umbral grazing-tip zigzag".
 > **Modern centuries render clean** after a rebuild + BUILD bump; **ancient/BCE centuries are
 > NOT yet rebuilt** (still show old data — a quick rebuild clears them).
 > **CACHE-BUSTER LESSON (cost a session morning):** if a rebuilt path file "doesn't appear"
@@ -59,11 +59,11 @@ in the filename.
 
 **Document map (two files, one job each — do not duplicate):** THIS handoff owns *current
 status* — what changed, what's deployed, how things work, what's closed, what's next; it
-is dated and rewritten each session. **`BACKLOG.md`** owns *durable detail* — open bugs'
+is dated and rewritten each session. **`TODO.md`** owns *durable detail* — open bugs'
 candidate fixes, UX-question deliberations, the feature idea-pool, perf/data notes, and
 the refactor ledger; it accretes and is pruned, never restates status. When this handoff
-says "candidates in BACKLOG.md," the detail is there. When an item is fixed, it is deleted
-from BACKLOG.md (the handoff records the closure) — no "DONE" tombstones in the backlog.
+says "candidates in TODO.md," the detail is there. When an item is fixed, it is deleted
+from TODO.md (the handoff records the closure) — no "DONE" tombstones in the TODO.
 
 ---
 
@@ -93,7 +93,7 @@ call, the `'bisector'` output field, and its rounding entry. The renderer never 
 | Bisector     | (removed)            | redundant w/ green                       |
 Penumbra detail: our edge sits ~7–10 km INSIDE Jubier's, asymmetric N/S — a boundary-
 definition (threshold) difference on a genuinely fuzzy edge, NOT random error. User is
-satisfied with "close." Detail in BACKLOG.
+satisfied with "close." Detail in TODO.
 
 ### Grazing-tip zigzag — root-caused AND fix proven (splitter remaining)
 The umbral limits use an envelope-of-moving-shadow method + a straight-chord extension to
@@ -108,7 +108,7 @@ turn ~150–177°` at an end). Affects ~half of eclipses.
 - **The one blocker:** splitting the traced closed contour loop into the two named N/S limit
   polylines. Simple-geometry eclipses (2033) split perfectly (worst-turn 2°); corridor-
   shaped ones do not yet. Four splitter approaches tried and rejected — full ledger +
-  next-approach (maximum-curvature tip detection) in BACKLOG "Umbral grazing-tip zigzag".
+  next-approach (maximum-curvature tip detection) in TODO "Umbral grazing-tip zigzag".
 - WIP integration saved (sandbox); NOT shipped. v9 envelope remains the shipped umbra.
 
 ### REVERTED: a latitude-relabelling "fix" that broke clean eclipses
@@ -158,7 +158,7 @@ not git. So: added `.gitignore` (`data/paths/`, `.DS_Store`, `*.pyc`, `__pycache
 does NOT shrink existing history (that needs a destructive `git filter-repo --path
 data/paths --invert-paths` + force-push — deferred unless the ~274 MB actually hurts).
 
-### Corridor sampling-artifact bug — characterized, NOT fixed (detail in BACKLOG)
+### Corridor sampling-artifact bug — characterized, NOT fixed (detail in TODO)
 The umbra corridor (`umbra_n`/`umbra_s`) is built by bisecting **perpendicular to the
 centreline** at each time step. This is **accurate** — every corridor vertex evaluates to
 magnitude = 1.0000 (verified via `_max_magnitude`). But perpendicular-from-centreline
@@ -176,9 +176,9 @@ tested on real data, all rejected (contour-walk → pole spikes; perpendicular l
 refinement → wrong-axis spikes; sparse-oval polygon union → junction notches; dense-oval
 union → polar lon/lat degeneracy). A global bearing-dt change is **whack-a-mole** (dt=0.001
 fixed 2611 but regressed 1001-03-27). The genuine fix is a spherical-geometry **envelope
-trace** (large, deferred). A **safe partial** is spec'd in BACKLOG (guarded local kink
+trace** (large, deferred). A **safe partial** is spec'd in TODO (guarded local kink
 re-solve, monotone-safe post-pass). Verdict: the dataset is accurate; this is polish. See
-BACKLOG "Corridor sampling artifacts" for the full ledger and the candidate fix.
+TODO "Corridor sampling artifacts" for the full ledger and the candidate fix.
 
 ---
 
@@ -232,7 +232,7 @@ file splitting, and most bug-fix follow-ups in the (now untangled) code.
 ShadowChaser/
 ├── index.html          (HTML only; CSS external; holds BUILD constant)
 ├── .gitignore          (data/paths/, .DS_Store, *.pyc, __pycache__/ — added 2026-06-07)
-├── BACKLOG.md          (durable detail — bugs' candidate fixes, UX questions, features)
+├── TODO.md          (durable detail — bugs' candidate fixes, UX questions, features)
 ├── HANDOFF.md          (this file)
 ├── HANDOFF-2026_05_18b.md, HANDOFF-2026_05_19.md  (STALE — archive/delete)
 ├── vendor/             (all third-party libs — added 2026-05-31)
@@ -425,7 +425,7 @@ so the listener can do a targeted swap without a full rebuild.
   attributes and only re-run on an explicit `setProps`/`updateTrigger`. A pure
   `getFillColor: () => alpha(zoom)` computes once and freezes. Any zoom-reactive styling
   MUST be driven by a zoom listener calling setProps. (deck.gl 9.3.3.)
-- **Open choice (BACKLOG → "REVISIT AFTER LIVING WITH IT"):** blink vs gradual fade. Fade
+- **Open choice (TODO → "REVISIT AFTER LIVING WITH IT"):** blink vs gradual fade. Fade
   is the same machinery with more setProps calls through a band; purely a feel preference.
   User is living with the blink first. Threshold is a one-number change.
 
@@ -617,14 +617,14 @@ the values above.
   the cone–spheroid intersection contour (field h = max_t(|L2−ζ·tan_f2|−m)=0) — sub-km vs
   Jubier AND reaches the tips. ONE blocker: splitting the traced closed loop into clean N/S
   limit polylines on corridor eclipses (simple ones like 2033 already split clean). Full
-  ledger + next idea in BACKLOG "Umbral grazing-tip zigzag". SUPERSEDES the old "Corridor
+  ledger + next idea in TODO "Umbral grazing-tip zigzag". SUPERSEDES the old "Corridor
   sampling artifacts" entry (same phenomenon, now root-caused with a validated fix).
 - **Ancient/BCE centuries not yet rebuilt** — still show pre-improvement data; rebuild +
   BUILD bump clears them.
 - **#R3 Polar eclipse corridor "onion-ring" (deck.gl).** 1950-09-12 corridor + ovals
   render as polar onion rings. deck.gl SolidPolygonLayer mis-triangulates polar polygons
   even with clean unwrapped data. Current workaround: corridor fill DISABLED (path lines
-  only); ovals still filled. 4 candidate approaches in BACKLOG.md. NOT trivial. (Related:
+  only); ovals still filled. 4 candidate approaches in TODO.md. NOT trivial. (Related:
   the same triangulator issue blocks moving markers into WebGL — see far-side note.)
   User has chosen to leave this as-is for now.
 - **#R4 Offline mode broken on mobile basemap.** Confirmed; needs investigation.
@@ -646,7 +646,7 @@ the values above.
 - **#F4 Topographic shadow overlay** — terrain shadows at the observer location.
 - **#F5 Global-vs-local eclipse-type search semantics** — "1960+ total St. Louis": total
   globally + visible vs total AS SEEN from STL (1979 total globally, partial from STL).
-  4 options in BACKLOG.md.
+  4 options in TODO.md.
 
 ### Polish queued (Sonnet-grade)
 - **#R1 (reclassified from real-bug → polish) City labels fade through the globe on
@@ -727,7 +727,7 @@ the values above.
 
 ---
 
-## OPEN STYLE/UX QUESTIONS (in BACKLOG.md "OPEN UX QUESTIONS")
+## OPEN STYLE/UX QUESTIONS (in TODO.md "OPEN UX QUESTIONS")
 
 1. Map brightness — slider was removed; revisit only if needed.
 2. Global Circumstances panel density (tall).
@@ -757,7 +757,7 @@ BUILD; `activate` deletes the old cache).
 git rm vendor/maplibre-gl-5.5.0.js            # the dead hand-rolled file
 git add index.html sw.js manifest.webmanifest js/map.js \
         vendor/maplibre-gl-csp-5.5.0.js vendor/maplibre-gl-csp-worker-5.5.0.js \
-        icons/icon-192.png icons/icon-512.png HANDOFF.md BACKLOG.md
+        icons/icon-192.png icons/icon-512.png HANDOFF.md TODO.md
 git commit -m "Service worker + PWA: offline shell, globe & 1900–2100 eclipse data; CSP MapLibre build; isOffline probe fix; network-first nav"
 git push
 ```

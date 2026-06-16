@@ -1,38 +1,36 @@
-# ShadowChaser — Backlog (durable pool)
+# ShadowChaser — TODO (the single task list)
 
 ## What this file is — and how it relates to the handoff
 **Two documents, one job each. They must not duplicate.**
-- **`HANDOFF_<date>.md`** owns *current status*: what changed this session, what is
-  deployed, how things work now, what's closed, what's next. It is rewritten/dated each
-  session. It is the source of truth for whether something is done.
-- **`BACKLOG.md`** (this file) owns *durable detail*: bugs not yet fixed, open UX
-  questions and their deliberations, the feature idea-pool, performance/data notes, and
-  the refactor ledger. It accretes slowly and is pruned, not rewritten.
+- **`HANDOFF.md`** owns *knowledge & current status*: what changed this session, what is
+  deployed, how things work now, the hard-won derivations and lessons, what's closed. It is
+  the source of truth for whether something is done and for HOW things work.
+- **`TODO.md`** (this file) owns *everything still to do*, with its detail inline: open bugs
+  and their candidate fixes, UX questions and deliberations, the feature pool, perf/data
+  notes, the refactor ledger — ordered by priority. It accretes and is pruned, not rewritten.
 
-**Rules to keep them from drifting (this is what went wrong before):**
-1. When an item here is fixed, **delete it from here** — the handoff records the closure.
-   Do not leave "DONE" tombstones in the backlog.
-2. Do **not** restate status here. If the handoff says #R3 is open, this file only holds
-   the *candidate fixes / detail* for #R3, not its status.
-3. The handoff references this file by item ("4 candidate approaches in BACKLOG.md");
-   that detail lives here so the handoff stays scannable.
+**Rules to keep them from drifting:**
+1. When an item here is done, **delete it** — HANDOFF records the closure. No "DONE" tombstones.
+2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
+3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-06-16 — replaced "Corridor sampling artifacts" with the root-caused
-"Umbral grazing-tip zigzag" entry (envelope+chord root cause; proven cone–spheroid contour
-fix; the N/S-split blocker + rejected approaches + next idea; audit-triggered interim).
-Added "Penumbra threshold offset" detail. Added the "Path unification" vision under
-FEATURES — HARD. The bisector was removed this session (no backlog entry needed; closure in
-handoff).
-
-Last pruned: 2026-06-02 (later session — removed completed infra: MapLibre vendoring and
-the PWA/service-worker keystone, both now done; updated #R4 offline story and the scan
-note to reflect the SW; added the pro full-offline-download feature idea and the
-connectivity-module refactor trigger). Earlier same-day prune removed everything closed
-through that session — V-angle, offline antimeridian/seam/marker/elevation fixes,
-contact-icon set, city search, list defaults, June 1954 icon, mobile initial-zoom,
-brightness slider, About mailto/Android, and the implemented "decided behavioral changes".
+Last touched: 2026-06-16 — merged the former BACKLOG into this single TODO (two-file system
+now: HANDOFF + TODO). Root-caused the umbral grazing-tip zigzag (proven cone–spheroid fix;
+splitter is the one blocker); removed the bisector; validated all path types vs Jubier;
+added the path-unification vision and the mobile/Safari-geo/search-box items.
 
 ---
+
+## PRIORITY ORDER (suggested re-entry)
+1. Bank state: commit/push the 2026-06-16 update; rebuild ANCIENT/BCE path centuries.
+2. Umbral grazing-tip zigzag — finish the N/S splitter (the one real path blocker), OR ship
+   the audit-triggered interim. (§Paths)
+3. Trivial cleanups: generator version stamp; map.js bisector comment.
+4. Path unification, phased (§Path unification).
+5. Mobile UX/layout pass (§Mobile). 6. Remaining bugs. 7. UX decisions. 8. Features.
+
+---
+
 
 ## BUGS — open (detail; status in handoff)
 
@@ -120,6 +118,14 @@ brightness slider, About mailto/Android, and the implemented "decided behavioral
   `#status-msg`, which lives in the Search tab → no visible feedback when on the Map tab.
   No code fix attempted; needs map-context feedback.
 
+- **Safari geolocation fails; installed PWA works.** Locate-pin works in the installed app
+  but not in Safari. Check secure-context / permissions / Brave default block vs the code
+  path. Related to the locate-pin note above.
+
+- **Suggested/empty search text doesn't expand the search box.** When placeholder/suggested
+  text is present the textarea doesn't grow to fit. Small CSS/JS edge case (autogrow is
+  `field-sizing: content`; this case doesn't trigger it).
+
 - **Slow first load from local-disk server** — minutes vs seconds. Profile what's
   blocking; likely a chunk-fetch pattern.
 
@@ -172,6 +178,13 @@ brightness slider, About mailto/Android, and the implemented "decided behavioral
 ---
 
 ## FEATURES — EASY
+- **Mobile UX / layout pass (interdependent — one sitting).** (a) Banner + tabs permanent,
+  immobile, unscalable on mobile/PWA (pairs with #R5 pinch-zoom — don't scroll away or
+  zoom); (b) move tabs to screen BOTTOM on mobile/PWA for thumb reach; (c) single-line
+  date/duration bar pinned at the bottom on mobile (overlaps "date label hard to see" +
+  the map-click microsheet); (d) map-tab mobile-vs-desktop disambiguation — desktop: map is
+  ever-present, the tab is a placeholder for future features; mobile: the tab IS the map →
+  different look/behaviour.
 - **Banner wastes too much vertical space on mobile** — screen space is precious on a phone;
   the banner is too tall. Tighten it for mobile (and distinguish web mode vs app/PWA mode —
   currently large in both). Reclaim the space for the map.
