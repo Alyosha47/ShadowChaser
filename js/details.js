@@ -223,7 +223,7 @@ function buildSunTrack(rec, lat, lon, altM, res) {
   for (var i = 0; i <= N; i++) {
     var t = ta + (tb - ta) * i / N;
     var s = sampleEclipseAt(rec, lat, lon, altM, ((t % 24) + 24) % 24);
-    pts.push({ t: t, az: s.az, alt: s.alt, mag: s.mag, v: s.v });
+    pts.push({ t: t, az: s.az, alt: s.alt, mag: s.mag, sep: s.sep, v: s.v });
   }
 
   /* Plot extents (pad a little). */
@@ -346,14 +346,15 @@ function buildSunTrack(rec, lat, lon, altM, res) {
        zenith = up); offset the moon-disc centre by the uncovered fraction so
        the visible crescent matches the magnitude. */
     var sun = '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + r + '" class="st-sun"/>';
-    var moon = '';
-    if (p.mag > 0.001) {
-      var off = (1 - Math.min(1, p.mag)) * 2 * r;   /* mag 1 → centred, 0 → clear */
-      var ang = p.v * Math.PI / 180;                 /* clockwise from up */
-      var mx = cx + off * Math.sin(ang);
-      var my = cy - off * Math.cos(ang);
-      moon = '<circle cx="' + mx.toFixed(1) + '" cy="' + my.toFixed(1) + '" r="' + r + '" class="st-moon"/>';
-    }
+    /* Moon is always present; its centre sits `sep` sun-radii from the Sun in
+       direction V (clockwise from up). sep 0 = concentric (totality), sep 2 =
+       discs just touching (C1/C4), sep > 2 = clear of the Sun. So it slides in
+       before C1 and out after C4 instead of blinking on/off. */
+    var ang = p.v * Math.PI / 180;
+    var off = p.sep * r;
+    var mx = cx + off * Math.sin(ang);
+    var my = cy - off * Math.cos(ang);
+    var moon = '<circle cx="' + mx.toFixed(1) + '" cy="' + my.toFixed(1) + '" r="' + r + '" class="st-moon"/>';
     marker.innerHTML = sun + moon;
     var azDisp = ((p.az % 360) + 360) % 360;
     readout.textContent = fmtHM(p.t)

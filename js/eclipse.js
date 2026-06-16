@@ -106,6 +106,7 @@
     root.fundamentalArgs  = api.fundamentalArgs;
     root.sunAltAz         = api.sunAltAz;
     root.findMaximum      = api.findMaximum;
+    root.sampleEclipseAt  = api.sampleEclipseAt;
   }
 }(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
@@ -429,13 +430,52 @@
   }
 
 
+  /* Sample observer circumstances at an arbitrary UT (decimal hours), for the
+     interactive sun-track diagram. Returns unrounded alt/az (deg), eclipse
+     magnitude (fraction of solar diameter covered; <=0 when uneclipsed),
+     limb-angle V (deg clockwise from zenith) for the moon-bite orientation,
+     and the local phase. Mirrors computeEclipse's physics at a single time. */
+  function sampleEclipseAt(rec, lat, lon, altM, t_ut) {
+    var dT_s = rec.dt;
+    var lonWest = -lon;
+    var t = t_ut - rec.t0 + dT_s / 3600;          /* UT → TDT offset from t0 */
+    var o = fundamentalArgs(rec, t, lat, lonWest, altM, dT_s);
+    /* unrounded alt/az */
+    var phi = lat * DEG, H = o.H * DEG, dec = o.d * DEG;
+    var sinA = Math.sin(phi)*Math.sin(dec) + Math.cos(phi)*Math.cos(dec)*Math.cos(H);
+    var alt = Math.asin(Math.max(-1, Math.min(1, sinA))) / DEG;
+    var cosZ = (Math.sin(dec) - sinA*Math.sin(phi))
+             / (Math.cos(alt*DEG) * Math.cos(phi) + 1e-14);
+    var az = Math.acos(Math.max(-1, Math.min(1, cosZ))) / DEG;
+    if (Math.sin(H) > 0) az = 360 - az;
+    /* magnitude (fraction of solar diameter); signed L2p */
+    var m = Math.sqrt(o.u*o.u + o.v*o.v);
+    var L1p = o.L1p, L2p = o.L2p;
+    var mag = (L1p - m) / (L1p + L2p);            /* >0 only when m < L1p */
+    if (mag < 0) mag = 0;
+    var rSun = (L1p + L2p) / 2;                    /* sun radius, fundamental units */
+    var sep  = rSun > 1e-9 ? m / rSun : 99;        /* centre separation in SUN RADII */
+    var phase = (m >= Math.abs(L1p)) ? 'none'
+              : (m >= Math.abs(L2p)) ? 'partial'
+              : (L2p < 0)            ? 'total' : 'annular';
+    /* limb angle V (clockwise from zenith) */
+    var P = Math.atan2(o.u, o.v);
+    var q = Math.atan2(Math.sin(H),
+                       Math.cos(phi)*Math.tan(dec) - Math.sin(phi)*Math.cos(H));
+    var V = 180 - (P + q) / DEG;
+    V = ((V % 360) + 360) % 360;
+    return { alt: alt, az: az, mag: mag, sep: sep, v: V, phase: phase };
+  }
+
+
   /* ── Exports ─────────────────────────────────────────────────────────── */
 
   return {
     computeEclipse:  computeEclipse,
     fundamentalArgs: fundamentalArgs,
     sunAltAz:        sunAltAz,
-    findMaximum:     findMaximum
+    findMaximum:     findMaximum,
+    sampleEclipseAt: sampleEclipseAt
   };
 
 }));
