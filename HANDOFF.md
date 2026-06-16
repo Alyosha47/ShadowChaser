@@ -1,23 +1,39 @@
-# ShadowChaser — Session Handoff — 2026-06-07 (standalone, authoritative)
+# ShadowChaser — Session Handoff — 2026-06-16 (standalone, authoritative)
 
 > ## ▶ START HERE (next session)
-> **State:** offline foundation complete (SW/PWA verified on a real iPhone). Since then:
-> the **path generator is corrected and adopted** (closes the truncated-N-limit bug and the
-> below-horizon-oval bug — see §SESSION 2026-06-07), the repo is **de-bloated** (generated
-> paths no longer git-tracked), and mobile fixes shipped (search-list scroll anchoring,
-> geolocation feedback on map, minimal banner). The frontier is still **feature scoping** —
-> #F2 cloud-cover is the killer feature (~2 sessions of design first, USER's call).
-> **One open DATA item, classified as polish not correctness:** the umbra corridor under-
-> samples the totality boundary at awkward geometry (elongated-end tip protrusion ~25 km on
-> 2026-08-12; persistent ~60° kinks e.g. 2611-09-28, 1001-03-27). **Every corridor vertex is
-> a true magnitude-1 point — the data is accurate; the artifacts are sampling, not error.**
-> Four fix strategies were tested and rejected (detail + the safe candidate in BACKLOG under
-> "Corridor sampling artifacts"). Do NOT touch the shared corridor walk for a partial fix —
-> global tweaks are whack-a-mole (a dt change fixed 2611 and broke 1001).
+> **State:** offline foundation complete (SW/PWA verified on iPhone). The **path generator
+> has been substantially advanced** this arc (see §SESSION 2026-06-16): the green
+> (Maximum-on-Horizon) line is now an implicit-contour trace validated **sub-km vs Jubier**;
+> the redundant **bisector is removed** (the green line supersedes it); all path types were
+> **validated against Jubier** (umbra sub-km, green sub-km, terminator 3–5 km, penumbra ~9 km).
+> The generator file is `data build tools/gen_eclipse_paths.py` (canonical; the working name
+> "gen_grail" is the same file — do NOT keep separate copies).
+> **The ONE remaining real path flaw is the grazing-tip zigzag** on umbral limits (gap +
+> ~170° fold at the ends of grazing eclipses). Root cause is PROVEN: the envelope method
+> stops where the shadow axis leaves Earth's disk, and the straight-chord extension across
+> the remaining real-totality stretch is the zigzag. The **fix is also proven** — trace the
+> umbral limit as the cone–spheroid intersection contour (field h = max_t(|L2'|−m)=0), which
+> is sub-km vs Jubier and reaches the tips. The ONLY blocker is a polyline-topology
+> sub-problem: splitting the traced closed loop into clean N/S limit polylines on
+> corridor-shaped eclipses (simple cases like 2033 already split perfectly). See §SESSION
+> 2026-06-16 and BACKLOG "Umbral grazing-tip zigzag".
+> **Modern centuries render clean** after a rebuild + BUILD bump; **ancient/BCE centuries are
+> NOT yet rebuilt** (still show old data — a quick rebuild clears them).
+> **CACHE-BUSTER LESSON (cost a session morning):** if a rebuilt path file "doesn't appear"
+> in the app, it is almost always that `BUILD` in index.html wasn't bumped — the browser
+> serves the stale cached `.gz`. **BUILD must be bumped on every path rebuild.** Going
+> forward the build assistant bumps it automatically; ideally wire it into the build script.
 > **Before writing code:** skim §CRITICAL USER PREFERENCES and §RECURRING ANTI-PATTERNS —
-> they are the difference between a good session and a frustrating one.
+> they are the difference between a good session and a frustrating one. NOTE the hardest-won
+> lesson of this arc: a "principled" latitude-relabelling change was shipped without full
+> validation and badly broke clean eclipses (2017/2026/2002 → 150–170° folds). It was
+> reverted. **Never ship an umbral-limit change without the full multi-eclipse worst-turn
+> check.**
 
-**Last updated:** 2026-06-07 (Opus 4.8) — adopted the corrected path generator (`data build
+**Last updated:** 2026-06-16 (Opus 4.8) — see §SESSION 2026-06-16: green line now a
+sub-km implicit-contour trace; bisector removed; all path types validated vs Jubier;
+cone–spheroid umbral-limit fix proven (splitter remaining); BUILD cache-buster lesson
+captured. Prior 2026-06-07 (Opus 4.8) — adopted the corrected path generator (`data build
 tools/gen_eclipse_paths.py`: umbra `search_m` now scales with path width, fixing the
 truncated north umbral limit at high gamma; oval bisect stops at the terminator, fixing
 below-horizon oval points); de-bloated the repo (stopped git-tracking `data/paths`, added
@@ -33,12 +49,13 @@ far-side markers, oval blink-off, vendoring.
 **This document is complete and self-contained.** It supersedes all prior `HANDOFF*.md`
 files (the dated ones in repo root — `HANDOFF-2026_05_18b.md`, `HANDOFF-2026_05_19.md` —
 are stale and can be archived/deleted).
-**BUILD cache-buster:** lives in `index.html` as `var BUILD = '...'` (last labeled commit:
-`2026-06-02i` — verify the live value in index.html before deploying) and is appended as
+**BUILD cache-buster:** lives in `index.html` as `var BUILD = '...'` AND the
+`<meta name="build">` tag (currently `2026-06-16a`) and is appended as
 `?v=BUILD` to every `js/*` and `data/*` fetch. **Bump it
-on every deploy** (convention: `YYYY-MM-DD` + letter). If a fix "doesn't appear," 90% of
-the time BUILD wasn't bumped or the browser wasn't hard-refreshed. NB vendored libs in
-`vendor/` deliberately carry NO `?v=` — their version is in the filename.
+on every deploy AND every path rebuild** (convention: `YYYY-MM-DD` + letter). If a fix or a
+rebuilt path "doesn't appear," 90% of the time BUILD wasn't bumped or the browser wasn't
+hard-refreshed. NB vendored libs in `vendor/` deliberately carry NO `?v=` — their version is
+in the filename.
 
 **Document map (two files, one job each — do not duplicate):** THIS handoff owns *current
 status* — what changed, what's deployed, how things work, what's closed, what's next; it
@@ -47,6 +64,72 @@ candidate fixes, UX-question deliberations, the feature idea-pool, perf/data not
 the refactor ledger; it accretes and is pruned, never restates status. When this handoff
 says "candidates in BACKLOG.md," the detail is there. When an item is fixed, it is deleted
 from BACKLOG.md (the handoff records the closure) — no "DONE" tombstones in the backlog.
+
+---
+
+## SESSION 2026-06-16 (what changed) — PATH GENERATOR ADVANCES
+
+### Green line (Maximum-on-Horizon) — now a sub-km implicit-contour trace
+The green curve is traced as the zero level set of {sun altitude at greatest eclipse = 0}
+via a predictor–corrector (seed on sign change, step along the tangent, Newton-correct onto
+the contour). Validated **sub-km vs Jubier's "Maximum on Horizon" curves** (2017 0.8 km,
+2024 1.8 km median). This is the first path built on the general implicit-field engine that
+the whole path family is intended to migrate onto (see §UNIFICATION VISION).
+
+### Bisector removed (redundant)
+Our old `_bisector_curves` was meant to be the Max-on-Horizon curve but measured 33–43 km
+off Jubier. The green line does the same curve at sub-km, so the bisector was dead weight.
+**Removed** from the generator: `_bisector_from_lemniscate`, `_bisector_curves`, the build
+call, the `'bisector'` output field, and its rounding entry. The renderer never drew it
+(only a stale comment at map.js ~L796 — flagged for cleanup, harmless).
+
+### All path types validated vs Jubier (Phase-0 validation pass)
+| Curve        | vs Jubier            | Verdict                                  |
+|--------------|----------------------|------------------------------------------|
+| Umbra limits | sub-km               | good EXCEPT grazing-tip zigzag (below)   |
+| Green line   | sub-km (0.4–1.8 km)  | good                                     |
+| Terminator   | 3–5 km (Sun Rise/Set)| good                                     |
+| Penumbra     | ~9 km                | close; user accepts (naturally fuzzy)    |
+| Bisector     | (removed)            | redundant w/ green                       |
+Penumbra detail: our edge sits ~7–10 km INSIDE Jubier's, asymmetric N/S — a boundary-
+definition (threshold) difference on a genuinely fuzzy edge, NOT random error. User is
+satisfied with "close." Detail in BACKLOG.
+
+### Grazing-tip zigzag — root-caused AND fix proven (splitter remaining)
+The umbral limits use an envelope-of-moving-shadow method + a straight-chord extension to
+the green terminus. On grazing eclipses the envelope stops where the shadow axis leaves
+Earth's disk (|C|→1); totality continues to the terminator, and the chord bridging that
+real-totality stretch is the visible zigzag (signature in audits: `gap NNN km` + `interior
+turn ~150–177°` at an end). Affects ~half of eclipses.
+- **Proven fix:** trace the umbral limit as the cone–spheroid intersection contour — the
+  zero level set of the ever-total depth field h(lat,lon) = max_t(|L2 − ζ·tan_f2| − m),
+  same engine as the green line. Validated **sub-km vs Jubier** (2017 N 0.28 / S 0.15) AND
+  reaches the grazing tips (1144 BCE: max gap 25 km = tracer step, vs the old 950 km chord).
+- **The one blocker:** splitting the traced closed contour loop into the two named N/S limit
+  polylines. Simple-geometry eclipses (2033) split perfectly (worst-turn 2°); corridor-
+  shaped ones do not yet. Four splitter approaches tried and rejected — full ledger +
+  next-approach (maximum-curvature tip detection) in BACKLOG "Umbral grazing-tip zigzag".
+- WIP integration saved (sandbox); NOT shipped. v9 envelope remains the shipped umbra.
+
+### REVERTED: a latitude-relabelling "fix" that broke clean eclipses
+A change to `umbral_pts` relabelling N/S by geographic latitude (instead of the fixed side
+index) was shipped without full validation and caused 150–170° folds on 2017, 2026, 2002.
+**Reverted.** Lesson re-learned the hard way: never ship an umbral-limit change without the
+full multi-eclipse worst-turn check. The shipped generator = the validated v9 lineage.
+
+### BUILD cache-buster — the "1957 missing path" saga
+Reported: 1957-04-30 (annular grazer) showed no umbral path. Traced end-to-end: the data
+was CORRECT (a valid single-sided antumbral path; grazers legitimately have only one limit),
+the generator was correct, the file was correct — the app served a STALE cached `.gz`
+because `BUILD` had not been bumped after the rebuild. Bumping BUILD fixed it. This is now a
+standing rule (see BUILD note above) and the build assistant bumps BUILD automatically.
+
+### Confirmed-correct (not bugs)
+- One-limit grazers (1957 April annular N-only, October total other-side-only) — correct.
+- Terminator "blob twist" near poles (2006, 2023, 2041) — the sunrise/sunset lemniscate is a
+  closed teardrop that self-closes; correct geometry, matches Jubier/Espenak.
+
+---
 
 ---
 
@@ -525,14 +608,19 @@ the values above.
   `.gitignore` added. See §SESSION 2026-06-07.
 
 ### Real bugs still open
-- The desktop real-bug tier is **clear.** #R1 (below) was reclassified to polish.
-- **Corridor sampling artifacts (generator; classified POLISH, not correctness).** The
-  umbra corridor under-samples the totality boundary at awkward geometry: elongated-end tip
-  protrusion (~25 km, 2026-08-12) and persistent kinks (2611-09-28, 1001-03-27). Every
-  corridor vertex is a true magnitude-1 point — accurate data, sampling artifact only. Four
-  fix strategies tested & rejected; genuine fix is an envelope trace (deferred); safe
-  partial (guarded local kink re-solve) spec'd in BACKLOG "Corridor sampling artifacts". Do
-  NOT apply a global bearing-dt change — whack-a-mole (fixes 2611, breaks 1001).
+- The desktop real-bug tier is **clear** of correctness defects. The remaining path flaw is
+  the grazing-tip zigzag, which has a PROVEN fix pending one polyline sub-problem.
+- **Umbral grazing-tip zigzag (generator).** On grazing eclipses the umbral N/S limit shows
+  a gap (300–1200 km) + ~150–177° fold at one/both ends. Root cause PROVEN: the envelope
+  method stops where the shadow axis leaves Earth's disk; the straight-chord extension across
+  the remaining real-totality stretch is the zigzag. Fix PROVEN: trace the umbral limit as
+  the cone–spheroid intersection contour (field h = max_t(|L2−ζ·tan_f2|−m)=0) — sub-km vs
+  Jubier AND reaches the tips. ONE blocker: splitting the traced closed loop into clean N/S
+  limit polylines on corridor eclipses (simple ones like 2033 already split clean). Full
+  ledger + next idea in BACKLOG "Umbral grazing-tip zigzag". SUPERSEDES the old "Corridor
+  sampling artifacts" entry (same phenomenon, now root-caused with a validated fix).
+- **Ancient/BCE centuries not yet rebuilt** — still show pre-improvement data; rebuild +
+  BUILD bump clears them.
 - **#R3 Polar eclipse corridor "onion-ring" (deck.gl).** 1950-09-12 corridor + ovals
   render as polar onion rings. deck.gl SolidPolygonLayer mis-triangulates polar polygons
   even with clean unwrapped data. Current workaround: corridor fill DISABLED (path lines

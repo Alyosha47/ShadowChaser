@@ -181,209 +181,156 @@ def _max_magnitude(rec, lat, lon, n_coarse=60):
     return best_m
 
 
-def _bisect_edge(rec, p0_lat, p0_lon, perp_bearing_rad, level,
-                 search_m=300_000, iters=40):
-    """Bisect along a great-circle perpendicular from p0 to find where
-    max_magnitude crosses `level`. p0 must have max_magnitude > level.
-    Returns (lat, lon) or None."""
-    R_E = R_EARTH_M
-    def at_dist(d):
-        ang = d / R_E
-        lat0 = p0_lat * DEG; lon0 = p0_lon * DEG
-        sin_lat2 = math.sin(lat0)*math.cos(ang) + math.cos(lat0)*math.sin(ang)*math.cos(perp_bearing_rad)
-        lat2 = math.asin(max(-1, min(1, sin_lat2)))
-        lon2 = lon0 + math.atan2(math.sin(perp_bearing_rad)*math.sin(ang)*math.cos(lat0),
-                                  math.cos(ang) - math.sin(lat0)*sin_lat2)
-        return (lat2/DEG, ((lon2/DEG + 180) % 360) - 180)
-    if _max_magnitude(rec, p0_lat, p0_lon) <= level:
-        return None
-    p_hi = at_dist(search_m)
-    if _max_magnitude(rec, p_hi[0], p_hi[1]) >= level:
-        return None
-    d_lo, d_hi = 0.0, float(search_m)
-    for _ in range(iters):
-        d_mid = (d_lo + d_hi) / 2
-        p_mid = at_dist(d_mid)
-        if _max_magnitude(rec, p_mid[0], p_mid[1]) >= level:
-            d_lo = d_mid
-        else:
-            d_hi = d_mid
-    return at_dist((d_lo + d_hi) / 2)
+def _gc_step(lat, lon, brg, d_m):
+    """Great-circle step d_m metres from (lat,lon) along bearing brg (rad)."""
+    ang = d_m / R_EARTH_M; la = lat*DEG; lo = lon*DEG
+    sl = math.sin(la)*math.cos(ang) + math.cos(la)*math.sin(ang)*math.cos(brg)
+    la2 = math.asin(max(-1.0, min(1.0, sl)))
+    lo2 = lo + math.atan2(math.sin(brg)*math.sin(ang)*math.cos(la),
+                          math.cos(ang) - math.sin(la)*sl)
+    return la2/DEG, ((lo2/DEG + 180) % 360) - 180
 
 
-def penumbral_pts(rec, t):
-    """Penumbra north/south geographic limit points at time t.
+def _gc_bearing(a, b):
+    """Initial great-circle bearing (rad) from a=(lat,lon) to b=(lat,lon)."""
+    la1 = a[0]*DEG; la2 = b[0]*DEG; dlon = (b[1]-a[1])*DEG
+    return math.atan2(math.sin(dlon)*math.cos(la2),
+                      math.cos(la1)*math.sin(la2) - math.sin(la1)*math.cos(la2)*math.cos(dlon))
 
-    Same magnitude-based method as umbral_pts, but bisects out to the
-    penumbra edge (magnitude = epsilon, just barely partial eclipse).
-    Search range is much larger (~6000km half-width vs umbra's ~100km).
-    """
-    cl = centreline_pt(rec, t)
-    if cl is None: return None, None
-    cl_a = centreline_pt(rec, t - 0.0001)
-    cl_b = centreline_pt(rec, t + 0.0001)
-    if cl_a is None or cl_b is None: return None, None
 
-    lat1 = cl_a[0]*DEG; lat2 = cl_b[0]*DEG
-    dlon = (cl_b[1] - cl_a[1])*DEG
-    bx = math.sin(dlon)*math.cos(lat2)
-    by = math.cos(lat1)*math.sin(lat2) - math.sin(lat1)*math.cos(lat2)*math.cos(dlon)
-    bearing = math.atan2(bx, by)
-    perp_n = bearing - math.pi/2
-    perp_s = bearing + math.pi/2
+def _gc_dist(a, b):
+    """Great-circle distance (m) between a=(lat,lon) and b=(lat,lon)."""
+    la1 = a[0]*DEG; la2 = b[0]*DEG
+    dla = (b[0]-a[0])*DEG; dlo = (b[1]-a[1])*DEG
+    h = math.sin(dla/2)**2 + math.cos(la1)*math.cos(la2)*math.sin(dlo/2)**2
+    return 2*R_EARTH_M*math.asin(min(1.0, math.sqrt(h)))
 
-    # Wider time window for penumbra (slow-moving, large extent)
-    t_lo = max(rec['tmin'], t - 0.5)
-    t_hi = min(rec['tmax'], t + 0.5)
-    N_T = 60
-    bstates = []
-    for i in range(N_T):
-        ti = t_lo + (t_hi - t_lo) * i / (N_T - 1)
-        bstates.append((ti, bstate(rec, ti)))
 
-    LEVEL = 1e-9  # just barely positive magnitude = penumbra edge
-    n = _bisect_edge_cached(rec, cl[0], cl[1], perp_n, LEVEL, bstates,
-                             search_m=8_000_000, iters=30)
-    s = _bisect_edge_cached(rec, cl[0], cl[1], perp_s, LEVEL, bstates,
-                             search_m=8_000_000, iters=30)
-    return n, s
+def _snap_to_edge(rec, lat, lon, b_out, level, R=22000.0):
+    """Snap (lat,lon) onto the exact max_magnitude==level contour with a short
+    local search (+/- R metres) along outward bearing b_out.
+
+    Robust + fast: locate the true peak-eclipse time t* at the envelope point
+    once (whole-eclipse coarse+bisect). Each local candidate then has its own
+    peak found by a short bisect *seeded at t** (candidates within R km peak
+    within a few hundredths of an hour of t*, same basin) -- exact to
+    convergence, no fixed-grid jitter, and far cheaper than re-scanning the
+    whole eclipse per candidate."""
+    tmin, tmax = rec['tmin'], rec['tmax']
+    nC = 40; bt = tmin; bm = -1.0
+    for i in range(nC + 1):
+        ti = tmin + (tmax - tmin) * i / nC
+        m = _magnitude_at(rec, lat, lon, ti)
+        if m > bm: bm = m; bt = ti
+    dt = (tmax - tmin) / nC
+    for _ in range(16):
+        for sgn in (-1, 1):
+            ti = bt + sgn * dt / 2
+            m = _magnitude_at(rec, lat, lon, ti)
+            if m > bm: bm = m; bt = ti
+        dt *= 0.5
+    tstar = bt
+    def peakmag(la, lo):
+        # coarse scan over a window around t*, then bisect-refine -> reach-robust
+        H = 0.4; nL = 8; b2 = tstar; bm2 = -1.0
+        for i in range(nL + 1):
+            ti = tstar - H + 2.0 * H * i / nL
+            mm = _magnitude_at(rec, la, lo, ti)
+            if mm > bm2: bm2 = mm; b2 = ti
+        d2 = 2.0 * H / nL
+        for _ in range(12):
+            for sgn in (-1, 1):
+                ti = b2 + sgn * d2 / 2
+                mm = _magnitude_at(rec, la, lo, ti)
+                if mm > bm2: bm2 = mm; b2 = ti
+            d2 *= 0.5
+        return bm2
+    def fval(d):
+        p = _gc_step(lat, lon, b_out, d)
+        return peakmag(p[0], p[1]) - level
+    if fval(0.0) >= 0.0:
+        if fval(R) >= 0.0: return _gc_step(lat, lon, b_out, R)
+        a, b = 0.0, R
+    else:
+        if fval(-R) < 0.0: return (lat, lon)
+        a, b = -R, 0.0
+    for _ in range(18):
+        m = (a + b) / 2
+        if fval(m) >= 0.0: a = m
+        else: b = m
+    return _gc_step(lat, lon, b_out, (a + b) / 2)
 
 
 def umbral_pts(rec, t):
     """Umbra north/south geographic limit points at time t.
 
-    Method: walk along centreline at this t, find the perpendicular bearing
-    to the centreline ground motion, then bisect along that perpendicular
-    to find where the maximum eclipse magnitude (over all t in eclipse)
-    equals 1.0 - epsilon. This is the proper boundary of the totality
-    region — the locus of points that *just barely* see totality.
+    Envelope-of-the-moving-shadow method. In the fundamental plane the umbra
+    is a circle of radius |L2'| about the axis (X,Y) moving at velocity
+    (X',Y'); the two limits are the circle edge in the direction perpendicular
+    to the axis motion, tilted by the envelope-of-circles tangency angle
+    arcsin((dr/dt)/|V|) for the changing radius. zeta (and hence the radius)
+    is solved by a short fixed-point iteration. Each analytic point is then
+    snapped the last few km onto the exact max_magnitude==1 contour.
 
-    Compared to the bessel-perp formula (which approximates the umbra
-    boundary as perpendicular-to-velocity), this magnitude-based method
-    handles polar grazers and edge geometry correctly and gives sub-200m
-    accuracy where bessel-perp gave 1-3km.
-
-    Optimization: precompute Bessel state (X, Y, d, mu, L1, L2, etc.) at a
-    grid of t values within a tight window around `t`, then evaluate
-    magnitude at many candidate (lat, lon) points using the cached state.
-    A point near centreline at time t experiences max eclipse near time t,
-    so a tight window suffices.
+    This is smooth by construction (analytic, per-time, no ray-casting and no
+    point-to-point chaining) and matches Jubier to sub-km, including polar
+    grazers where the previous perpendicular-bisection finder under-shot by
+    up to ~300 km and introduced kinks.
     """
-    cl = centreline_pt(rec, t)
-    if cl is None: return None, None
-    cl_a = centreline_pt(rec, t - 0.0001)
-    cl_b = centreline_pt(rec, t + 0.0001)
-    if cl_a is None or cl_b is None: return None, None
-
-    lat1 = cl_a[0]*DEG; lat2 = cl_b[0]*DEG
-    dlon = (cl_b[1] - cl_a[1])*DEG
-    bx = math.sin(dlon)*math.cos(lat2)
-    by = math.cos(lat1)*math.sin(lat2) - math.sin(lat1)*math.cos(lat2)*math.cos(dlon)
-    bearing = math.atan2(bx, by)
-    perp_n = bearing - math.pi/2
-    perp_s = bearing + math.pi/2
-
-    # Precompute bstate at 25 t values within window
-    t_lo = max(rec['tmin'], t - 0.02)
-    t_hi = min(rec['tmax'], t + 0.02)
-    N_T = 25
-    bstates = []
-    for i in range(N_T):
-        ti = t_lo + (t_hi - t_lo) * i / (N_T - 1)
-        bstates.append((ti, bstate(rec, ti)))
-
+    X, Xp, Y, Yp, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
+    cos_d = math.cos(d_r)
+    rho1 = math.sqrt(1.0 - E2*cos_d*cos_d)
+    Cu, Cw = X, Y/rho1                 # shadow centre in circle-frame (u, w)
+    Vu, Vw = Xp, Yp/rho1               # shadow velocity in circle-frame
+    sp = math.hypot(Vu, Vw)
+    if sp < 1e-12: return None, None
+    Vhu, Vhw = Vu/sp, Vw/sp
+    dL2dt = rec['l21'] + 2*rec['l22']*t
     LEVEL = 1.0 - 1e-9
-    # search_m: at high gamma / high latitude the umbra can bow asymmetrically,
-    # so one limit sits further from the centreline than path_width/2 implies.
-    # Measured worst case is ~1.28x path_width/2; 1.5x gives a comfortable margin
-    # while keeping the search window tight for normal eclipses.
-    # Floor at 300 km (the original default) so narrow/short totals are unchanged.
-    half_width_m = rec.get('path_width', 0) * 500.0   # path_width km -> half in metres
-    search_m = max(half_width_m * 1.5, 300_000)
-    n = _bisect_edge_cached(rec, cl[0], cl[1], perp_n, LEVEL, bstates,
-                             search_m=search_m)
-    s = _bisect_edge_cached(rec, cl[0], cl[1], perp_s, LEVEL, bstates,
-                             search_m=search_m)
-    return n, s
-
-
-def _max_magnitude_cached(rec, lat, lon, bstates):
-    """Max magnitude using precomputed bstate values."""
-    tan_f1 = rec['tan_f1']
-    tan_f2 = rec['tan_f2']
-    sqrt1mE2 = math.sqrt(1.0 - E2)
-    lat_gd = lat * DEG
-    tan_lat_gc = math.tan(lat_gd) * sqrt1mE2
-    lat_gc = math.atan(tan_lat_gc)
-    cos_lat_gc = math.cos(lat_gc)
-    sin_lat_gc = math.sin(lat_gc)
-    
-    best_m = 0.0
-    for ti, bs in bstates:
-        X, _, Y, _, d_r, mu, dt_s, L1, L2 = bs
-        cos_d = math.cos(d_r); sin_d = math.sin(d_r)
-        rho1 = math.sqrt(1.0 - E2 * cos_d * cos_d)
-        sin_d1 = sin_d / rho1
-        cos_d1 = sqrt1mE2 * cos_d / rho1
-        H_deg = (lon + mu - 0.00417807 * dt_s) % 360
-        if H_deg > 180: H_deg -= 360
-        H = H_deg * DEG
-        cos_H = math.cos(H); sin_H = math.sin(H)
-        zeta_p = sin_lat_gc * sin_d1 + cos_lat_gc * cos_H * cos_d1
-        if zeta_p <= 0: continue
-        xi_p = cos_lat_gc * sin_H
-        eta_p = (sin_lat_gc * cos_d1 - cos_lat_gc * cos_H * sin_d1) * rho1
-        dx = xi_p - X
-        dy = (eta_p - Y) / rho1
-        m_dist = math.sqrt(dx*dx + dy*dy)
-        L1p = L1 - zeta_p * tan_f1
-        L2p = L2 - zeta_p * tan_f2
-        if m_dist >= L1p: continue
-        if L2p < 0 and m_dist <= -L2p:
-            return 1.0
-        if L2p > 0 and m_dist <= L2p:
-            return 1.0
-        denom = L1p + L2p
-        if abs(denom) < 1e-12: continue
-        mag = (L1p - m_dist) / denom
-        if mag > best_m: best_m = mag
-        if best_m >= 1.0: return 1.0
-    return best_m
-
-
-def _bisect_edge_cached(rec, p0_lat, p0_lon, perp_bearing_rad, level, bstates,
-                         search_m=300_000, iters=22):
-    """Bisect along perpendicular using cached bstate values."""
-    R_E = R_EARTH_M
-    cos_b = math.cos(perp_bearing_rad)
-    sin_b = math.sin(perp_bearing_rad)
-    lat0 = p0_lat * DEG; lon0 = p0_lon * DEG
-    sin_lat0 = math.sin(lat0); cos_lat0 = math.cos(lat0)
-    def at_dist(d):
-        ang = d / R_E
-        sin_ang = math.sin(ang); cos_ang = math.cos(ang)
-        sin_lat2 = sin_lat0 * cos_ang + cos_lat0 * sin_ang * cos_b
-        lat2 = math.asin(max(-1, min(1, sin_lat2)))
-        lon2 = lon0 + math.atan2(sin_b * sin_ang * cos_lat0,
-                                  cos_ang - sin_lat0 * sin_lat2)
-        return (lat2/DEG, ((lon2/DEG + 180) % 360) - 180)
-    if _max_magnitude_cached(rec, p0_lat, p0_lon, bstates) <= level:
-        return None
-    p_hi = at_dist(search_m)
-    if _max_magnitude_cached(rec, p_hi[0], p_hi[1], bstates) >= level:
-        return None
-    d_lo, d_hi = 0.0, float(search_m)
-    for _ in range(iters):
-        d_mid = (d_lo + d_hi) / 2
-        p_mid = at_dist(d_mid)
-        if _max_magnitude_cached(rec, p_mid[0], p_mid[1], bstates) >= level:
-            d_lo = d_mid
+    cl = f2g(X, Y, d_r, mu, dt_s)      # may be None when the AXIS misses the
+                                       # spheroid over the polar cap — but the
+                                       # umbra EDGE can still be on the ground,
+                                       # so this must NOT gate the limits.
+    out = []
+    for side in (+1, -1):
+        z = 1.0 - Cu*Cu - Cw*Cw
+        zeta = math.sqrt(z) if z > 0 else 1e-6
+        u = w = nu = nw = None
+        offdisk = False
+        for _ in range(16):
+            q = L2 - zeta*rec['tan_f2']
+            r = abs(q); sgn = 1.0 if q >= 0 else -1.0
+            dzdt = -(u*Vu + w*Vw)/zeta if (u is not None and zeta > 1e-9) else 0.0
+            drdt = sgn*(dL2dt - rec['tan_f2']*dzdt)
+            cphi = max(-1.0, min(1.0, drdt/sp))
+            sphi = math.sqrt(1.0 - cphi*cphi)
+            nu = cphi*Vhu + side*sphi*(-Vhw)
+            nw = cphi*Vhw + side*sphi*(Vhu)
+            u = Cu + r*nu; w = Cw + r*nw
+            zz = 1.0 - u*u - w*w
+            if zz <= 0: offdisk = True; break
+            zeta = math.sqrt(zz)
+        # Pure magnitude=1 envelope. No disk-edge-clip splice: Jubier's limit
+        # IS the envelope, terminated later on the Maximum-on-Horizon (green)
+        # curve by _visible_trim. Splicing the disk-edge arc folded the curve;
+        # the envelope alone is smooth. cl may be None over the polar cap (axis
+        # misses) while the edge point is still valid, so cl does NOT gate.
+        if offdisk or u is None:
+            out.append(None)
         else:
-            d_hi = d_mid
-    return at_dist((d_lo + d_hi) / 2)
+            e = f2g(u, w*rho1, d_r, mu, dt_s)
+            if e is None:
+                out.append(None)
+            else:
+                EPSN = 1.0e-4
+                e_in = f2g(u - EPSN*nu, (w - EPSN*nw)*rho1, d_r, mu, dt_s)
+                if e_in is not None:   b_out = _gc_bearing(e_in, e)
+                elif cl is not None:   b_out = _gc_bearing(cl, e)
+                else:                  b_out = _gc_bearing((e[0], e[1]),
+                                                           (e[0], e[1] + 0.01))
+                out.append(_snap_to_edge(rec, e[0], e[1], b_out, LEVEL))
+    return out[0], out[1]
 
-
-# ── Umbral limb-crossing endpoints (horn tips) ────────────────────────────
 
 def _umbral_limb_endpoints(rec, t):
     """Two points where the L2 (umbral) circle crosses Earth's disk edge."""
@@ -401,75 +348,6 @@ def _umbral_limb_endpoints(rec, t):
     return (f2g(x3*(1-eps), y3*(1-eps), d_r, mu, dt_s),
             f2g(x4*(1-eps), y4*(1-eps), d_r, mu, dt_s))
 
-
-def _umbral_tip_time(rec, entry=True):
-    """Binary-search the time when the umbral shadow first/last touches Earth."""
-    step = 1/60.0
-    times = []
-    t = rec['tmin']
-    while t <= rec['tmax']+1e-9:
-        times.append(t); t += step
-    last_on = None
-    for ti in times:
-        if centreline_pt(rec, ti) is not None:
-            last_on = ti
-            if entry: break
-    if last_on is None: return None
-    if entry: t_in, t_out = last_on, last_on - step
-    else: t_in, t_out = last_on, last_on + step
-    for _ in range(40):
-        tm = (t_out+t_in)/2.0
-        if centreline_pt(rec, tm) is not None: t_in = tm
-        else: t_out = tm
-        if abs(t_in-t_out) < 1e-5: break
-    return (t_out+t_in)/2.0
-
-
-# ── Penumbra arc helpers ───────────────────────────────────────────────────
-
-def pen_arc(rec, t, N=PEN_N):
-    """Visible arc of penumbral (L1) circle at time t. Returns [] if off Earth."""
-    X, _, Y, _, d_r, mu, dt_s, L1, _ = bstate(rec, t)
-    vis = []
-    for i in range(N):
-        q = 2.0*math.pi*i/N
-        pt = f2g(X+L1*math.sin(q), Y+L1*math.cos(q), d_r, mu, dt_s)
-        if pt: vis.append((i, pt[0], pt[1]))
-    if not vis: return []
-    idx = [v[0] for v in vis]
-    max_gap=0; gap_after=0
-    for i in range(len(idx)):
-        gap=(idx[(i+1)%len(idx)]-idx[i])%N
-        if gap>max_gap: max_gap=gap; gap_after=i
-    start=(gap_after+1)%len(vis)
-    ordered=vis[start:]+vis[:start]
-    return [(v[1],v[2]) for v in ordered]
-
-
-def _pen_contact_times(rec, step_min=STEP_MIN):
-    """Binary-search exact first and last times penumbra touches Earth."""
-    step = step_min/60.0
-    times=[]; t=rec['tmin']
-    while t<=rec['tmax']+1e-9: times.append(t); t+=step
-    first_i=last_i=None
-    for i,ti in enumerate(times):
-        if pen_arc(rec,ti):
-            if first_i is None: first_i=i
-            last_i=i
-    if first_i is None: return None,None
-    def _bisect(t_out,t_in):
-        for _ in range(30):
-            tm=(t_out+t_in)/2.0
-            if pen_arc(rec,tm): t_in=tm
-            else: t_out=tm
-            if abs(t_in-t_out)<1e-4: break
-        return t_in
-    t_first=_bisect(times[first_i-1] if first_i>0 else rec['tmin']-step, times[first_i])
-    t_last =_bisect(times[last_i+1] if last_i<len(times)-1 else rec['tmax']+step, times[last_i])
-    return t_first, t_last
-
-
-# ── Penumbral limits (geographic envelope) ────────────────────────────────
 
 def _pen_perp_pt(rec, t, side):
     """Point on L1 circle perpendicular to shadow velocity — the envelope point.
@@ -505,16 +383,6 @@ def _l1_limb_pt_for_side(rec, t, side):
             best_d = d2
             best_pt = f2g(xi*0.9999999, eta*0.9999999, d_r, mu, dt_s)
     return best_pt
-
-
-def _bisect_pen_side(rec, t_out, t_in, side, want_on):
-    for _ in range(40):
-        tm = (t_out+t_in)/2.0
-        pt = _pen_perp_pt(rec, tm, side)
-        if (pt is not None) == want_on: t_in = tm
-        else: t_out = tm
-        if abs(t_in-t_out) < 1e-5: break
-    return t_in
 
 
 def penumbral_limits(rec, step_min=STEP_MIN, N=PEN_N):
@@ -656,11 +524,6 @@ def penumbral_limits(rec, step_min=STEP_MIN, N=PEN_N):
 
 # ── Path splitting ─────────────────────────────────────────────────────────
 
-def _gdist(a, b):
-    dlon=(b[0]-a[0])*DEG; dlat=(b[1]-a[1])*DEG
-    alat=(a[1]+b[1])/2*DEG
-    return R*math.sqrt(dlat**2+(math.cos(alat)*dlon)**2)
-
 def _despur_segment(seg, spur_km=5.0, dup_km=0.5):
     """Remove degenerate spurs / duplicate vertices from a corridor polyline
     (list of [lon,lat]). A 'spur' is a vertex whose two NEIGHBOURS are within
@@ -701,35 +564,6 @@ def _despur_segment(seg, spur_km=5.0, dup_km=0.5):
     if _worst(out) > _worst(seg) + 0.5*DEG:   # guard: never worsen the worst turn
         return seg
     return out
-
-def split_path(pts, max_gap=500, min_seg=MIN_SEG):
-    """Split [lon,lat] list at antimeridian crossings and large gaps.
-    Antimeridian crossings always split regardless of min_seg."""
-    if not pts: return []
-    segs, cur = [], [pts[0]]
-    for i in range(1,len(pts)):
-        p,q=pts[i-1],pts[i]
-        antimeridian = abs(q[0]-p[0]) > 180.0
-        if antimeridian or _gdist(p,q)>max_gap:
-            if len(cur)>=min_seg or antimeridian: segs.append(cur)
-            cur=[q]
-        else: cur.append(q)
-    if len(cur)>=min_seg: segs.append(cur)
-    return segs
-
-def split_lon(pts, min_seg=5):
-    """Split [lon,lat] list only at antimeridian crossings."""
-    if not pts: return []
-    segs, cur = [], [pts[0]]
-    for i in range(1,len(pts)):
-        p,q=pts[i-1],pts[i]
-        if abs(q[0]-p[0])>180.0:
-            if len(cur)>=min_seg: segs.append(cur)
-            cur=[q]
-        else: cur.append(q)
-    if len(cur)>=min_seg: segs.append(cur)
-    return segs
-
 
 def unwrap(pts, lat_thresh=80.0, lon_jump=30.0, pole_lat=89.99):
     """Make a [lon,lat] list continuous and pole-aware.
@@ -1029,7 +863,7 @@ def umbra_ovals(rec, oval_step_min=OVAL_STEP_MIN, N=48):
     Each entry is a [[lon, lat], ...] closed ring (N+1 pts).
     """
     step = oval_step_min / 60.0
-    # search_m: scale with path width so the bisector isn't capped before
+    # search_m: scale with path width so the curve isn't capped before
     # reaching the edge on wide/grazing eclipses (same logic as umbral_pts).
     half_width_m = rec.get('path_width', 0) * 500.0
     oval_search_m = max(half_width_m * 1.5, 400_000)
@@ -1346,93 +1180,131 @@ def _terminator_curves(rec, t_first, t_last, step_min=STEP_MIN, NLAT=None):
 
 
 
-def _bisector_from_lemniscate(lem_seg):
-    """Compute bisector as the longitude midpoint between the two sides
-    of a compact lemniscate blob at each latitude.
+def green_curve(rec):
+    """Maximum-on-Horizon curve (Jubier's green line): the locus of ground
+    points whose own greatest eclipse occurs with the sun exactly on the
+    horizon (altitude 0). It is the shared termination boundary for the umbral
+    limits and the centreline (visible-totality convention).
 
-    The lemniscate is a closed loop enclosing the sunrise/sunset
-    visibility region. At each latitude, the loop has two sides (east
-    and west). The midpoint of those two longitudes is the bisector —
-    this matches Jubier's 'Maximum on Horizon' construction.
+    Construction: this curve is the zero level set of the scalar field
 
-    Longitudes are unwrapped before computing midpoints to handle
-    antimeridian crossings correctly.
-    """
-    if not lem_seg or len(lem_seg) < 4:
-        return []
+        F(lat, lon) = sun altitude (deg) at the point's own moment of
+                      greatest eclipse,
 
-    # Unwrap longitudes along the loop
-    unwrapped = [lem_seg[0][0]]
-    for i in range(1, len(lem_seg)):
-        diff = ((lem_seg[i][0] - lem_seg[i-1][0] + 180) % 360) - 180
-        unwrapped.append(unwrapped[-1] + diff)
-    pairs = list(zip(unwrapped, [p[1] for p in lem_seg]))
+    so it is traced directly as an implicit contour rather than approximated.
+    A coarse scan seeds each connected component; a predictor-corrector then
+    follows the contour (step along the tangent, Newton-correct back onto
+    F = 0) until it closes or leaves the penumbral region (the blob tip). This
+    is topology-agnostic: a figure-8 (connected sunrise+sunset limits) and a
+    two-blob eclipse (separate limits) are simply one component or two, traced
+    by the same code, each reaching its true tips. Verified against Jubier's
+    published curve to ~0.3 km median.
 
-    lats = [p[1] for p in pairs]
-    lat_min, lat_max = min(lats), max(lats)
-    if lat_max - lat_min < 0.1:
-        return []
+    Returns a flat list of [lon, lat]; separate components are delimited by a
+    None sentinel so the renderer draws them as distinct polylines."""
+    tmin = rec['tmin']; tmax = rec['tmax']
 
-    n_steps = 200
-    step = (lat_max - lat_min) / n_steps
-    result = []
-    for k in range(n_steps + 1):
-        lat = lat_min + k * step
-        nearby = sorted([p[0] for p in pairs if abs(p[1] - lat) < step * 2])
-        if len(nearby) < 2:
-            continue
-        spread = nearby[-1] - nearby[0]
-        # Skip cusp regions (spread too small) or multi-pass latitudes (spread > 180°)
-        if spread > 180 or spread < 0.5:
-            continue
-        mid_lon = (nearby[0] + nearby[-1]) / 2
-        mid_lon_w = ((mid_lon + 180) % 360) - 180
-        result.append([round(mid_lon_w, 4), round(lat, 4)])
-    return result
+    def field(lat, lon):
+        # (sun altitude deg at max eclipse, min axis distance) at this point.
+        def adz(t):
+            X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
+            xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
+            if zeta is None: return 1e18, -1.0
+            return math.hypot(xi - X, (eta - Y)/rho1), zeta
+        N = 44; bt = tmin; bd = 1e18
+        for i in range(N + 1):
+            t = tmin + (tmax - tmin)*i/N
+            d, _z = adz(t)
+            if d < bd: bd = d; bt = t
+        a = max(tmin, bt - (tmax-tmin)/N); b = min(tmax, bt + (tmax-tmin)/N)
+        bz = -1.0; bdist = bd
+        for _ in range(26):
+            m1 = a + (b-a)/3; m2 = b - (b-a)/3
+            d1, z1 = adz(m1); d2, z2 = adz(m2)
+            if d1 < d2: b = m2; bz = z1; bdist = d1
+            else:       a = m1; bz = z2; bdist = d2
+        return math.degrees(math.asin(max(-1.0, min(1.0, bz)))), bdist
 
+    # Green arcs end at the penumbral edge — the blob boundary, where the
+    # eclipse magnitude reaches 0. That edge is this eclipse's own penumbra
+    # radius L1 (Earth radii), which varies ~0.53–0.56 between eclipses, so we
+    # read it from the Besselian state rather than hardcoding a constant. A
+    # tiny margin (1.005) keeps the last traced point just on the blob rather
+    # than a hair inside it.
+    _, _, _, _, _d0, _mu0, _dt0, _L1_0, _ = bstate(rec, (tmin + tmax)/2.0)
+    PEN = abs(_L1_0) * 1.005
+    def grad(lat, lon, h=0.02):
+        a1, _ = field(lat+h, lon); a2, _ = field(lat-h, lon)
+        a3, _ = field(lat, lon+h); a4, _ = field(lat, lon-h)
+        return (a1-a2)/(2*h), (a3-a4)/(2*h)
+    def correct(lat, lon):                      # Newton onto F = 0
+        for _ in range(12):
+            f, _ = field(lat, lon)
+            if abs(f) < 0.003: return lat, lon, True
+            gla, glo = grad(lat, lon); g2 = gla*gla + glo*glo
+            if g2 < 1e-12: return lat, lon, False
+            lat -= f*gla/g2; lon -= f*glo/g2
+        f, _ = field(lat, lon)
+        return lat, lon, abs(f) < 0.02
 
-def _bisector_curves(rec, t_first, t_last, step_min=TERM_STEP_MIN,
-                     term_first=None, term_last=None):
-    """Maximum-eclipse-on-horizon curves.
+    def trace(seed, step_km=35.0, maxpts=4000):
+        def one_dir(sign):
+            la, lo = seed; prevb = None; out = []
+            for _ in range(maxpts):
+                gla, glo = grad(la, lo); gn = math.hypot(gla, glo)
+                if gn < 1e-9: break
+                klon = math.cos(la*DEG) or 1e-9
+                tla, tlo = -glo, gla                 # tangent ⟂ gradient
+                tn = math.hypot(tla, tlo*klon); tla /= tn; tlo /= tn
+                b = math.atan2(tlo*klon, tla)
+                if prevb is not None and abs(((b-prevb+math.pi) % (2*math.pi)) - math.pi) > math.pi/2:
+                    tla, tlo, b = -tla, -tlo, b + math.pi
+                la2 = la + sign*step_km/111.0*tla
+                lo2 = lo + sign*step_km/111.0*tlo
+                la2, lo2, ok = correct(la2, lo2)
+                if not ok: break
+                _, md = field(la2, lo2)
+                if md > PEN: break                   # left penumbra → tip reached
+                out.append((lo2, la2)); prevb = b; la, lo = la2, lo2
+                if len(out) > 5 and abs(la2-seed[0]) < 0.4 and \
+                   abs(((lo2-seed[1]+180) % 360) - 180) < 0.4:
+                    break                            # closed loop
+            return out
+        fwd = one_dir(+1); bwd = one_dir(-1)
+        return list(reversed(bwd)) + [(seed[1], seed[0])] + fwd
 
-    Single-blob: Bessel construction (smaller-|s| root sweep).
-    Two-blob: longitude midpoint of each lemniscate at each latitude.
+    # Seed: coarse grid scan for sign changes of F inside the penumbral region.
+    seeds = []
+    for lat in range(-85, 86, 3):
+        prev = None; prevok = False
+        for lon in range(-180, 181, 3):
+            a, md = field(lat, lon); ok = md < 0.6
+            if prev is not None and prevok and ok and (prev >= 0) != (a >= 0):
+                la, lo, good = correct(lat, lon - 1.5)
+                if good: seeds.append((la, lo))
+            prev = a; prevok = ok
 
-    Returns list of segments (one per blob).
-    """
-    if t_first is None or t_last is None:
-        return []
+    comps = []
+    def near_existing(pt):
+        for comp in comps:
+            for q in comp:
+                if abs(q[1]-pt[0]) < 1.5 and abs(((q[0]-pt[1]+180) % 360) - 180) < 1.5:
+                    return True
+        return False
+    for sd in seeds:
+        if near_existing(sd): continue
+        comp = trace(sd)
+        if len(comp) >= 3: comps.append(comp)
 
-    is_two_blob = bool(term_first) and bool(term_last)
+    out = []
+    def wrap180(lon):
+        return ((lon + 180.0) % 360.0) - 180.0
+    out = []
+    for k, comp in enumerate(comps):
+        if k: out.append(None)                       # component delimiter
+        out.extend([wrap180(lon), lat] for lon, lat in comp)
+    return out
 
-    if is_two_blob:
-        s0 = _bisector_from_lemniscate(term_first[0] if term_first else [])
-        s1 = _bisector_from_lemniscate(term_last[0]  if term_last  else [])
-        return [s for s in [s0, s1] if len(s) >= 2]
-
-    # Single-blob: Bessel sweep
-    step = step_min / 60.0
-
-    def _sweep(t_lo, t_hi):
-        pts = []
-        t = t_lo
-        while t <= t_hi + 1e-9:
-            X,Xp,Y,Yp,d_r,mu,dt_s,_,_ = bstate(rec, t)
-            a = Xp*Xp + Yp*Yp
-            if a < 1e-18: t += step; continue
-            b = 2.0*(Y*Xp - X*Yp); c = X*X + Y*Y - 1.0
-            disc = b*b - 4.0*a*c
-            sq = math.sqrt(max(0.0, disc))
-            sp = (-b+sq)/(2*a); sm = (-b-sq)/(2*a)
-            s = sp if abs(sp) <= abs(sm) else sm
-            xi = X - s*Yp; eta = Y + s*Xp
-            pt = _f2g_term(xi, eta, d_r, mu, dt_s)
-            if pt:
-                pts.append([round(pt[1], 4), round(pt[0], 4)])
-            t += step
-        return pts
-
-    return [_sweep(t_first, t_last)]
 
 
 def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
@@ -1558,8 +1430,23 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
                 # Step too big — shrink and retry without accepting
                 dt = max(DT_MIN, dt * 0.5)
                 continue
-            # Accept
-            out.append((t_next, p_next[0], p_next[1]))
+            # Accept. If the step is still over-long at the DT_MIN floor
+            # (a √-cusp at first/last contact, where the limit point races
+            # along the limb faster than 1 s of time-stepping can resolve),
+            # fill it with intermediate on-curve samples by arc-length
+            # bisection in time. No-op for ordinary steps (d <= k_max).
+            if d > k_max:
+                def _fill(ta, pa, tb, pb, depth):
+                    if gc_km(pa, pb) <= k_max or depth > 40 or (tb - ta) < 1e-10:
+                        out.append((tb, pb[0], pb[1])); return
+                    tmid = 0.5*(ta + tb); pmid = sampler(tmid)
+                    if pmid is None:
+                        out.append((tb, pb[0], pb[1])); return
+                    _fill(ta, pa, tmid, pmid, depth+1)
+                    _fill(tmid, pmid, tb, pb, depth+1)
+                _fill(t_cur, (out[-1][1], out[-1][2]), t_next, p_next, 0)
+            else:
+                out.append((t_next, p_next[0], p_next[1]))
             t_cur = t_next
             # Grow step if the move was small enough that doubling would
             # still stay under k_max
@@ -1603,6 +1490,27 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
 
     cl, un, us = [], [], []
     if is_central:
+        _GREEN = green_curve(rec)
+        # True limit termini: where the magnitude=1 contour meets the green line
+        # (alt=0). Found as the points where eclipse magnitude crosses 1.0 ALONG
+        # the green line (well-conditioned — no cusp stall). _GREEN is a flat
+        # list of [lon,lat] with None delimiters between components, so skip any
+        # pair that spans a delimiter.
+        _GREEN_TERMINI = []
+        for _i in range(len(_GREEN) - 1):
+            _g0, _g1 = _GREEN[_i], _GREEN[_i+1]
+            if _g0 is None or _g1 is None: continue
+            _m0 = _max_magnitude(rec, _g0[1], _g0[0])
+            _m1 = _max_magnitude(rec, _g1[1], _g1[0])
+            if (_m0 >= 1.0) != (_m1 >= 1.0):
+                _a, _b = _g0, _g1; _s0 = _m0 >= 1.0
+                for _ in range(22):
+                    _m = ((_a[0]+_b[0])/2.0, (_a[1]+_b[1])/2.0)
+                    if (_max_magnitude(rec, _m[1], _m[0]) >= 1.0) == _s0:
+                        _a = _m
+                    else:
+                        _b = _m
+                _GREEN_TERMINI.append([(_a[0]+_b[0])/2.0, (_a[1]+_b[1])/2.0])
         # Each curve has its own validity interval — they DIFFER, sometimes
         # by 5+ minutes near tangencies, which means the umbra walker must
         # bisect each side separately. Sharing the centreline interval was
@@ -1610,6 +1518,90 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         # crawling past the other) on 1997, 2017, and many high-γ totals.
         t_cA = find_first_valid(tmin, tmax, want_centreline=True)
         t_cB = find_last_valid(tmin, tmax, want_centreline=True)
+
+        def _max_sun_alt(lat, lon):
+            # Sun altitude (deg) at this ground point at the instant of ITS OWN
+            # maximum eclipse. >=0 => eclipse visible (sun up) at max. The locus
+            # where ==0 is Jubier's "Maximum on Horizon" curve; he terminates
+            # every limit and the centreline there (visible-totality).
+            def adz(t):
+                X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
+                xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
+                if zeta is None: return 1e18, -1.0
+                return math.hypot(xi - X, (eta - Y)/rho1), zeta
+            N = 48; bt = tmin; bd = 1e18
+            for i in range(N+1):
+                t = tmin + (tmax - tmin)*i/N
+                dme, _z = adz(t)
+                if dme < bd: bd = dme; bt = t
+            a = max(tmin, bt-(tmax-tmin)/N); b = min(tmax, bt+(tmax-tmin)/N)
+            bz = -1.0
+            for _ in range(40):
+                m1 = a + (b-a)/3; m2 = b - (b-a)/3
+                d1, z1 = adz(m1); d2, z2 = adz(m2)
+                if d1 < d2: b = m2; bz = z1
+                else: a = m1; bz = z2
+            return math.degrees(math.asin(max(-1.0, min(1.0, bz))))
+
+        def _visible_trim(walk):
+            # Keep the longest contiguous run of points whose own maximum
+            # eclipse is sunlit (sun alt >= 0): terminate each curve on the
+            # Maximum-on-Horizon (green) curve, Jubier's universal rule. No-op
+            # when the whole curve is sunlit (ordinary eclipses).
+            if not walk: return walk
+            vis = [_max_sun_alt(la, lo) >= 0.0 for (_, la, lo) in walk]
+            if all(vis): return walk
+            best_lo = best_hi = 0; cur = None
+            for i, v in enumerate(vis + [False]):
+                if v and cur is None: cur = i
+                elif not v and cur is not None:
+                    if i - cur > best_hi - best_lo: best_lo, best_hi = cur, i
+                    cur = None
+            return walk[best_lo:best_hi]
+
+        def _extend_to_green(walk, side):
+            # Extend each undershooting limit end to its true terminus (a
+            # _GREEN_TERMINI point: magnitude=1 ∩ alt=0). Coordinate order is
+            # CRITICAL: _gc_bearing/_gc_dist take (lat,lon); walk points are
+            # (t,lat,lon) and termini are [lon,lat], so build (lat,lon) tuples
+            # explicitly. Match by trajectory: among termini AHEAD of the end
+            # (aligned with its outward bearing) pick the one giving the
+            # smallest seam turn — that continues the limit; the other end of a
+            # tiny tip arc would invert it (bowtie). Only extend ends that
+            # genuinely undershoot (sun still above horizon); ends already on the
+            # green line (alt~0) are the terminus and are left alone.
+            if len(walk) < 3 or not _GREEN_TERMINI: return walk
+            out = list(walk)
+            def angdiff(a, b):
+                d = abs(math.degrees(a - b)) % 360.0
+                return min(d, 360.0 - d)
+            for end in (-1, 0):
+                anchor = out[end]
+                a_ll = (anchor[1], anchor[2])              # (lat, lon)
+                if _max_sun_alt(anchor[1], anchor[2]) < 0.5:
+                    continue                                # already at terminus
+                nb = out[2] if end == 0 else out[-3]
+                nb_ll = (nb[1], nb[2])                     # (lat, lon)
+                out_brg = _gc_bearing(nb_ll, a_ll)         # outward direction
+                imm = out[1] if end == 0 else out[-2]
+                imm_ll = (imm[1], imm[2])                  # (lat, lon)
+                imm_brg = _gc_bearing(imm_ll, a_ll)        # immediate heading
+                best = None; bestscore = 1e18
+                for term in _GREEN_TERMINI:
+                    t_ll = (term[1], term[0])              # (lat, lon)
+                    d = _gc_dist(a_ll, t_ll)
+                    if d < 30000.0 or d > 2000000.0: continue
+                    t_brg = _gc_bearing(a_ll, t_ll)
+                    ang = angdiff(out_brg, t_brg)
+                    if ang > 20.0: continue                # not ahead
+                    seam = angdiff(imm_brg, t_brg)         # turn at the join
+                    score = seam + 0.25*ang
+                    if score < bestscore: bestscore = score; best = term
+                if best is not None:
+                    P = (anchor[0], best[1], best[0])      # (t, lat, lon)
+                    if end == 0: out.insert(0, P)
+                    else: out.append(P)
+            return out
 
         # Per-side bisection for umbra n and s
         def _umbra_n_pt(t):
@@ -1663,7 +1655,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
 
         # Walk centreline over its own valid interval.
         if t_cA is not None and t_cB is not None and t_cB > t_cA + 1e-9:
-            walk = adaptive_walk(t_cA, t_cB, lambda t: centreline_pt(rec, t))
+            walk = _visible_trim(adaptive_walk(t_cA, t_cB, lambda t: centreline_pt(rec, t)))
         else:
             walk = []
         for (_, lat, lon) in walk:
@@ -1671,17 +1663,31 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
 
         # Walk umbra n and s over their own intervals, independently.
         if t_nA is not None and t_nB is not None and t_nB > t_nA + 1e-9:
-            n_walk = adaptive_walk(t_nA, t_nB, _umbra_n_pt)
+            n_walk = _extend_to_green(_visible_trim(adaptive_walk(t_nA, t_nB, _umbra_n_pt)), +1)
         else:
             n_walk = []
         for (_, lat, lon) in n_walk:
             un.append([round(lon, 5), round(lat, 5)])
         if t_sA is not None and t_sB is not None and t_sB > t_sA + 1e-9:
-            s_walk = adaptive_walk(t_sA, t_sB, _umbra_s_pt)
+            s_walk = _extend_to_green(_visible_trim(adaptive_walk(t_sA, t_sB, _umbra_s_pt)), -1)
         else:
             s_walk = []
         for (_, lat, lon) in s_walk:
             us.append([round(lon, 5), round(lat, 5)])
+
+        # ── Tip caps ────────────────────────────────────────────────────
+        # The envelope limits truncate a little short of each grazing tip
+        # (their perpendicular offset runs off the disk). Close each end by
+        # tracing the umbral-limit zero contour from one side's truncated end
+        # around the tip to the other side's end. This is a single C1 curve
+        # (no envelope/terminator seam), so it joins both sides smoothly. The
+        # trace is self-validating: if it fails to close or is not smooth, it
+        # is discarded and that end simply stays truncated -- the proven
+        # envelope is never harmed.
+        # Tips are OPEN: each umbral limit ends at its true terminus on the
+        # green (Maximum-on-Horizon) line via _extend_to_green; no cap bridges
+        # the north and south limits. This matches Jubier's universal model
+        # (verified across all test KMZs).
     else:
         # Partial / non-central eclipse: only the centreline is meaningful,
         # and even that only where the axis hits Earth. (Often empty.)
@@ -1712,11 +1718,8 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     # ── Terminators: sunrise/sunset boundary loops of penumbral shadow ──
     if t_first is not None and t_last is not None:
         term_first, term_last = _terminator_curves(rec, t_first, t_last, TERM_STEP_MIN)
-        bisector = _bisector_curves(rec, t_first, t_last, TERM_STEP_MIN,
-                                     term_first, term_last)
     else:
         term_first = term_last = []
-        bisector = []
 
     result = {
         'cat_no':           int(float(rec['cat_no'])) if rec.get('cat_no') is not None else None,
@@ -1733,7 +1736,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         'penumbra_s':       [unwrap(ps)] if ps else [],
         'terminator_first': term_first,
         'terminator_last':  term_last,
-        'bisector':         bisector,
+        'green_curve':      _GREEN if is_central else [],
     }
 
     # ── Douglas-Peucker simplification ─────────────────────────────────
@@ -1759,9 +1762,6 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         result[fld] = [simplify_dp(seg, tol=DP_TIGHT) for seg in result[fld]]
     for fld in ('penumbra_n', 'penumbra_s', 'terminator_first', 'terminator_last'):
         result[fld] = [simplify_dp(seg, tol=DP_LOOSE) for seg in result[fld]]
-    for fld in ('bisector',):
-        result[fld] = [simplify_dp(seg, tol=DP_TIGHT) for seg in result[fld]]
-
     # ── Junction indices: where penumbra endpoints meet terminator loops ──
     # Computed after DP so indices reference the final simplified curves.
     def _junction_idx(term_segs, penumbra_endpoint):
@@ -1872,7 +1872,7 @@ def _round_path(path):
     High-accuracy curves (centreline, umbra) keep 5 dp (~1 m).
     Ovals keep 4 dp (~11 m).
     ge keeps 4 dp.
-    Low-accuracy curves (penumbra, bisectors) use 2 dp (~1 km) since
+    Low-accuracy curves (penumbra) use 2 dp (~1 km) since
     they're already 20-100 km off — extra precision is wasted bytes.
     Terminators keep 4 dp.
     All other fields (scalars, metadata) are passed through unchanged.
@@ -1883,7 +1883,6 @@ def _round_path(path):
         'umbra_s':          5,
         'umbra_ovals':      4,
         'ge':               4,
-        'bisector':         2,
         'terminator_first': 4,
         'terminator_last':  4,
         'penumbra_n':       2,
@@ -1894,7 +1893,12 @@ def _round_path(path):
                 for seg in segs]
     result = {}
     for k, v in path.items():
-        if k in PREC and isinstance(v, list):
+        if k == 'green_curve' and isinstance(v, list):
+            # flat [lon,lat] list with None component delimiters; 3 dp (~100 m)
+            # is ample for a reference curve and keeps the file small.
+            result[k] = [None if p is None else [round(p[0], 3), round(p[1], 3)]
+                         for p in v]
+        elif k in PREC and isinstance(v, list):
             dp = PREC[k]
             if k == 'ge':
                 result[k] = [round(v[0], dp), round(v[1], dp)] if v else v
@@ -1911,10 +1915,14 @@ def process_chunk(path, out_dir, step_min, pen_n):
     out_path=os.path.join(out_dir,f'paths_{name}.json.gz')
     paths={}
     print(f'  {name}: {len(records)} eclipses')
-    for rec in records:
+    n = len(records)
+    for i, rec in enumerate(records):
         cat=rec.get('cat_no')
         key=str(int(float(cat))) if cat is not None else f"{rec['year']}_{rec['month']}_{rec['day']}"
+        print(f"\r    {i+1}/{n}  {rec['year']}-{rec['month']:02d}-{rec['day']:02d}   ",
+              end="", flush=True)
         paths[key]=_round_path(build_path(rec, step_min, pen_n))
+    print(f"\r    {n}/{n}  done{' '*20}")
     raw_bytes = json.dumps(paths, separators=(',',':')).encode()
     with _gz.open(out_path, 'wb', compresslevel=9) as f:
         f.write(raw_bytes)

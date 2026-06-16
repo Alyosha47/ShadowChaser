@@ -17,10 +17,12 @@
 3. The handoff references this file by item ("4 candidate approaches in BACKLOG.md");
    that detail lives here so the handoff stays scannable.
 
-Last touched: 2026-06-07 — added the "Corridor sampling artifacts" bug entry (generator
-perpendicular-bisect limitation; rejected-strategies ledger + guarded-local-kink-re-solve
-candidate). No pruning this pass (the truncated-N-limit and below-horizon-oval fixes were
-never in this file, so nothing to remove; their closure is in the handoff).
+Last touched: 2026-06-16 — replaced "Corridor sampling artifacts" with the root-caused
+"Umbral grazing-tip zigzag" entry (envelope+chord root cause; proven cone–spheroid contour
+fix; the N/S-split blocker + rejected approaches + next idea; audit-triggered interim).
+Added "Penumbra threshold offset" detail. Added the "Path unification" vision under
+FEATURES — HARD. The bisector was removed this session (no backlog entry needed; closure in
+handoff).
 
 Last pruned: 2026-06-02 (later session — removed completed infra: MapLibre vendoring and
 the PWA/service-worker keystone, both now done; updated #R4 offline story and the scan
@@ -34,60 +36,57 @@ brightness slider, About mailto/Android, and the implemented "decided behavioral
 
 ## BUGS — open (detail; status in handoff)
 
-- **Corridor sampling artifacts (generator — perpendicular-bisect limitation).** The umbra
-  corridor (`umbra_n`/`umbra_s` in `data build tools/gen_eclipse_paths.py`) is traced by
-  bisecting perpendicular to the centreline at each time step. Every resulting vertex is a
-  true magnitude-1 point (verified via `_max_magnitude`) — the DATA is accurate. But
-  perpendicular-from-centreline under-samples the true totality boundary where geometry is
-  awkward, in two manifestations:
-   - **Elongated-end tip protrusion** (canonical 2026-08-12): near a limb the umbral oval
-     elongates hugely along-track (~650 km major axis); its along-track tips are true mag-1
-     points that pierce the corridor flank (~25 km worst; 15 oval pts outside the polygon —
-     2017 has 13 benign cap protrusions for comparison). The polyline chords past the bulge.
-   - **Persistent kinks** (2611-09-28 N limit ~98°; 1001-03-27): the bisect returns a valid
-     mag-1 point displaced ~10–14 km from the smooth trend. Finer step_min reduces but never
-     removes it (~60° residual); the bearing finite-difference (dt=0.0001 h ≈ 0.36 s) is
-     noise-prone and adds ~36° on top.
-  Physical prior (settled, USER): an eclipse path is a smooth shadow on a sphere — there are
-  NO real corners, so any kink is a method artifact.
-  NOT the same as #R3 (that is a deck.gl *renderer* triangulation bug on polar *fills*; this
-  is a *generator* *sampling* issue affecting the vertices themselves).
-  **Rejected strategies (all built & tested on real records):**
-   1. Contour-walk the max-over-time mag=1 contour from the perpendicular seed → 176–180°
-      spikes near poles (perp axis ill-defined there).
-   2. Perpendicular level-set refinement (insert mag-1 points where the chord midpoint is
-      interior) → spikes; the tips protrude *along-track*, so perpendicular insertion is the
-      wrong direction.
-   3. Sparse-oval polygon union (Shapely) → 164° junction notches (the 9 stored ovals don't
-      overlap).
-   4. Dense-oval union (171 ovals) → broken by polar lon/lat planar degeneracy (path reaches
-      87°N; a near-pole oval spans 80° of longitude).
-   5. Global bearing-dt change (0.0001→0.001 h) → whack-a-mole: fixes 2611 (98°→61°) but
-      regresses 1001-03-27 (39°→47°). Do NOT ship a global dt change.
-  **UPDATE 2026-06-07: the candidate below was BUILT AND TESTED on real records — it does
-  NOT work. Do not re-attempt it.** Root cause found: the kink is not coarse stepping —
-  `umbral_pts` (perpendicular bisect) returns *displaced* mag-1 points in the awkward region
-  itself. Evidence: (1) the smooth neighbour-midpoint is mag-1 but sits ~10 km INSIDE totality
-  (sagitta of a 42 km walk gap) so using it underclaims; (2) edge-snapping from interpolated
-  points wanders/fails at exactly these spots; (3) fine-time resampling of `umbral_pts` stays
-  noisy (~106° interior on 2611). Relocate / densify / time-subdivide all fail because they
-  all lean on the same unstable bisect. CONCLUSION: **kinks and the tip protrusion share one
-  root and need the same envelope rewrite — there is no cheap separable kink fix.**
+- **Umbral grazing-tip zigzag (generator).** On grazing eclipses the umbral N/S limit
+  shows a large gap (300–1200 km) paired with a ~150–177° fold at one or both ends. Audit
+  signature: `gap NNN km at idx X->X+1` together with `interior turn ~150–177° at idx X`.
+  Affects roughly half of eclipses (any with a grazing tip).
+  **Root cause (PROVEN):** the umbral limit is traced by an envelope-of-moving-shadow method
+  (`umbral_pts`: perpendicular offset from the axis + tangency angle + zeta fixed-point) plus
+  a straight-chord extension (`_extend_to_green`) to the green terminus. The envelope
+  correctly traces the limit until the shadow axis leaves Earth's disk (|C|→1) at the grazing
+  tip — past that no axis-on-disk point exists, so the envelope returns None ~hundreds of km
+  short of where totality actually ends (at the terminator/green line). The straight chord
+  bridging that real-totality stretch IS the zigzag. (This supersedes the older "corridor
+  sampling artifact / perpendicular-bisect" framing — same visible defect, now fully
+  root-caused.)
+  **Fix (PROVEN sub-km, prototyped):** trace the umbral limit directly as the cone–spheroid
+  intersection contour — the zero level set of the ever-total depth field
+  h(lat,lon) = max over time t of (|L2 − zeta·tan_f2| − m), where m = hypot(xi−X,(eta−Y)/rho1)
+  and (xi,eta,zeta)=`_geo_to_fund`. Same predictor–corrector tracer as `green_curve`, just a
+  different field. Validated: 2017 N 0.28 / S 0.15 km vs Jubier; 1144 BCE (a zigzag eclipse)
+  traces ONE clean component reaching the grazing tip, max consecutive gap 25 km (= tracer
+  step) vs the old 950 km chord. Build ~7–28 s/eclipse. Prototype + WIP integration exist in
+  the dev scratch (not shipped).
+  **THE ONE BLOCKER — N/S split (pure polyline topology, not physics):** the contour traces
+  as a single closed loop (the corridor outline). It must be cut into the two named limits.
+  Simple-geometry eclipses (e.g. 2033) split perfectly (worst-turn 2°). Corridor-shaped ones
+  do not yet. Four approaches tried and REJECTED:
+   1. Global longitude sort — scrambles limits that double back in longitude at high lat.
+   2. Centreline-side classification — FAILS: the loop crosses the centreline side 4× not 2×,
+      because near the tips the limit extends past the centreline ends (spurious flips).
+   3. Longest-run-per-side — discards half of each limit.
+   4. Farthest-apart-pair as the two tips — on a thin corridor the diameter lands on the SAME
+      long side, not the two opposite tips.
+  **NEXT approach (untried):** find the two true tips as maximum-curvature pinch points (where
+  the tangent reverses ~180° over a short arc), or a principled curve-bisection — NOT max
+  pairwise distance, NOT centreline side. Once split cleanly: re-validate the full 11-eclipse
+  limit table vs Jubier (must stay sub-km, tips improved) AND re-run the BCE audit (zigzag
+  reports must clear with no new artifacts) before replacing the envelope. Remove the dead
+  envelope + `_extend_to_green` only after the contour proves out everywhere.
+  **Interim option:** audit-triggered targeted repair — detect the zigzag signature and
+  re-run ONLY flagged eclipses with the contour method as a fallback (envelope for the clean
+  majority). The flagged ones are mostly simple grazers, exactly where the split already
+  works. Bridges the shipped envelope and the contour fix without needing a universal splitter.
 
-  ~~Candidate fix — guarded local kink re-solve (monotone-safe, accuracy-preserving):~~ a
-  POST-pass (does not touch the shared walk). Detect kink vertices (turn > threshold); at
-  each, re-bisect the boundary along the bearing perpendicular to the *neighbour trend* (the
-  reliable smooth local direction) instead of the noisy centreline tangent; **replace the
-  vertex only if the new point is a true mag-1 bisect result AND reduces the turn**, else
-  keep the original. By construction it can only improve or no-op → clean eclipses stay
-  byte-identical (no regression possible), every output point stays a true boundary solution
-  (accuracy preserved). Test bar before shipping: kinks measurably reduced; every replaced
-  vertex re-verified mag-1; 2017/2026 byte-identical; regression sweep shows no path gains a
-  NEW kink. (Does NOT address the along-track tip protrusion — that needs the envelope fix.)
-  **Full fix (deferred):** trace the totality boundary as a smooth envelope in a local
-  equal-area projection (handles poles), then re-split into N/S — fixes the whole class
-  (tips + kinks) at the source. Large and stability-risky (the union attempts show the
-  failure modes); only worth it if the artifacts justify it. The data is accurate as-is.
+- **Penumbra threshold offset (low priority — user accepts "close").** Our penumbra limit
+  sits ~7–10 km INSIDE Jubier's, asymmetric N/S. At Jubier's penumbra points our magnitude
+  reads exactly 0, so their edge is just outside ours. Dropping the cone-narrowing term
+  (m = L1 instead of L1 − zeta·tan_f1) fixes the north side but worsens the south — so it is
+  NOT a single term. The asymmetry suggests a direction-dependent (refraction/limb) term.
+  The implicit-contour penumbra prototype reaches ~9 km (better than the shipped ~15–25 km
+  envelope). Pursue only if chasing sub-km everywhere; otherwise the penumbra is "naturally
+  fuzzy" and close is fine. Eventually migrate penumbra onto the implicit engine as
+  {max magnitude = 0}.
 
 - **#R3 1950 polar "onion-ring" (deck.gl SolidPolygonLayer).** Path *lines* render fine;
   corridor + oval *fills* whose vertices lie in a polar region render as phantom
@@ -198,6 +197,24 @@ brightness slider, About mailto/Android, and the implemented "decided behavioral
   positioned for the selected eclipse.
 
 ## FEATURES — HARD
+- **Path unification — all curves on one implicit-field engine (architectural vision).**
+  Every path = the zero level set of a scalar field evaluated at each ground point's own
+  moment of greatest eclipse, traced by one shared predictor–corrector:
+    green     = {sun altitude at max = 0}        (DONE — sub-km)
+    umbra     = {ever-total depth = 0}           (proven; splitter pending — see zigzag bug)
+    penumbra  = {max magnitude = 0}              (prototype ~9 km)
+    mag isolines = {max magnitude = c}           (enables Jubier's 0.2/0.4/0.6/0.8 curves free)
+    centreline = ridge of the depth field        (max-finder, not a zero — mild extra work)
+    terminator/sunrise-set = intersection of two conditions
+  One engine parameterized by field + level (+ intersection mode) replaces the current
+  hodgepodge (envelope, perpendicular bisect, lemniscate constructions). Uniformly
+  validatable against Jubier by cross-track distance. PHASED: migrate one curve at a time,
+  validate, swap in only when it beats the incumbent everywhere, retire legacy only after.
+  Evidence it works: green + umbra both hit sub-km via the same tracer across figure-8,
+  two-blob, and polar topologies. Suggested two-branch discipline: freeze the shipped
+  generator (bugfix-only) as the stable truth; develop the unified engine as the
+  experimental successor. ~4–6 phased sessions. Order: (1) finish umbra splitter; (2)
+  penumbra onto the engine; (3) terminator/centreline + unify the tracer + retire legacy.
 - **#F2 Cloud-cover / weather overlay** — the killer feature. Forecast (near-term) +
   climatology (far-future); needs data-source choice, globe-layer rendering, online/
   offline behavior, controls, perf. ~2 sessions of design before code.

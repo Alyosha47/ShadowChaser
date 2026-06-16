@@ -876,38 +876,36 @@ function drawEclipsePath(ep) {
     }));
   }
 
-  /* ── Umbra cap lines (connect n/s horn tips) ──────────────────────────
-     PathLayer draws a straight line in lon/lat between the two endpoints.
-     If the two horn tips lie on opposite sides of the antimeridian, the
-     straight line wraps the long way around the globe. Shift the second
-     endpoint by ±360° if that yields a shorter line in longitude. */
-  if (isCentral && ep.umbra_n && ep.umbra_s && ep.umbra_n.length && ep.umbra_s.length) {
-    function shortPath(a, b) {
-      if (!a || !b) return null;
-      var lonA = a[0], lonB = b[0];
-      while (lonB - lonA >  180) lonB -= 360;
-      while (lonB - lonA < -180) lonB += 360;
-      return [[lonA, a[1]], [lonB, b[1]]];
+  /* ── Green line (Maximum-on-Horizon curve) ────────────────────────────
+     Locus of points whose greatest eclipse occurs with the sun on the horizon;
+     the true termination boundary for the limits/centreline. The data is a flat
+     [lon,lat] list with `null` delimiters between separate components (a
+     two-blob eclipse has two, a figure-8 has one self-connected loop). Split on
+     the null delimiters, and additionally guard against antimeridian wrap
+     within a component (a ~360° longitude jump streaks across the map even when
+     the two points are physically close at high latitude). */
+  if (isCentral && ep.green_curve && ep.green_curve.length) {
+    var gsegs = [], gcur = [];
+    function flushG() { if (gcur.length > 1) gsegs.push(gcur); gcur = []; }
+    for (var gi = 0; gi < ep.green_curve.length; gi++) {
+      var gp = ep.green_curve[gi];
+      if (gp === null) { flushG(); continue; }       // component delimiter
+      if (gcur.length) {
+        var prevG = gcur[gcur.length - 1];
+        if (Math.abs(gp[0] - prevG[0]) > 180) flushG(); // antimeridian wrap
+      }
+      gcur.push(gp);
     }
-    var capPaths = [];
-    var unFirst = ep.umbra_n[0][0], usFirst = ep.umbra_s[0][0];
-    var cap0 = shortPath(unFirst, usFirst);
-    if (cap0) capPaths.push({ id: 'cap0', path: cap0 });
-    var unLS = ep.umbra_n[ep.umbra_n.length-1], usLS = ep.umbra_s[ep.umbra_s.length-1];
-    var unLast = unLS[unLS.length-1], usLast = usLS[usLS.length-1];
-    var cap1 = shortPath(unLast, usLast);
-    if (cap1) capPaths.push({ id: 'cap1', path: cap1 });
-    if (capPaths.length) {
-      layers.push(new DeckGL.PathLayer({
-        id: 'umbra-caps',
-        data: capPaths,
-        getPath: function(d) { return d.path; },
-        getColor: [204,34,0,255],
-        getWidth: 2,
-        widthUnits: 'pixels',
-        widthMinPixels: 1,
-      }));
-    }
+    flushG();
+    layers.push(new DeckGL.PathLayer({
+      id: 'green_curve',
+      data: gsegs.map(function(s){ return { path: s }; }),
+      getPath: function(d) { return d.path; },
+      getColor: [0,160,0,255],
+      getWidth: 2,
+      widthUnits: 'pixels',
+      widthMinPixels: 1,
+    }));
   }
 
   /* ── Greatest eclipse point — pixel-space marker (zoom-invariant) ─── */
