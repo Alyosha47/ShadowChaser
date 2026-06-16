@@ -168,7 +168,10 @@ function renderData(rec, _tz, _lat, _lon) {
               : 'Local time (' + tzStr + '). Tap header for UT.'))
     + '</div>'
 
-    + (rec ? '<div class="note">No lunar limb correction applied.</div>' : '');
+    + (rec ? '<div class="note">No lunar limb correction applied.</div>' : '')
+
+    + '<div class="detail-section-h">Sun Track</div>'
+    + '<div id="suntrack"></div>';
   }
 
   /* ── Global Circumstances (reference data — least actionable, so last) ── */
@@ -187,11 +190,178 @@ function renderData(rec, _tz, _lat, _lon) {
        + '</tbody></table>';
 
   inner.innerHTML = html;
+
+  if (coords && localResult && localResult.visible && rec) {
+    buildSunTrack(rec, coords.lat, coords.lon, alt, localResult);
+  }
 }
 
 
 function row(label, value) {
   return '<tr><td class="l">' + label + '</td><td class="v">' + value + '</td></tr>';
+}
+
+/* Interactive sun-track diagram: the Sun's path across the sky (x = azimuth,
+   y = altitude) over the eclipse window C1→C4, with a time slider that scrubs
+   a Sun marker along the arc and draws the Moon's bite at that instant. Pure
+   SVG + one range input; no external deps. */
+function buildSunTrack(rec, lat, lon, altM, res) {
+  var host = document.getElementById('suntrack');
+  if (!host || typeof sampleEclipseAt !== 'function') return;
+  if (res.C1 == null || res.C1.ut == null || res.C4 == null || res.C4.ut == null) {
+    host.innerHTML = '<div class="note">Sun track unavailable.</div>'; return;
+  }
+
+  /* Eclipse window with a small margin so C1/C4 aren't flush at the edges. */
+  var t0 = res.C1.ut, t1 = res.C4.ut;
+  if (t1 < t0) t1 += 24;                       /* crossed UT midnight */
+  var span = t1 - t0, marg = span * 0.06;
+  var ta = t0 - marg, tb = t1 + marg;
+
+  /* Sample the arc. */
+  var N = 96, pts = [];
+  for (var i = 0; i <= N; i++) {
+    var t = ta + (tb - ta) * i / N;
+    var s = sampleEclipseAt(rec, lat, lon, altM, ((t % 24) + 24) % 24);
+    pts.push({ t: t, az: s.az, alt: s.alt, mag: s.mag, v: s.v });
+  }
+
+  /* Plot extents (pad a little). */
+  var azs = pts.map(function (p) { return p.az; });
+  var alts = pts.map(function (p) { return p.alt; });
+  /* azimuth may wrap through 360; unwrap relative to the first sample */
+  var az0 = azs[0];
+  var uaz = azs.map(function (a) {
+    while (a - az0 >  180) a -= 360;
+    while (a - az0 < -180) a += 360;
+    return a;
+  });
+  var minA = Math.min.apply(null, uaz), maxA = Math.max.apply(null, uaz);
+  var minH = Math.min(0, Math.min.apply(null, alts));
+  var maxH = Math.max.apply(null, alts);
+  var padA = Math.max(2, (maxA - minA) * 0.10);
+  var padH = Math.max(2, (maxH - minH) * 0.12);
+  minA -= padA; maxA += padA; maxH += padH;
+  minH = Math.min(minH, 0);
+
+  var W = 320, H = 200, L = 34, R = 10, T = 12, B = 26;
+  function px(uazi) { return L + (uazi - minA) / (maxA - minA) * (W - L - R); }
+  function py(alti) { return T + (1 - (alti - minH) / (maxH - minH)) * (H - T - B); }
+
+  /* Track polyline (unwrapped azimuth). */
+  var d = '';
+  for (var j = 0; j < pts.length; j++) {
+    d += (j ? 'L' : 'M') + px(uaz[j]).toFixed(1) + ' ' + py(pts[j].alt).toFixed(1) + ' ';
+  }
+
+  /* Horizon line (alt = 0) if in view. */
+  var horizon = '';
+  if (minH <= 0 && maxH >= 0) {
+    var hy = py(0);
+    horizon = '<line x1="' + L + '" y1="' + hy.toFixed(1) + '" x2="' + (W - R)
+            + '" y2="' + hy.toFixed(1) + '" class="st-horizon"/>'
+            + '<text x="' + (W - R) + '" y="' + (hy - 3).toFixed(1)
+            + '" class="st-hlbl" text-anchor="end">horizon</text>';
+  }
+
+  /* Contact tick marks on the track. */
+  function near(tt) {                          /* nearest sample index to a UT */
+    var bi = 0, bd = 1e9;
+    for (var k = 0; k < pts.length; k++) {
+      var dd = Math.abs(pts[k].t - tt);
+      if (dd < bd) { bd = dd; bi = k; }
+    }
+    return bi;
+  }
+  var marks = '';
+  var placed = [];                              /* [{x, side}] to de-collide labels */
+  [['C1', res.C1], ['C2', res.C2], ['C3', res.C3], ['C4', res.C4]].forEach(function (c) {
+    if (!c[1] || c[1].ut == null) return;
+    var ut = c[1].ut; if (ut < t0) ut += 24;
+    var k = near(ut);
+    var mx = px(uaz[k]), my = py(pts[k].alt);
+    /* Default label above the point; if another label is within ~16px, put this
+       one below instead so C2/C3 (close together) don't overlap. */
+    var below = placed.some(function (q) { return Math.abs(q.x - mx) < 16; });
+    var ly = below ? my + 13 : my - 7;
+    placed.push({ x: mx });
+    marks += '<circle cx="' + mx.toFixed(1) + '" cy="' + my.toFixed(1)
+           + '" r="2.6" class="st-contact"/>'
+           + '<text x="' + mx.toFixed(1) + '" y="' + ly.toFixed(1)
+           + '" class="st-clbl" text-anchor="middle">' + c[0] + '</text>';
+  });
+
+  host.innerHTML =
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" class="st-svg" preserveAspectRatio="xMidYMid meet">'
+    +   '<defs><linearGradient id="st-sky" x1="0" y1="0" x2="0" y2="1">'
+    +     '<stop id="st-sky0" offset="0%"/><stop id="st-sky1" offset="100%"/>'
+    +   '</linearGradient></defs>'
+    +   '<rect x="0" y="0" width="' + W + '" height="' + H + '" rx="6" fill="url(#st-sky)"/>'
+    +   horizon
+    +   '<path d="' + d.trim() + '" class="st-track"/>'
+    +   marks
+    +   '<g id="st-marker"></g>'
+    + '</svg>'
+    + '<input id="st-slider" type="range" min="0" max="' + N + '" value="' + near(res.tMax != null ? (res.tMax < t0 ? res.tMax + 24 : res.tMax) : (t0 + span / 2)) + '" step="1" class="st-slider"/>'
+    + '<div id="st-readout" class="st-readout"></div>';
+
+  var slider = document.getElementById('st-slider');
+  var marker = document.getElementById('st-marker');
+  var readout = document.getElementById('st-readout');
+  var sky0 = document.getElementById('st-sky0');
+  var sky1 = document.getElementById('st-sky1');
+
+  /* Sky colour as a function of sun altitude: day → twilight → night. Returns
+     [topColor, bottomColor]. Bottom (horizon) goes warm at low sun. */
+  function skyColors(altDeg) {
+    function mix(a, b, t) {
+      t = Math.max(0, Math.min(1, t));
+      return 'rgb(' + Math.round(a[0]+(b[0]-a[0])*t) + ',' + Math.round(a[1]+(b[1]-a[1])*t)
+           + ',' + Math.round(a[2]+(b[2]-a[2])*t) + ')';
+    }
+    var dayTop=[64,132,196],   dayBot=[150,194,224];
+    var duskTop=[40,46,96],    duskBot=[206,118,66];
+    var nightTop=[7,9,20],     nightBot=[18,22,44];
+    if (altDeg >= 12)      return [mix(duskTop,dayTop,(altDeg-12)/30), mix(duskBot,dayBot,(altDeg-12)/30)];
+    else if (altDeg >= 0)  return [mix(nightTop,duskTop,altDeg/12),    mix(nightBot,duskBot,altDeg/12)];
+    else                   return [ 'rgb(7,9,20)', 'rgb(14,17,34)' ];
+  }
+
+  function fmtHM(ut) {
+    var u = ((ut % 24) + 24) % 24;
+    var hh = Math.floor(u), mm = Math.floor((u - hh) * 60);
+    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm + ' UT';
+  }
+
+  function draw(i) {
+    var p = pts[i];
+    var cx = px(uaz[i]), cy = py(p.alt), r = 12;
+    /* Sky background tracks the sun's current altitude. */
+    var sc = skyColors(p.alt);
+    sky0.setAttribute('stop-color', sc[0]);
+    sky1.setAttribute('stop-color', sc[1]);
+    /* Sun disc + Moon bite. The Moon overlaps from direction V (clockwise from
+       zenith = up); offset the moon-disc centre by the uncovered fraction so
+       the visible crescent matches the magnitude. */
+    var sun = '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + r + '" class="st-sun"/>';
+    var moon = '';
+    if (p.mag > 0.001) {
+      var off = (1 - Math.min(1, p.mag)) * 2 * r;   /* mag 1 → centred, 0 → clear */
+      var ang = p.v * Math.PI / 180;                 /* clockwise from up */
+      var mx = cx + off * Math.sin(ang);
+      var my = cy - off * Math.cos(ang);
+      moon = '<circle cx="' + mx.toFixed(1) + '" cy="' + my.toFixed(1) + '" r="' + r + '" class="st-moon"/>';
+    }
+    marker.innerHTML = sun + moon;
+    var azDisp = ((p.az % 360) + 360) % 360;
+    readout.textContent = fmtHM(p.t)
+      + '  \u00b7  alt ' + p.alt.toFixed(1) + '\u00b0'
+      + '  \u00b7  az ' + azDisp.toFixed(0) + '\u00b0'
+      + '  \u00b7  ' + (p.mag > 0 ? 'mag ' + p.mag.toFixed(3) : 'uneclipsed');
+  }
+
+  slider.addEventListener('input', function () { draw(parseInt(slider.value, 10)); });
+  draw(parseInt(slider.value, 10));
 }
 
 function contactIcon(phase, type, v) {
