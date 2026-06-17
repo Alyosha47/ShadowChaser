@@ -902,7 +902,7 @@ function drawEclipsePath(ep) {
       data: gsegs.map(function(s){ return { path: s }; }),
       getPath: function(d) { return d.path; },
       getColor: [0,160,0,255],
-      getWidth: 2,
+      getWidth: 1.5,
       widthUnits: 'pixels',
       widthMinPixels: 1,
     }));

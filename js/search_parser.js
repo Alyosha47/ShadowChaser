@@ -107,7 +107,7 @@
 
     // Flexible DMS: deg° min' sec" [NSEW] — spaces optional, sec may be decimal, quote optional
     // Matches: 51°30'26"N  51° 30' 26.00" N  51d30m26sN  023° 08' 09.00" W
-    var dms = s.match(/^(\d+)[°d]\s*(\d+)\s*['`\u2019\u02bc]\s*(\d+\.?\d*)\s*[""""\u201d]?\s*([NSEW])$/i);
+    var dms = s.match(/^(\d+)[°d]\s*(\d+)\s*['`\u2019\u02bc\u2032m]?\s*(\d+\.?\d*)\s*[""""\u201d\u2033s]?\s*([NSEW])$/i);
     if (dms) {
       var val = parseFloat(dms[1]) + parseFloat(dms[2])/60 + parseFloat(dms[3])/3600;
       if (/[SW]/i.test(dms[4])) val = -val;

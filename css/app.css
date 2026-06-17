@@ -519,8 +519,8 @@
       letter-spacing: 0.15em;
       text-transform: uppercase;
       color:          var(--gold);
-      margin:         1.5rem 0 0.6rem;
-      padding-bottom: 0.4rem;
+      margin:         0.55rem 0 0.25rem;
+      padding-bottom: 0.18rem;
       border-bottom:  1px solid var(--border);
     }
     .detail-section-h:first-child { margin-top: 0; }
@@ -541,7 +541,7 @@
       table-layout:    fixed;
     }
     .detail-table td {
-      padding:       0.3rem 0;
+      padding:       0.12rem 0;
       border-bottom: 1px solid var(--border);
       vertical-align: baseline;
     }
@@ -582,7 +582,7 @@
     }
     .contacts-table th,
     .contacts-table td {
-      padding:        0.45rem 0.7rem 0.45rem 0;
+      padding:        0.16rem 0.7rem 0.16rem 0;
       vertical-align: middle;
       white-space:    nowrap;
     }
@@ -613,7 +613,9 @@
       text-underline-offset: 3px;
     }
     .contacts-table th.time-mode-toggle:hover { color: var(--text); }
-    .contacts-table td             { color: var(--text); padding-left: 0.55rem; }
+    .contacts-table th,
+    .contacts-table td             { padding-left: 0.55rem; }
+    .contacts-table td             { color: var(--text); }
     .contacts-table tbody tr:nth-child(odd) td { background: rgba(255,255,255,0.025); }
     .contacts-table td svg         { vertical-align: middle; margin-right: 0.4rem; }
     .contacts-table .row-umbral td { color: var(--gold2); }
@@ -638,11 +640,11 @@
     }
 
     .note {
-      margin-top:  1rem;
+      margin-top:  0.6rem;
       font-family: var(--mono);
       font-size:   0.66rem;
       color:       var(--text-dim);
-      padding:     0.5rem 0.7rem;
+      padding:     0.45rem 0.7rem;
       border-left: 2px solid var(--border);
       line-height: 1.6;
     }
@@ -804,7 +806,16 @@
       padding:       0.25rem 0 0.5rem;
       border-bottom: 1px solid var(--border);
       margin-bottom: 0.5rem;
+      position:      sticky;
+      top:           -1.25rem;        /* cancel the tab-panel top padding */
+      background:    var(--bg);
+      z-index:       5;
+      margin-top:    -1.25rem;         /* pull up into the padding so it pins flush */
+      padding-top:   1.25rem;          /* restore visual top spacing */
     }
+    /* In the sidebar the panel background is lighter than --bg; match it so the
+       pinned header blends with the sheet it sits on. */
+    .sidebar .detail-title { background: #1a2030; }
     .detail-title-icon {
       display:     inline-flex;
       align-items: center;
@@ -1146,7 +1157,7 @@
 
 
 /* ── Sun-track diagram (Details panel) ─────────────────────────────────── */
-#suntrack { margin: 4px 0 10px; }
+#suntrack { margin: 2px 0 6px; }
 .st-svg {
   width: 100%; height: auto; display: block;
   border: 1px solid var(--gold-dim);
@@ -1159,5 +1170,5 @@
 .st-clbl    { fill: #fff; font-size: 10px; paint-order: stroke; stroke: rgba(0,0,0,0.55); stroke-width: 2px; }
 .st-sun     { fill: #ffe08a; filter: drop-shadow(0 0 5px rgba(255,210,120,0.9)); }
 .st-moon    { fill: #0a0c10; stroke: rgba(255,255,255,0.25); stroke-width: 0.5; }
-.st-slider  { width: 100%; margin: 8px 0 2px; accent-color: var(--gold); }
+.st-slider  { width: 100%; margin: 5px 0 1px; accent-color: var(--gold); }
 .st-readout { font-size: 12px; color: var(--gold); text-align: center; font-variant-numeric: tabular-nums; }

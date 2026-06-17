@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="build" content="2026-06-16e">
+  <meta name="build" content="2026-06-16m">
   <title>ShadowChaser</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
@@ -201,6 +201,7 @@
             &minus;720 to 2050 (outside the USNO range) &mdash; Espenak&ndash;Meeus piecewise polynomial;
             before &minus;720 and after 2050 &mdash; Stephenson, Morrison &amp; Hohenkerk (2016) LOD integral extrapolation.</p>
           <p><strong>Basemaps</strong> are served from OpenFreeMap (Liberty vector style, <em>openfreemap.org</em>) when online, and from Natural Earth public-domain geodata (<em>naturalearthdata.com</em>) when offline.</p>
+          <p>The map chooses online or offline mode when the page loads. If your connection changes &mdash; you go offline in the field, or come back online &mdash; reload the page to switch modes.</p>
           <p><strong>Timezones</strong> are resolved offline via the <em>tz-lookup</em> polygon database. Elevation is auto-filled by the Open-Elevation API when online.</p>
         </div>
       </div>
@@ -332,7 +333,7 @@
 <script>
 'use strict';
 var DATA_BASE = './data';
-var BUILD     = '2026-06-16e';
+var BUILD     = '2026-06-16m';
 // Installed-PWA mode → tag <html> so CSS can drop the branding banner (older iOS
 // lacks the display-mode media query, so navigator.standalone is the fallback).
 if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) {

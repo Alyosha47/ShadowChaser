@@ -455,6 +455,8 @@
     if (mag < 0) mag = 0;
     var rSun = (L1p + L2p) / 2;                    /* sun radius, fundamental units */
     var sep  = rSun > 1e-9 ? m / rSun : 99;        /* centre separation in SUN RADII */
+    var rmoon = (L1p - L2p) / 2;                   /* moon radius, fundamental units */
+    var moonRatio = rSun > 1e-9 ? rmoon / rSun : 1; /* <1 annular, >1 total */
     var phase = (m >= Math.abs(L1p)) ? 'none'
               : (m >= Math.abs(L2p)) ? 'partial'
               : (L2p < 0)            ? 'total' : 'annular';
@@ -464,7 +466,7 @@
                        Math.cos(phi)*Math.tan(dec) - Math.sin(phi)*Math.cos(H));
     var V = 180 - (P + q) / DEG;
     V = ((V % 360) + 360) % 360;
-    return { alt: alt, az: az, mag: mag, sep: sep, v: V, phase: phase };
+    return { alt: alt, az: az, mag: mag, sep: sep, moonRatio: moonRatio, v: V, phase: phase };
   }
 
 

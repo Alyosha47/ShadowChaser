@@ -192,7 +192,7 @@ function renderData(rec, _tz, _lat, _lon) {
   inner.innerHTML = html;
 
   if (coords && localResult && localResult.visible && rec) {
-    buildSunTrack(rec, coords.lat, coords.lon, alt, localResult);
+    buildSunTrack(rec, coords.lat, coords.lon, alt, localResult, tz);
   }
 }
 
@@ -205,7 +205,7 @@ function row(label, value) {
    y = altitude) over the eclipse window C1→C4, with a time slider that scrubs
    a Sun marker along the arc and draws the Moon's bite at that instant. Pure
    SVG + one range input; no external deps. */
-function buildSunTrack(rec, lat, lon, altM, res) {
+function buildSunTrack(rec, lat, lon, altM, res, tz) {
   var host = document.getElementById('suntrack');
   if (!host || typeof sampleEclipseAt !== 'function') return;
   if (res.C1 == null || res.C1.ut == null || res.C4 == null || res.C4.ut == null) {
@@ -218,13 +218,28 @@ function buildSunTrack(rec, lat, lon, altM, res) {
   var span = t1 - t0, marg = span * 0.06;
   var ta = t0 - marg, tb = t1 + marg;
 
-  /* Sample the arc. */
-  var N = 96, pts = [];
-  for (var i = 0; i <= N; i++) {
-    var t = ta + (tb - ta) * i / N;
+  /* Sample the arc uniformly, PLUS inject the exact contact and maximum times
+     so the slider and the contact marks land precisely on them (matching the
+     Contact Times table — uniform sampling alone snaps to the nearest point and
+     drifts by up to half a step). */
+  var N = 96, times = [];
+  for (var i = 0; i <= N; i++) times.push(ta + (tb - ta) * i / N);
+  var exact = [];
+  [res.C1, res.C2, res.tMax != null ? { ut: res.tMax } : null, res.C3, res.C4]
+    .forEach(function (c) {
+      if (!c) return;
+      var ut = (typeof c === 'object' && c.ut != null) ? c.ut : c;
+      if (ut == null) return;
+      if (ut < t0 - 0.001) ut += 24;        /* same wrap basis as t0..t1 */
+      times.push(ut);
+    });
+  times.sort(function (a, b) { return a - b; });
+  var pts = times.map(function (t) {
     var s = sampleEclipseAt(rec, lat, lon, altM, ((t % 24) + 24) % 24);
-    pts.push({ t: t, az: s.az, alt: s.alt, mag: s.mag, sep: s.sep, v: s.v });
-  }
+    return { t: t, az: s.az, alt: s.alt, mag: s.mag, sep: s.sep,
+             moonRatio: s.moonRatio, v: s.v };
+  });
+  N = pts.length - 1;
 
   /* Plot extents (pad a little). */
   var azs = pts.map(function (p) { return p.az; });
@@ -330,9 +345,11 @@ function buildSunTrack(rec, lat, lon, altM, res) {
   }
 
   function fmtHM(ut) {
-    var u = ((ut % 24) + 24) % 24;
+    var local = (_timeMode !== 'ut') && (typeof tz === 'number');
+    var u = ((ut + (local ? tz : 0)) % 24 + 24) % 24;
     var hh = Math.floor(u), mm = Math.floor((u - hh) * 60);
-    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm + ' UT';
+    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm
+         + (local ? ' local' : ' UT');
   }
 
   function draw(i) {
@@ -354,13 +371,14 @@ function buildSunTrack(rec, lat, lon, altM, res) {
     var off = p.sep * r;
     var mx = cx + off * Math.sin(ang);
     var my = cy - off * Math.cos(ang);
-    var moon = '<circle cx="' + mx.toFixed(1) + '" cy="' + my.toFixed(1) + '" r="' + r + '" class="st-moon"/>';
+    var rMoon = r * (p.moonRatio || 1);            /* <1 annular, >1 total */
+    var moon = '<circle cx="' + mx.toFixed(1) + '" cy="' + my.toFixed(1) + '" r="' + rMoon.toFixed(1) + '" class="st-moon"/>';
     marker.innerHTML = sun + moon;
     var azDisp = ((p.az % 360) + 360) % 360;
     readout.textContent = fmtHM(p.t)
       + '  \u00b7  alt ' + p.alt.toFixed(1) + '\u00b0'
       + '  \u00b7  az ' + azDisp.toFixed(0) + '\u00b0'
-      + '  \u00b7  ' + (p.mag > 0 ? 'mag ' + p.mag.toFixed(3) : 'uneclipsed');
+      + (p.mag > 0 ? '  \u00b7  mag ' + p.mag.toFixed(3) : '');
   }
 
   slider.addEventListener('input', function () { draw(parseInt(slider.value, 10)); });
