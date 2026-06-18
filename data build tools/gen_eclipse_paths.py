@@ -1307,6 +1307,233 @@ def green_curve(rec):
 
 
 
+def _v3u(lat, lon):
+    DEG = math.pi / 180.0
+    la, lo = lat * DEG, lon * DEG
+    return (math.cos(la) * math.cos(lo), math.cos(la) * math.sin(lo), math.sin(la))
+
+
+def _cross3(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _cone_depth(rec, lat, lon):
+    """Ever-total depth field: max over time of (|umbra radius| - axis distance)
+    in fundamental-plane units. >0 inside totality, =0 on the limit, <0 outside.
+    Returns (max_g, zeta_at_max)."""
+    tmin, tmax = rec['tmin'], rec['tmax']
+    tf2 = rec['tan_f2']
+    def g(t):
+        X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
+        xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
+        if zeta <= 0:
+            return -9.9, zeta
+        dx = xi - X; dy = (eta - Y) / rho1; m = math.hypot(dx, dy)
+        L2p = L2 - zeta * tf2
+        return abs(L2p) - m, zeta
+    N = 48; bt = tmin; bg = -9.9; bz = 0.0
+    for i in range(N + 1):
+        t = tmin + (tmax - tmin) * i / N
+        gg, z = g(t)
+        if gg > bg: bg, bt, bz = gg, t, z
+    a = max(tmin, bt - (tmax - tmin) / N); b = min(tmax, bt + (tmax - tmin) / N)
+    for _ in range(40):
+        m1 = a + (b - a) / 3; m2 = b - (b - a) / 3
+        g1, _ = g(m1); g2, _ = g(m2)
+        if g1 < g2: a = m1
+        else: b = m2
+    bg, bz = g((a + b) / 2)
+    return bg, bz
+
+
+def _cone_grad(rec, lat, lon, h=0.02):
+    a1, _ = _cone_depth(rec, lat + h, lon); a2, _ = _cone_depth(rec, lat - h, lon)
+    a3, _ = _cone_depth(rec, lat, lon + h); a4, _ = _cone_depth(rec, lat, lon - h)
+    return (a1 - a2) / (2 * h), (a3 - a4) / (2 * h)
+
+
+def _cone_correct(rec, lat, lon):
+    for _ in range(14):
+        f, _ = _cone_depth(rec, lat, lon)
+        if abs(f) < 1e-6: return lat, lon, True
+        gla, glo = _cone_grad(rec, lat, lon); g2 = gla * gla + glo * glo
+        if g2 < 1e-16: return lat, lon, False
+        lat -= f * gla / g2; lon -= f * glo / g2
+    f, _ = _cone_depth(rec, lat, lon)
+    return lat, lon, abs(f) < 2e-5
+
+
+def _cone_gc(a, b):
+    DEG = math.pi / 180.0
+    la1, lo1 = a[1] * DEG, a[0] * DEG; la2, lo2 = b[1] * DEG, b[0] * DEG
+    c = math.sin(la1) * math.sin(la2) + math.cos(la1) * math.cos(la2) * math.cos(lo2 - lo1)
+    return 6371.0 * math.acos(max(-1.0, min(1.0, c)))
+
+
+def _cone_trace(rec, seed, step_km=25.0, maxpts=6000, min_km=3.0, max_turn=12.0):
+    """Adaptive predictor-corrector tracing the depth=0 contour from a seed on it.
+    Shrinks the step where the contour turns sharply (pointed corridor tips).
+    Bounded: a clean corridor closes well within maxpts; a non-converging trace
+    (degenerate polar/annular geometry) hits the cap and the caller falls back."""
+    DEG = math.pi / 180.0
+    def one(sign):
+        la, lo = seed; prevb = None; out = []; step = step_km
+        for _ in range(maxpts):
+            gla, glo = _cone_grad(rec, la, lo); gn = math.hypot(gla, glo)
+            if gn < 1e-9: break
+            klon = math.cos(la * DEG) or 1e-9
+            tla, tlo = -glo, gla; tn = math.hypot(tla, tlo * klon); tla /= tn; tlo /= tn
+            b = math.atan2(tlo * klon, tla)
+            if prevb is not None and abs(((b - prevb + math.pi) % (2 * math.pi)) - math.pi) > math.pi / 2:
+                tla, tlo, b = -tla, -tlo, b + math.pi
+            if prevb is not None:
+                turn = abs(math.degrees(((b - prevb + math.pi) % (2 * math.pi)) - math.pi))
+                if turn > max_turn and step > min_km: step = max(min_km, step * 0.5)
+                elif turn < max_turn * 0.4 and step < step_km: step = min(step_km, step * 1.5)
+            la2 = la + sign * step / 111.0 * tla; lo2 = lo + sign * step / 111.0 * tlo
+            la2, lo2, ok = _cone_correct(rec, la2, lo2)
+            if not ok: break
+            out.append((lo2, la2)); prevb = b; la, lo = la2, lo2
+            if len(out) > 6 and abs(la2 - seed[0]) < 0.3 and abs(((lo2 - seed[1] + 180) % 360) - 180) < 0.3:
+                break
+        return out
+    f = one(+1); bk = one(-1)
+    return list(reversed(bk)) + [(seed[1], seed[0])] + f
+
+
+def _cone_seed(rec):
+    """A point on the depth=0 contour: start at the greatest-eclipse location
+    (inside totality) and step north until depth crosses zero, then correct."""
+    lat0 = rec.get('lat_dd_ge'); lon0 = rec.get('lng_dd_ge')
+    if lat0 is None or lon0 is None:
+        return None
+    d0, _ = _cone_depth(rec, lat0, lon0)
+    if d0 <= 0:
+        return None
+    lat = lat0
+    for _ in range(400):
+        lat += 0.25
+        d, _ = _cone_depth(rec, lat, lon0)
+        if d <= 0:
+            la, lo, ok = _cone_correct(rec, lat - 0.125, lon0)
+            return (la, lo) if ok else None
+    return None
+
+
+def _cone_worst_turn(seg):
+    wv = 0.0
+    for i in range(1, len(seg) - 1):
+        if abs(seg[i][1]) > 85: continue
+        b1 = _gc_bearing((seg[i - 1][1], seg[i - 1][0]), (seg[i][1], seg[i][0]))
+        b2 = _gc_bearing((seg[i][1], seg[i][0]), (seg[i + 1][1], seg[i + 1][0]))
+        dd = abs(math.degrees(b2 - b1)) % 360
+        wv = max(wv, min(dd, 360 - dd))
+    return wv
+
+
+def cone_limit_split(rec, accept_deg=20.0):
+    """Attempt the zigzag-free umbral N/S limits via the cone-spheroid contour.
+    Returns (north_limit, south_limit) as point lists if the split verifies clean
+    (both limbs' worst interior turn <= accept_deg), else None so the caller falls
+    back to the legacy envelope path. Only symmetric two-tip corridors qualify."""
+    seed = _cone_seed(rec)
+    if seed is None:
+        return None
+    # Cheap pre-filter: the clean-split topology is the mid-latitude two-tip
+    # corridor. Polar eclipses (GE near a pole) trace degenerately and always
+    # fall back; skip the expensive trace for them to avoid wasted build time.
+    lat_ge = rec.get('lat_dd_ge')
+    if lat_ge is not None and abs(lat_ge) > 70:
+        return None
+    try:
+        loop = _cone_trace(rec, seed)
+    except Exception:
+        return None
+    if not loop or len(loop) < 40:
+        return None
+    comp = loop
+    n = len(comp)
+    W = max(4, n // 180)
+    turn = [0.0] * n
+    for i in range(n):
+        b1 = _gc_bearing((comp[(i - W) % n][1], comp[(i - W) % n][0]), (comp[i][1], comp[i][0]))
+        b2 = _gc_bearing((comp[i][1], comp[i][0]), (comp[(i + W) % n][1], comp[(i + W) % n][0]))
+        d = abs(math.degrees(b2 - b1)) % 360
+        turn[i] = min(d, 360 - d)
+    order = [i for i in sorted(range(n), key=lambda i: -turn[i])
+             if turn[i] > 80 and abs(comp[i][1]) < 82]
+    peaks = []
+    for i in order:
+        if all(min(abs(i - p), n - abs(i - p)) > n * 0.05 for p in peaks):
+            peaks.append(i)
+        if len(peaks) >= 8: break
+    tips = []
+    for i in peaks:
+        for t in tips:
+            if _cone_gc(comp[i], comp[t[0]]) < 500: t.append(i); break
+        else:
+            tips.append([i])
+    if len(tips) < 2:
+        return None
+    tiploc = [comp[t[0]] for t in tips[:2]]
+    # Refine each tip-pass cut to the sharpest RAW (un-windowed) vertex near its
+    # windowed peak (the true apex), then cut at ALL passes. The loop crosses each
+    # tip twice (N pass + S pass); cutting at all of them and keeping the two
+    # longest segments gives the two clean limbs without straddling a tip.
+    def _raw_turn(i):
+        b1 = _gc_bearing((comp[(i - 1) % n][1], comp[(i - 1) % n][0]), (comp[i][1], comp[i][0]))
+        b2 = _gc_bearing((comp[i][1], comp[i][0]), (comp[(i + 1) % n][1], comp[(i + 1) % n][0]))
+        d = abs(math.degrees(b2 - b1)) % 360
+        return min(d, 360 - d)
+    all_passes = [i for t in tips[:2] for i in t]
+    refined = []
+    for base in all_passes:
+        rng = [(base + k) % n for k in range(-W, W + 1)]
+        refined.append(max(rng, key=_raw_turn))
+    cuts = sorted(set(refined))
+    if len(cuts) < 2:
+        cuts = sorted(i for t in tips[:2] for i in t)
+    segs = []
+    for k in range(len(cuts)):
+        a = cuts[k]; b = cuts[(k + 1) % len(cuts)]
+        seg = comp[a:b + 1] if b > a else comp[a:] + comp[:b + 1]
+        segs.append(seg)
+    segs.sort(key=len, reverse=True)
+    limbs = [[p for p in l if all(_cone_gc(p, tl) > 150 for tl in tiploc)]
+             for l in segs[:2]]
+    if len(limbs) < 2 or len(limbs[1]) < 10:
+        return None
+    # Crossover trim: near a tip the two limbs nearly touch; a few end vertices of
+    # one limb can sit on the OTHER limb's track (showed up as ~4 km errors at one
+    # tip). Remove leading/trailing vertices that are closer to the other limb than
+    # to their own along-limb neighbour.
+    def _trim_crossover(a, b):
+        if len(a) < 5 or len(b) < 5:
+            return a
+        def near_other(p):
+            return min(_cone_gc(p, q) for q in b)
+        # leading
+        i = 0
+        while i < len(a) - 2 and near_other(a[i]) < _cone_gc(a[i], a[i + 1]) * 0.6:
+            i += 1
+        # trailing
+        j = len(a) - 1
+        while j > i + 2 and near_other(a[j]) < _cone_gc(a[j], a[j - 1]) * 0.6:
+            j -= 1
+        return a[i:j + 1]
+    l0 = _trim_crossover(limbs[0], limbs[1])
+    l1 = _trim_crossover(limbs[1], limbs[0])
+    limbs = [l0, l1]
+    if len(limbs[0]) < 10 or len(limbs[1]) < 10:
+        return None
+    w1 = _cone_worst_turn(limbs[0]); w2 = _cone_worst_turn(limbs[1])
+    if max(w1, w2) > accept_deg:
+        return None
+    a, b = limbs
+    north, south = (a, b) if (sum(p[1] for p in a) / len(a)) >= (sum(p[1] for p in b) / len(b)) else (b, a)
+    return north, south
+
+
 def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     tmin=rec['tmin']; tmax=rec['tmax']; step=step_min/60.0
     # Central eclipses include all T (total), A (annular), H (hybrid)
@@ -1702,6 +1929,19 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     un_segs = [un] if un else []
     us_segs = [us] if us else []
 
+    # Zigzag-free umbral limits: where the cone-spheroid contour splits into two
+    # clean N/S limbs (symmetric two-tip corridors, verified worst-turn small),
+    # use them; otherwise keep the legacy envelope walk above (no regression).
+    try:
+        _cl = cone_limit_split(rec)
+    except Exception:
+        _cl = None
+    if _cl is not None:
+        _n, _s = _cl
+        un = [[round(lo, 5), round(la, 5)] for (lo, la) in _n]
+        us = [[round(lo, 5), round(la, 5)] for (lo, la) in _s]
+        un_segs = [un]; us_segs = [us]
+
     # Unwrap all three curves so they are continuous past the antimeridian
     cl_segs = [unwrap(cl_segs[0])] if cl_segs else []
     un_segs = [unwrap(un_segs[0])] if un_segs else []
@@ -1909,20 +2149,44 @@ def _round_path(path):
     return result
 
 
-def process_chunk(path, out_dir, step_min, pen_n):
+def _build_one(args):
+    """Worker: build one eclipse's rounded path. Returns (key, path). Pure
+    function of its inputs — eclipses are independent, so this parallelizes
+    safely with no shared state."""
+    rec, step_min, pen_n = args
+    cat = rec.get('cat_no')
+    key = str(int(float(cat))) if cat is not None else f"{rec['year']}_{rec['month']}_{rec['day']}"
+    return key, _round_path(build_path(rec, step_min, pen_n))
+
+
+def process_chunk(path, out_dir, step_min, pen_n, jobs=1):
     with open(path) as f: records=json.load(f)
     name=os.path.splitext(os.path.basename(path))[0]
     out_path=os.path.join(out_dir,f'paths_{name}.json.gz')
     paths={}
-    print(f'  {name}: {len(records)} eclipses')
+    print(f'  {name}: {len(records)} eclipses' + (f' [{jobs} jobs]' if jobs > 1 else ''))
     n = len(records)
-    for i, rec in enumerate(records):
-        cat=rec.get('cat_no')
-        key=str(int(float(cat))) if cat is not None else f"{rec['year']}_{rec['month']}_{rec['day']}"
-        print(f"\r    {i+1}/{n}  {rec['year']}-{rec['month']:02d}-{rec['day']:02d}   ",
-              end="", flush=True)
-        paths[key]=_round_path(build_path(rec, step_min, pen_n))
-    print(f"\r    {n}/{n}  done{' '*20}")
+    if jobs and jobs > 1:
+        # Parallel: map preserves order; results merged into the same dict the
+        # serial path would produce (byte-identical output, just faster).
+        import multiprocessing as _mp
+        with _mp.Pool(jobs) as pool:
+            done = 0
+            for key, p in pool.imap(_build_one,
+                                    [(rec, step_min, pen_n) for rec in records],
+                                    chunksize=1):
+                paths[key] = p
+                done += 1
+                print(f"\r    {done}/{n} done   ", end="", flush=True)
+        print(f"\r    {n}/{n}  done{' '*20}")
+    else:
+        for i, rec in enumerate(records):
+            cat=rec.get('cat_no')
+            key=str(int(float(cat))) if cat is not None else f"{rec['year']}_{rec['month']}_{rec['day']}"
+            print(f"\r    {i+1}/{n}  {rec['year']}-{rec['month']:02d}-{rec['day']:02d}   ",
+                  end="", flush=True)
+            paths[key]=_round_path(build_path(rec, step_min, pen_n))
+        print(f"\r    {n}/{n}  done{' '*20}")
     raw_bytes = json.dumps(paths, separators=(',',':')).encode()
     with _gz.open(out_path, 'wb', compresslevel=9) as f:
         f.write(raw_bytes)
@@ -1942,6 +2206,9 @@ def main():
     p.add_argument('--year',    type=int,  default=None,
                    help='Process only the chunk(s) containing this year')
     p.add_argument('--test',    action='store_true')
+    p.add_argument('--jobs',    type=int, default=1,
+                   help='parallel worker processes (default 1 = serial; '
+                        'try 0 for all CPU cores)')
     args=p.parse_args()
     if args.test: run_tests(); return
     os.makedirs(args.out_dir, exist_ok=True)
@@ -1957,7 +2224,11 @@ def main():
         chunks=matching
     print(f'{len(chunks)} chunk(s)  step={args.step}m  pen-n={args.pen_n}'
           +(f'  year={args.year}' if args.year else ''))
-    for c in chunks: process_chunk(c, args.out_dir, args.step, args.pen_n)
+    jobs = args.jobs
+    if jobs == 0:
+        import multiprocessing as _mp
+        jobs = _mp.cpu_count()
+    for c in chunks: process_chunk(c, args.out_dir, args.step, args.pen_n, jobs)
     print('Done.')
 
 
