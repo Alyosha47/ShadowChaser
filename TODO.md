@@ -31,8 +31,15 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
 
 ---
 
-
 ## BUGS — open (detail; status in handoff)
+- **Sun-track marker vs contact-icon direction (NEEDS A CONCRETE EXAMPLE).** Reported that
+  the slider sun/moon orientation looked closer to OPPOSITE the table's contact icon than a
+  mere sampling drift. Possible benign cause: the C2/C3 diamond-ring icon places the BEAD
+  (sunlight point) at V, which is opposite the moon's bulk — so comparing the graph's moon
+  to a C2/C3 bead would look opposite and be CORRECT. But not yet confirmed vs a true sign
+  error. ACTION: user to supply a year + which contact; then verify bead-vs-moon vs a real
+  V sign bug in buildSunTrack/sampleEclipseAt. (Exact contact/max times are now injected as
+  samples, so it is NOT a snapping artifact.)
 
 - **Umbral grazing-tip zigzag (generator).** On grazing eclipses the umbral N/S limit
   shows a large gap (300–1200 km) paired with a ~150–177° fold at one or both ends. Audit
@@ -122,10 +129,6 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
   but not in Safari. Check secure-context / permissions / Brave default block vs the code
   path. Related to the locate-pin note above.
 
-- **Suggested/empty search text doesn't expand the search box.** When placeholder/suggested
-  text is present the textarea doesn't grow to fit. Small CSS/JS edge case (autogrow is
-  `field-sizing: content`; this case doesn't trigger it).
-
 - **Slow first load from local-disk server** — minutes vs seconds. Profile what's
   blocking; likely a chunk-fetch pattern.
 
@@ -136,10 +139,6 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
   other active filters. Pre-existing. (NB: offline this is now harmless noise rather than
   errors — the SW precaches all 50 besselian centuries, so the scan finds every chunk
   offline. The inefficiency of scanning all centuries when filters could narrow it remains.)
-
-- **GE dot skew (VERIFY).** Greatest-eclipse dot was reported offset from where it should
-  be. Unconfirmed whether still present after this session's marker work — verify before
-  spending effort; remove if gone.
 
 ---
 
@@ -153,31 +152,25 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
 
 ## OPEN UX QUESTIONS (deliberation; decide before coding)
 
-- **Coordinates → "Location" rename + merge.** Consider renaming "Coordinates" to
-  "Location" and merging the Coordinates + City instruction sections into one. CAUTION:
-  the term appears in details panel, map popup, share text, and parser comments — decide
-  the canonical term first, change everywhere consistently. CAVEAT: the parser doesn't
-  currently handle bracketed multi-word city names (small code change needed). (The
-  "Obscuration" canonical term and the narrow 2-column example layout are already done.)
-- **Instructions vs. Search-Syntax sections** — are these meaningfully separate? Consider
-  merging into one.
 - **Circumstances panel density** — Global Circumstances is tall; on map-click the user
   should see local circs change without scrolling. Either tighten cell sizes/line-heights
   or switch Global Circs to a compact list-table while keeping Local Circs as blocks.
-- **GE-dot zoom behavior** — the dot scales up with zoom until it fills the screen. Cap
-  its max size in pixel space rather than world space.
+
 - **Mobile map-click microsheet** — with no sidebar on mobile, a map click gives no inline
   "this is what changed." Add a small dismissable bottom-of-map sheet showing at least
   umbral duration for the clicked point.
-- **Global-vs-local eclipse-type search semantics (#F5)** — "1960+ total St. Louis"
-  should distinguish "total globally + visible from STL" vs "total AS SEEN from STL"
-  (1979 was total globally, partial from STL — currently excluded by the `total` filter).
-  Four design options exist; this is the "total somewhere / partial here" (Mag>0.99)
-  disambiguation. Real UX design problem.
+- **Eclipse-type search semantics (#F5) — RESOLVED (already implemented).** Verified in
+  search_parser.js: WITH an obscuration filter, "total/annular" uses the eclipse's GLOBAL
+  type (total somewhere) and obscuration governs visibility at the location — so
+  `total (lat,lon) >40%` = "total somewhere AND >=40% obscuration from that location".
+  WITHOUT an obscuration filter, a scanned location uses LOCAL type ("total as seen here").
+  (Keys on the obscuration filter's presence, not the bare location — sensible as-is.)
 
 ---
 
 ## FEATURES — EASY
+- **Instructions note: online/offline is reload-only.** Add a line to the instructions
+  explaining the map picks online/offline at load; switching networks needs a page reload.
 - **Mobile UX / layout pass (interdependent — one sitting).** (a) Banner + tabs permanent,
   immobile, unscalable on mobile/PWA (pairs with #R5 pinch-zoom — don't scroll away or
   zoom); (b) move tabs to screen BOTTOM on mobile/PWA for thumb reach; (c) single-line
@@ -205,7 +198,6 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
 - Editable lat/lon/alt in the local-circumstances panel (coords are currently editable
   only via the search field, not in the panel itself).
 - Splash / title page for installed-PWA mode; app icon; app logo / eclipse symbol.
-- Parabolic sun-track diagram in the Details panel, below the data grids.
 - Night-sky-during-totality view — planets/comets/bright stars near the Sun at totality,
   positioned for the selected eclipse.
 
@@ -237,7 +229,7 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
 - **#F1 Personal "ShadowChaser log"** — eclipses visited / wishlist; schema, localStorage
   (or future sync), UI in list/details, "been there" vs "want to go", merge with selection
   state. (Reference: a clean list with icons, dates, types.)
-- Thumbnail path map per list row (small SVG per row).
+- Thumbnail path map per list row (small SVG) — MOBILE ONLY (not desktop).
 - Century scroller on the mobile right edge.
 - KMZ download.
 

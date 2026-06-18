@@ -344,7 +344,7 @@ function _renderMapStatus() {
   var text = _mapStatusTransient || (selectedEntry
     ? fmtDate(selectedEntry) + '\u2002\u2014\u2002' + typeName((selectedEntry.eclipse_type||'P')[0])
     : null);
-  if (text) { el.textContent = text; el.style.display = ''; }
+  if (text) { el.textContent = text; el.style.display = 'block'; }
   else      { el.style.display = 'none'; }
 }
 
@@ -870,7 +870,7 @@ function drawEclipsePath(ep) {
       data: segsToPathData(ep.centreline, 'cl'),
       getPath: function(d) { return d.path; },
       getColor: [204,34,0,255],
-      getWidth: 2.5,
+      getWidth: 1.5,
       widthUnits: 'pixels',
       widthMinPixels: 1,
     }));

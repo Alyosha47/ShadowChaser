@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="build" content="2026-06-16m">
+  <meta name="build" content="2026-06-16r">
   <title>ShadowChaser</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
@@ -48,7 +48,7 @@
     <div class="share-modal">
       <div class="share-modal-header">
         <span class="share-modal-title">Share Eclipse</span>
-        <button class="share-modal-close" onclick="document.getElementById('share-modal-backdrop').classList.remove('open')">&times;</button>
+        <button class="share-modal-close" aria-label="Close" onclick="document.getElementById('share-modal-backdrop').classList.remove('open')">&times;</button>
       </div>
       <textarea id="share-text" readonly spellcheck="false"></textarea>
       <div class="share-modal-btns">
@@ -69,7 +69,7 @@
             <div id="map"></div>
 
       <!-- Locate button — top right of map -->
-      <button id="btn-locate" title="Use my location"
+      <button id="btn-locate" title="Use my location" aria-label="Use my location"
               style="position:absolute;top:0.6rem;right:0.6rem;z-index:200;
                      background:rgba(10,15,32,0.88);border:1px solid var(--border2);
                      border-radius:var(--radius);padding:0.35rem 0.65rem;
@@ -77,11 +77,11 @@
                      pointer-events:auto">📍</button>
 
       <!-- Floating overlay: shows eclipse name or "click to set location" -->
-        <div id="map-status" style="position:absolute;bottom:2.5rem;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);pointer-events:none;background:var(--bg2);padding:0.25rem 0.75rem;border-radius:99px;opacity:0.85;display:none"></div>
+        <div id="map-status" class="map-status"></div>
 
       <!-- Click-result popup -->
       <div class="map-popup" id="map-popup">
-        <button class="map-popup-close" id="map-popup-close">&times;</button>
+        <button class="map-popup-close" id="map-popup-close" aria-label="Close">&times;</button>
         <div class="map-popup-title" id="map-popup-title"></div>
         <div class="map-popup-grid" id="map-popup-grid"></div>
       </div>
@@ -118,7 +118,7 @@
           <div class="search-box">
             <textarea id="search" rows="1"
                       placeholder="today+  ·  year  ·  total  ·  s126  ·  (lat, lon)  ·  &gt;47%">today+ total annular hybrid</textarea>
-            <button class="search-clear" id="btn-search-clear" title="Clear search">&times;</button>
+            <button class="search-clear" id="btn-search-clear" title="Clear search" aria-label="Clear search">&times;</button>
           </div>
 
           <div class="search-hint">
@@ -194,14 +194,13 @@
       <div class="settings-section">
         <div class="top-section-header">Sources</div>
         <div class="about-text">
-          <p><strong>Eclipse catalogue and Besselian elements</strong> are sourced from Espenak &amp; Meeus, <em>Five Millennium Canon of Solar Eclipses: &minus;1999 to +3000</em> (NASA/TP-2006-214141). Local circumstances are computed via the Besselian element method described by Jean Meeus in <em>Astronomical Algorithms</em> (Willmann-Bell, 2nd ed. 1998, Ch. 54). No lunar limb correction is applied.</p>
+          <p><strong>Eclipse catalogue and Besselian elements</strong> are sourced from Espenak &amp; Meeus, <em>Five Millennium Canon of Solar Eclipses: &minus;1999 to +3000</em> (NASA/TP-2006-214141). Local circumstances are computed via the Besselian element method described by Jean Meeus in <em>Astronomical Algorithms</em> (Willmann-Bell, 2nd ed. 1998, Ch. 54).</p>
           <p><strong>Delta T</strong> (&Delta;T = TT &minus; UT) drifts with the Earth&rsquo;s rotation and has its own delta over time. This code uses the best available source per date:
             1973 to last month &mdash; USNO observed monthly tables (<em>deltat.data</em>);
             last month to ~5 years out &mdash; USNO quarterly forecast (<em>deltat.preds</em>);
             &minus;720 to 2050 (outside the USNO range) &mdash; Espenak&ndash;Meeus piecewise polynomial;
             before &minus;720 and after 2050 &mdash; Stephenson, Morrison &amp; Hohenkerk (2016) LOD integral extrapolation.</p>
           <p><strong>Basemaps</strong> are served from OpenFreeMap (Liberty vector style, <em>openfreemap.org</em>) when online, and from Natural Earth public-domain geodata (<em>naturalearthdata.com</em>) when offline.</p>
-          <p>The map chooses online or offline mode when the page loads. If your connection changes &mdash; you go offline in the field, or come back online &mdash; reload the page to switch modes.</p>
           <p><strong>Timezones</strong> are resolved offline via the <em>tz-lookup</em> polygon database. Elevation is auto-filled by the Open-Elevation API when online.</p>
         </div>
       </div>
@@ -220,6 +219,7 @@
             <tr><td>Post-2050</td><td>Increasing (&Delta;T extrapolation)</td></tr>
           </tbody>
         </table>
+        <p class="about-text tol-note">No lunar limb correction is applied.</p>
       </div>
 
       </details>
@@ -277,6 +277,7 @@
           <p>Obscuration is the share of the Sun&rsquo;s area covered <em>at your
           location</em> whenever one is set; with no location it&rsquo;s the maximum
           anywhere on Earth.</p>
+          <p><strong>Online / offline maps.</strong> The map picks online or offline mode when the page loads. If your connection changes &mdash; you go offline in the field, or come back online &mdash; reload the page to switch modes.</p>
         </div>
       </div>
 
@@ -333,7 +334,7 @@
 <script>
 'use strict';
 var DATA_BASE = './data';
-var BUILD     = '2026-06-16m';
+var BUILD     = '2026-06-16r';
 // Installed-PWA mode → tag <html> so CSS can drop the branding banner (older iOS
 // lacks the display-mode media query, so navigator.standalone is the fallback).
 if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) {

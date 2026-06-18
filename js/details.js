@@ -29,7 +29,8 @@ function buildContactRows(rec, res, lbl, tz) {
     if (!c || c.ut === null || c.ut === undefined) return;
     var s = c.sun || {};
     rows.push({ ut: c.ut, html:
-        '<tr' + (cls ? ' class="' + cls + '"' : '') + '>'
+        '<tr' + (cls ? ' class="' + cls + ' ct-row"' : ' class="ct-row"')
+      + ' onclick="sunTrackJump(' + c.ut + ')">'
       + '<td>' + contactIcon(phase, type, c.v) + ' ' + phase + '</td>'
       + '<td>' + fmtTime(c.ut)       + '</td>'
       + '<td>' + fmtAng(s.alt)       + '</td>'
@@ -40,7 +41,7 @@ function buildContactRows(rec, res, lbl, tz) {
   pushContact('C1', res.C1, '');
   pushContact('C2', res.C2, 'row-umbral');
   rows.push({ ut: res.tMax, html:
-      '<tr class="row-max"><td>' + contactIcon('MAX', type, null) + ' MAX</td>'
+      '<tr class="row-max ct-row" onclick="sunTrackJump(' + res.tMax + ')"><td>' + contactIcon('MAX', type, null) + ' MAX</td>'
     + '<td>' + fmtTime(res.tMax)     + '</td>'
     + '<td>' + fmtAng(res.sun.alt)   + '</td>'
     + '<td>' + fmtAng(res.sun.az)    + '</td></tr>' });
@@ -76,6 +77,13 @@ function buildContactRows(rec, res, lbl, tz) {
 
 function renderData(rec, _tz, _lat, _lon) {
   if (!selectedEntry) return;   /* nothing to render yet (init-time only) */
+  /* Per-eclipse browser title — helps tabs, history, and shared-link previews. */
+  try {
+    var _e = selectedEntry;
+    var _iso = _e.year + '-' + String(_e.month).padStart(2, '0') + '-' + String(_e.day).padStart(2, '0');
+    var _tc = { T: 'TSE', A: 'ASE', H: 'HSE', P: 'PSE' }[(_e.eclipse_type || 'P')[0]] || 'SE';
+    document.title = _tc + ' ' + _iso + ' \u2014 ShadowChaser';
+  } catch (e) {}
   /* Fall back to the cached Besselian record for this eclipse — callers
      that re-render without recomputing (pill toggles, URL restore) don't
      need to know about rec, but the contact-times table needs it. */
@@ -132,9 +140,16 @@ function renderData(rec, _tz, _lat, _lon) {
   if (!coords) {
     html += '<div class="no-location">Enter coordinates in the search field, or tap the map to choose a location.</div>';
   } else if (!localResult) {
-    html += '<div class="no-location">Computing\u2026</div>';
+    /* Only surface "Computing…" when the data chunk is genuinely still loading.
+       When it's already cached the result lands within the same frame, so the
+       text would just flash — skip it then. */
+    var _chunkLoading = !(selectedEntry && selectedEntry._chunk
+                          && typeof chunkCache !== 'undefined' && chunkCache[selectedEntry._chunk]);
+    if (_chunkLoading) {
+      html += '<div class="no-location">Computing\u2026</div>';
+    }
   } else if (!localResult.visible) {
-    html += '<div class="no-eclipse">\uD83C\uDF11 Not visible from this location.</div>';
+    html += '<div class="no-eclipse">\uD83C\uDF11 Not visible from here \u2014 the Sun is below the horizon during this eclipse.</div>';
   } else {
     var res = localResult;
     var lbl = typeName(res.type[0].toUpperCase());
@@ -161,14 +176,14 @@ function renderData(rec, _tz, _lat, _lon) {
     + buildContactRows(rec, res, lbl, tz)
     + '</tbody></table>'
     + '<div class="contacts-note">'
+    +   '<span class="tm-switch" onclick="setTimeMode(\''
+    +   (_timeMode === 'ut' ? 'local' : 'ut') + '\')">'
+    +   (_timeMode === 'ut' ? 'Switch to local time' : 'Switch to UT')
+    +   '</span>'
     +   (_timeMode === 'ut'
-          ? 'UT shown. Tap header for local. Day offsets in parentheses.'
-          : (tz === 0
-              ? 'Local time = UT here.'
-              : 'Local time (' + tzStr + '). Tap header for UT.'))
+          ? ''
+          : (tz === 0 ? ' \u00b7 local = UT here' : ' \u00b7 local time (' + tzStr + ')'))
     + '</div>'
-
-    + (rec ? '<div class="note">No lunar limb correction applied.</div>' : '')
 
     + '<div class="detail-section-h">Sun Track</div>'
     + '<div id="suntrack"></div>';
@@ -218,28 +233,27 @@ function buildSunTrack(rec, lat, lon, altM, res, tz) {
   var span = t1 - t0, marg = span * 0.06;
   var ta = t0 - marg, tb = t1 + marg;
 
-  /* Sample the arc uniformly, PLUS inject the exact contact and maximum times
-     so the slider and the contact marks land precisely on them (matching the
-     Contact Times table — uniform sampling alone snaps to the nearest point and
-     drifts by up to half a step). */
-  var N = 96, times = [];
-  for (var i = 0; i <= N; i++) times.push(ta + (tb - ta) * i / N);
-  var exact = [];
-  [res.C1, res.C2, res.tMax != null ? { ut: res.tMax } : null, res.C3, res.C4]
-    .forEach(function (c) {
-      if (!c) return;
-      var ut = (typeof c === 'object' && c.ut != null) ? c.ut : c;
-      if (ut == null) return;
-      if (ut < t0 - 0.001) ut += 24;        /* same wrap basis as t0..t1 */
-      times.push(ut);
-    });
-  times.sort(function (a, b) { return a - b; });
-  var pts = times.map(function (t) {
-    var s = sampleEclipseAt(rec, lat, lon, altM, ((t % 24) + 24) % 24);
-    return { t: t, az: s.az, alt: s.alt, mag: s.mag, sep: s.sep,
-             moonRatio: s.moonRatio, v: s.v };
-  });
-  N = pts.length - 1;
+  /* Sample the arc on a single uniform time grid. Contacts are NOT inserted into
+     the curve — mixing a uniform grid with injected contact times produced
+     near-coincident points (and a visible kink) on grazers where contacts bunch.
+     Contact positions for the marks/slider are computed directly from their UT
+     via sampleEclipseAt, independent of the curve sampling. */
+  var N = 240;
+  var pts = [];
+  for (var i = 0; i <= N; i++) {
+    var t = ta + (tb - ta) * i / N;
+    var s = sampleEclipseAt(rec, lat, lon, altM, t);
+    pts.push({ t: t, az: s.az, alt: s.alt, mag: s.mag, sep: s.sep,
+               moonRatio: s.moonRatio, v: s.v });
+  }
+  /* Map a contact UT to its position along the uniform grid (fractional index),
+     used to place the slider exactly at a contact without distorting the curve. */
+  function indexForUT(ut) {
+    if (ut == null) return -1;
+    var u = ut; if (u < t0 - 0.001) u += 24;
+    var frac = (u - ta) / (tb - ta) * N;
+    return Math.max(0, Math.min(N, Math.round(frac)));
+  }
 
   /* Plot extents (pad a little). */
   var azs = pts.map(function (p) { return p.az; });
@@ -259,7 +273,7 @@ function buildSunTrack(rec, lat, lon, altM, res, tz) {
   minA -= padA; maxA += padA; maxH += padH;
   minH = Math.min(minH, 0);
 
-  var W = 320, H = 200, L = 16, R = 16, T = 16, B = 16;
+  var W = 320, H = 200, L = 8, R = 8, T = 16, B = 16;
   function px(uazi) { return L + (uazi - minA) / (maxA - minA) * (W - L - R); }
   function py(alti) { return T + (1 - (alti - minH) / (maxH - minH)) * (H - T - B); }
 
@@ -280,20 +294,11 @@ function buildSunTrack(rec, lat, lon, altM, res, tz) {
   }
 
   /* Contact tick marks on the track. */
-  function near(tt) {                          /* nearest sample index to a UT */
-    var bi = 0, bd = 1e9;
-    for (var k = 0; k < pts.length; k++) {
-      var dd = Math.abs(pts[k].t - tt);
-      if (dd < bd) { bd = dd; bi = k; }
-    }
-    return bi;
-  }
   var marks = '';
   var placed = [];                              /* [{x, side}] to de-collide labels */
   [['C1', res.C1], ['C2', res.C2], ['C3', res.C3], ['C4', res.C4]].forEach(function (c) {
     if (!c[1] || c[1].ut == null) return;
-    var ut = c[1].ut; if (ut < t0) ut += 24;
-    var k = near(ut);
+    var k = indexForUT(c[1].ut);
     var mx = px(uaz[k]), my = py(pts[k].alt);
     /* Default label above the point; if another label is within ~16px, put this
        one below instead so C2/C3 (close together) don't overlap. */
@@ -317,7 +322,7 @@ function buildSunTrack(rec, lat, lon, altM, res, tz) {
     +   marks
     +   '<g id="st-marker"></g>'
     + '</svg>'
-    + '<input id="st-slider" type="range" min="0" max="' + N + '" value="' + near(res.tMax != null ? (res.tMax < t0 ? res.tMax + 24 : res.tMax) : (t0 + span / 2)) + '" step="1" class="st-slider"/>'
+    + '<input id="st-slider" type="range" min="0" max="' + N + '" value="' + indexForUT(res.tMax != null ? res.tMax : (t0 + span / 2)) + '" step="1" class="st-slider"/>'
     + '<div id="st-readout" class="st-readout"></div>';
 
   var slider = document.getElementById('st-slider');
@@ -377,12 +382,22 @@ function buildSunTrack(rec, lat, lon, altM, res, tz) {
     var azDisp = ((p.az % 360) + 360) % 360;
     readout.textContent = fmtHM(p.t)
       + '  \u00b7  alt ' + p.alt.toFixed(1) + '\u00b0'
-      + '  \u00b7  az ' + azDisp.toFixed(0) + '\u00b0'
+      + '  \u00b7  az ' + azDisp.toFixed(1) + '\u00b0'
       + (p.mag > 0 ? '  \u00b7  mag ' + p.mag.toFixed(3) : '');
   }
 
   slider.addEventListener('input', function () { draw(parseInt(slider.value, 10)); });
   draw(parseInt(slider.value, 10));
+
+  /* Let the contact-time rows jump the slider to a given UT — lands exactly on
+     the injected contact datapoint. */
+  window.sunTrackJump = function (ut) {
+    var k = indexForUT(ut);
+    if (k < 0) return;
+    slider.value = k;
+    draw(k);
+    slider.focus();
+  };
 }
 
 function contactIcon(phase, type, v) {
