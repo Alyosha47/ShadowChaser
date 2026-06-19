@@ -1377,7 +1377,7 @@ def _cone_trace(rec, seed, step_km=25.0, maxpts=6000, min_km=3.0, max_turn=12.0)
     (degenerate polar/annular geometry) hits the cap and the caller falls back."""
     DEG = math.pi / 180.0
     def one(sign):
-        la, lo = seed; prevb = None; out = []; step = step_km
+        la, lo = seed; prevb = None; out = []; step = step_km; closed = False
         for _ in range(maxpts):
             gla, glo = _cone_grad(rec, la, lo); gn = math.hypot(gla, glo)
             if gn < 1e-9: break
@@ -1393,11 +1393,23 @@ def _cone_trace(rec, seed, step_km=25.0, maxpts=6000, min_km=3.0, max_turn=12.0)
             la2 = la + sign * step / 111.0 * tla; lo2 = lo + sign * step / 111.0 * tlo
             la2, lo2, ok = _cone_correct(rec, la2, lo2)
             if not ok: break
-            out.append((lo2, la2)); prevb = b; la, lo = la2, lo2
+            # Closure: when the walk returns to the seed the contour is closed.
+            # Stop WITHOUT appending the overshoot point (a near-duplicate of the
+            # seed) and flag the closure.
             if len(out) > 6 and abs(la2 - seed[0]) < 0.3 and abs(((lo2 - seed[1] + 180) % 360) - 180) < 0.3:
-                break
-        return out
-    f = one(+1); bk = one(-1)
+                closed = True; break
+            out.append((lo2, la2)); prevb = b; la, lo = la2, lo2
+        return out, closed
+    f, fc = one(+1)
+    # A CLOSED contour is fully captured by a single forward traverse: seed all
+    # the way around back to the seed. Tracing the other direction as well would
+    # double-cover the loop (each tip and each limb appears twice), which makes a
+    # "two longest segments" split pick two copies of the SAME limb. So when the
+    # forward walk closed, return the single traverse. Only OPEN contours (that
+    # terminate at a boundary instead of closing) need both directions.
+    if fc:
+        return [(seed[1], seed[0])] + f
+    bk, _ = one(-1)
     return list(reversed(bk)) + [(seed[1], seed[0])] + f
 
 
@@ -1429,6 +1441,51 @@ def _cone_worst_turn(seg):
         dd = abs(math.degrees(b2 - b1)) % 360
         wv = max(wv, min(dd, 360 - dd))
     return wv
+
+
+def _cone_sun_alt(rec, lat, lon):
+    """Sun altitude (deg) at the ground point (lat, lon) at the instant of ITS
+    OWN maximum eclipse. >= 0 means the eclipse is visible (sun up) there; the
+    locus where it == 0 is the Maximum-on-Horizon ('green') curve, on which every
+    umbral limit terminates. Same construction as build_path's _max_sun_alt."""
+    tmin = rec['tmin']; tmax = rec['tmax']
+    def adz(t):
+        X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
+        xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
+        if zeta is None:
+            return 1e18, -1.0
+        return math.hypot(xi - X, (eta - Y) / rho1), zeta
+    N = 48; bt = tmin; bd = 1e18
+    for i in range(N + 1):
+        t = tmin + (tmax - tmin) * i / N
+        dme, _z = adz(t)
+        if dme < bd: bd = dme; bt = t
+    a = max(tmin, bt - (tmax - tmin) / N); b = min(tmax, bt + (tmax - tmin) / N)
+    bz = -1.0
+    for _ in range(40):
+        m1 = a + (b - a) / 3; m2 = b - (b - a) / 3
+        d1, z1 = adz(m1); d2, z2 = adz(m2)
+        if d1 < d2: b = m2; bz = z1
+        else: a = m1; bz = z2
+    return math.degrees(math.asin(max(-1.0, min(1.0, bz))))
+
+
+def _cone_clip_horizon(rec, limb):
+    """Terminate a cone limb on the green line by dropping the contiguous
+    below-horizon run from each END. At a terminator tip the closed contour
+    rounds the corner from one limb into the other by dipping below the horizon;
+    those points are not part of either limit, so removing them leaves the limb
+    ending exactly where it crosses alt = 0 (the cusp / green-line terminus).
+    A no-op for ends that never go below the horizon (grazing or open ends)."""
+    if len(limb) < 6:
+        return limb
+    lo = 0
+    while lo < len(limb) - 3 and _cone_sun_alt(rec, limb[lo][1], limb[lo][0]) < 0.0:
+        lo += 1
+    hi = len(limb) - 1
+    while hi > lo + 3 and _cone_sun_alt(rec, limb[hi][1], limb[hi][0]) < 0.0:
+        hi -= 1
+    return limb[lo:hi + 1]
 
 
 def cone_limit_split(rec, accept_deg=20.0):
@@ -1499,32 +1556,23 @@ def cone_limit_split(rec, accept_deg=20.0):
         seg = comp[a:b + 1] if b > a else comp[a:] + comp[:b + 1]
         segs.append(seg)
     segs.sort(key=len, reverse=True)
-    limbs = [[p for p in l if all(_cone_gc(p, tl) > 150 for tl in tiploc)]
-             for l in segs[:2]]
-    if len(limbs) < 2 or len(limbs[1]) < 10:
+    raw = segs[:2]
+    if len(raw) < 2 or len(raw[1]) < 10:
         return None
-    # Crossover trim: near a tip the two limbs nearly touch; a few end vertices of
-    # one limb can sit on the OTHER limb's track (showed up as ~4 km errors at one
-    # tip). Remove leading/trailing vertices that are closer to the other limb than
-    # to their own along-limb neighbour.
-    def _trim_crossover(a, b):
-        if len(a) < 5 or len(b) < 5:
-            return a
-        def near_other(p):
-            return min(_cone_gc(p, q) for q in b)
-        # leading
-        i = 0
-        while i < len(a) - 2 and near_other(a[i]) < _cone_gc(a[i], a[i + 1]) * 0.6:
-            i += 1
-        # trailing
-        j = len(a) - 1
-        while j > i + 2 and near_other(a[j]) < _cone_gc(a[j], a[j - 1]) * 0.6:
-            j -= 1
-        return a[i:j + 1]
-    l0 = _trim_crossover(limbs[0], limbs[1])
-    l1 = _trim_crossover(limbs[1], limbs[0])
-    limbs = [l0, l1]
-    if len(limbs[0]) < 10 or len(limbs[1]) < 10:
+    # Fundamental terminus: the umbral limit exists only where the eclipse is
+    # visible, and terminates on the Maximum-on-Horizon (green) line. At a
+    # terminator tip the contour rounds the corner below the horizon, so the
+    # horizon clip drops that join and the limb ends exactly on green.
+    limbs = [_cone_clip_horizon(rec, l) for l in raw]
+    bad = (len(limbs[0]) < 10 or len(limbs[1]) < 10 or
+           max(_cone_worst_turn(limbs[0]), _cone_worst_turn(limbs[1])) > accept_deg)
+    if bad:
+        # Grazing tip (shallow annular): the corner never crosses the horizon,
+        # so the clip is a no-op and the geometric corner remains. Trim the
+        # corner by proximity to the tip apex (the cusp where the limbs meet).
+        limbs = [[p for p in l if all(_cone_gc(p, tl) > 150 for tl in tiploc)]
+                 for l in raw]
+    if len(limbs) < 2 or len(limbs[1]) < 10:
         return None
     w1 = _cone_worst_turn(limbs[0]); w2 = _cone_worst_turn(limbs[1])
     if max(w1, w2) > accept_deg:
@@ -1938,9 +1986,33 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         _cl = None
     if _cl is not None:
         _n, _s = _cl
-        un = [[round(lo, 5), round(la, 5)] for (lo, la) in _n]
-        us = [[round(lo, 5), round(la, 5)] for (lo, la) in _s]
-        un_segs = [un]; us_segs = [us]
+        # Acceptance guard: the cone split and the envelope walk are two
+        # INDEPENDENT computations of the same physical curve. A correct cone
+        # limb agrees with the envelope to a few km in the median (a localized
+        # envelope zigzag cannot move the median); a mis-split corridor disagrees
+        # by hundreds of km. The worst-turn gate alone admits smooth-but-displaced
+        # limbs (e.g. 2060/2061), so require median agreement before trusting the
+        # cone result; otherwise keep the envelope. Not a tuned constant: real
+        # agreement is sub-3 km and a mis-split is >500 km, far either side of 50.
+        def _med_gap(cone, env):
+            if not cone or len(env) < 2:
+                return 1e12
+            def d(p, q):
+                dla = q[1] - p[1]
+                dlo = ((q[0] - p[0] + 180.0) % 360.0) - 180.0
+                la = math.radians((p[1] + q[1]) * 0.5)
+                return math.hypot(dla, dlo * math.cos(la)) * 111000.0
+            ds = []
+            stp = max(1, len(cone) // 40)
+            for i in range(0, len(cone), stp):
+                p = cone[i]
+                ds.append(min(d(p, q) for q in env))
+            ds.sort()
+            return ds[len(ds) // 2]
+        if max(_med_gap(_n, un), _med_gap(_s, us)) < 50000.0:
+            un = [[round(lo, 5), round(la, 5)] for (lo, la) in _n]
+            us = [[round(lo, 5), round(la, 5)] for (lo, la) in _s]
+            un_segs = [un]; us_segs = [us]
 
     # Unwrap all three curves so they are continuous past the antimeridian
     cl_segs = [unwrap(cl_segs[0])] if cl_segs else []
