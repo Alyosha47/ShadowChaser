@@ -18,7 +18,7 @@ Usage:
     python3 gen_eclipse_paths.py --test
 """
 
-import argparse, gzip as _gz, glob, json, math, os
+import argparse, datetime as _dt, gzip as _gz, glob, json, math, os
 
 # ── Constants ──────────────────────────────────────────────────────────────
 DEG           = math.pi / 180.0
@@ -26,6 +26,8 @@ E2            = 2.0/298.257223563 - (1.0/298.257223563)**2
 R_EARTH_M     = 6378137.0  # WGS84 equatorial radius (metres)
 R             = 6371.0    # km
 STEP_MIN      = 1         # minutes between path samples
+GEN_VERSION   = '2026-06-22b'  # generator code version; stamped into each chunk's __meta
+                              # (bump when the generation math changes)
 TERM_STEP_MIN = 0.1       # finer step for terminator curves (was 0.5; gave ~80 km median vertex spacing → 6 km cross-track error)
 PEN_N         = 720       # L1-circle sample points (penumbra sweep)
 MIN_SEG       = 10        # minimum points to retain a segment
@@ -43,16 +45,34 @@ def poly(c, t):
 # ── Besselian state ────────────────────────────────────────────────────────
 
 def bstate(rec, t):
-    """All Besselian quantities at time t (hours from GE epoch)."""
-    X   = poly([rec['x0'], rec['x1'], rec['x2'], rec['x3']], t)
-    Xp  = poly([rec['x1'], 2*rec['x2'], 3*rec['x3'], 0],    t)
-    Y   = poly([rec['y0'], rec['y1'], rec['y2'], rec['y3']], t)
-    Yp  = poly([rec['y1'], 2*rec['y2'], 3*rec['y3'], 0],    t)
-    d_r = poly([rec['d0'], rec['d1'], rec['d2'], 0],         t) * DEG
-    mu  = poly([rec['mu0'], rec['mu1'], rec['mu2'], 0],      t)
-    L1  = poly([rec['l10'], rec['l11'], rec['l12'], 0],  t)
-    L2  = poly([rec['l20'], rec['l21'], rec['l22'], 0],  t)
-    return X, Xp, Y, Yp, d_r, mu, rec['dt'], L1, L2
+    """All Besselian quantities at time t (hours from GE epoch).
+
+    Coefficients are constant per eclipse, so they are cached on the record and
+    poly() is inlined here -- this is the innermost hot loop (millions of calls
+    per eclipse). The arithmetic is byte-for-byte identical to the previous
+    poly([...]) form; only the redundant per-call list-building is removed."""
+    c = rec.get('_bc')
+    if c is None:
+        c = (rec['x0'], rec['x1'], rec['x2'], rec['x3'],
+             rec['y0'], rec['y1'], rec['y2'], rec['y3'],
+             rec['d0'], rec['d1'], rec['d2'],
+             rec['mu0'], rec['mu1'], rec['mu2'],
+             rec['l10'], rec['l11'], rec['l12'],
+             rec['l20'], rec['l21'], rec['l22'], rec['dt'])
+        rec['_bc'] = c
+    (x0,x1,x2,x3, y0,y1,y2,y3, d0,d1,d2, m0,m1,m2,
+     a0,a1,a2, b0,b1,b2, dt) = c
+    # Operation order kept identical to the original poly([...]) calls so the
+    # result is byte-for-byte unchanged (float multiply is not associative).
+    X   = x0 + x1*t + x2*t*t + x3*t*t*t
+    Xp  = x1 + 2*x2*t + 3*x3*t*t
+    Y   = y0 + y1*t + y2*t*t + y3*t*t*t
+    Yp  = y1 + 2*y2*t + 3*y3*t*t
+    d_r = (d0 + d1*t + d2*t*t) * DEG
+    mu  = m0 + m1*t + m2*t*t
+    L1  = a0 + a1*t + a2*t*t
+    L2  = b0 + b1*t + b2*t*t
+    return X, Xp, Y, Yp, d_r, mu, dt, L1, L2
 
 
 # ── Fundamental plane → geodetic ───────────────────────────────────────────
@@ -1377,7 +1397,7 @@ def _cone_trace(rec, seed, step_km=25.0, maxpts=6000, min_km=3.0, max_turn=12.0)
     (degenerate polar/annular geometry) hits the cap and the caller falls back."""
     DEG = math.pi / 180.0
     def one(sign):
-        la, lo = seed; prevb = None; out = []; step = step_km; closed = False
+        la, lo = seed; prevb = None; out = []; step = step_km; closed = False; acc_turn = 0.0
         for _ in range(maxpts):
             gla, glo = _cone_grad(rec, la, lo); gn = math.hypot(gla, glo)
             if gn < 1e-9: break
@@ -1387,7 +1407,9 @@ def _cone_trace(rec, seed, step_km=25.0, maxpts=6000, min_km=3.0, max_turn=12.0)
             if prevb is not None and abs(((b - prevb + math.pi) % (2 * math.pi)) - math.pi) > math.pi / 2:
                 tla, tlo, b = -tla, -tlo, b + math.pi
             if prevb is not None:
-                turn = abs(math.degrees(((b - prevb + math.pi) % (2 * math.pi)) - math.pi))
+                dsigned = math.degrees(((b - prevb + math.pi) % (2 * math.pi)) - math.pi)
+                acc_turn += dsigned
+                turn = abs(dsigned)
                 if turn > max_turn and step > min_km: step = max(min_km, step * 0.5)
                 elif turn < max_turn * 0.4 and step < step_km: step = min(step_km, step * 1.5)
             la2 = la + sign * step / 111.0 * tla; lo2 = lo + sign * step / 111.0 * tlo
@@ -1396,7 +1418,9 @@ def _cone_trace(rec, seed, step_km=25.0, maxpts=6000, min_km=3.0, max_turn=12.0)
             # Closure: when the walk returns to the seed the contour is closed.
             # Stop WITHOUT appending the overshoot point (a near-duplicate of the
             # seed) and flag the closure.
-            if len(out) > 6 and abs(la2 - seed[0]) < 0.3 and abs(((lo2 - seed[1] + 180) % 360) - 180) < 0.3:
+            if (len(out) > 6 and abs(acc_turn) > 270.0
+                    and abs(la2 - seed[0]) < 0.3
+                    and abs(((lo2 - seed[1] + 180) % 360) - 180) < 0.3):
                 closed = True; break
             out.append((lo2, la2)); prevb = b; la, lo = la2, lo2
         return out, closed
@@ -1419,22 +1443,98 @@ def _cone_seed(rec):
     lat0 = rec.get('lat_dd_ge'); lon0 = rec.get('lng_dd_ge')
     if lat0 is None or lon0 is None:
         return None
-    d0, _ = _cone_depth(rec, lat0, lon0)
+    # The catalog's greatest-eclipse coordinates can sit hundreds of km off the
+    # generator's OWN shadow axis on high-ΔT ancient eclipses (the catalog GE
+    # solution and the besselian-element recomputation diverge — e.g. -1213 has
+    # ΔT ~ 7.8 h, GE ~ 255 km off-axis). Trusting GE as an inside-totality start
+    # then fails the d0>0 gate, the cone declines, and the legacy envelope zigzag
+    # shows through. So hill-climb the ever-total depth field to the generator's
+    # own deepest point (inside totality by construction) and seed the north march
+    # from there. For modern eclipses GE is already on-axis, so the climb moves a
+    # few km at most and the seed is unchanged.
+    lat, lon = lat0, lon0
+    d0, _ = _cone_depth(rec, lat, lon)
+    for _ in range(120):
+        gla, glo = _cone_grad(rec, lat, lon); gn = math.hypot(gla, glo)
+        if gn < 1e-9:
+            break
+        la2 = lat + 0.15 * gla / gn; lo2 = lon + 0.15 * glo / gn
+        d1, _ = _cone_depth(rec, la2, lo2)
+        if d1 <= d0:
+            break                      # reached / passed the crest
+        lat, lon, d0 = la2, lo2, d1
     if d0 <= 0:
         return None
-    lat = lat0
-    for _ in range(400):
-        lat += 0.25
-        d, _ = _cone_depth(rec, lat, lon0)
-        if d <= 0:
-            la, lo, ok = _cone_correct(rec, lat - 0.125, lon0)
-            return (la, lo) if ok else None
+    if d0 > 0:
+        ln = lon; la = lat
+        for _ in range(400):
+            la += 0.25
+            d, _ = _cone_depth(rec, la, ln)
+            if d <= 0:
+                cla, clo, ok = _cone_correct(rec, la - 0.125, ln)
+                if ok:
+                    return (cla, clo)
+                break
+    # Robust fallback (reached only when the fast march above declines): grazing
+    # slivers where the deepest point is off the GE meridian or the fixed-longitude
+    # march misses the thin contour. Grid-scan the depth field for the true inside
+    # point, then bisect outward to depth=0. Returns None only if no point is inside
+    # (no central path exists), in which case declining is correct.
+    return _cone_seed_robust(rec, lat0, lon0)
+
+
+def _cone_seed_robust(rec, lat0, lon0):
+    best = -1e9; bla = lat0; blo = lon0
+    for dla in range(-60, 61, 3):
+        for dlo in range(-60, 61, 3):
+            la = lat0 + dla; lo = lon0 + dlo
+            if abs(la) > 89:
+                continue
+            d, _ = _cone_depth(rec, la, lo)
+            if d > best:
+                best = d; bla, blo = la, lo
+    if best <= 0:
+        return None
+    step = 1.5
+    for _ in range(8):
+        improved = False
+        for dla, dlo in ((step, 0), (-step, 0), (0, step), (0, -step)):
+            la = bla + dla; lo = blo + dlo
+            if abs(la) > 89:
+                continue
+            d, _ = _cone_depth(rec, la, lo)
+            if d > best:
+                best = d; bla, blo = la, lo; improved = True
+        if not improved:
+            step *= 0.5
+    for direction in (0.25, -0.25):
+        la = bla
+        for _ in range(400):
+            la += direction
+            if abs(la) > 89:
+                break
+            d, _ = _cone_depth(rec, la, blo)
+            if d <= 0:
+                lo_in, hi_out = bla, la
+                for _ in range(40):
+                    mid = 0.5 * (lo_in + hi_out)
+                    dm, _ = _cone_depth(rec, mid, blo)
+                    if dm > 0:
+                        lo_in = mid
+                    else:
+                        hi_out = mid
+                cla, clo, ok = _cone_correct(rec, lo_in, blo)
+                return (cla, clo) if ok else (lo_in, blo)
     return None
 
 
-def _cone_worst_turn(seg):
+def _cone_worst_turn(seg, end_margin=0):
+    # Worst interior great-circle turn, optionally ignoring a margin of vertices
+    # at each end. A limb runs tip-to-tip; its termini are legitimate cusps (a
+    # grazing annular ends in a point), so their sharpness must not be read as a
+    # body kink. Mirrors the audit's CUSP_MARGIN philosophy.
     wv = 0.0
-    for i in range(1, len(seg) - 1):
+    for i in range(1 + end_margin, len(seg) - 1 - end_margin):
         if abs(seg[i][1]) > 85: continue
         b1 = _gc_bearing((seg[i - 1][1], seg[i - 1][0]), (seg[i][1], seg[i][0]))
         b2 = _gc_bearing((seg[i][1], seg[i][0]), (seg[i + 1][1], seg[i + 1][0]))
@@ -1471,36 +1571,42 @@ def _cone_sun_alt(rec, lat, lon):
 
 
 def _cone_clip_horizon(rec, limb):
-    """Terminate a cone limb on the green line by dropping the contiguous
-    below-horizon run from each END. At a terminator tip the closed contour
-    rounds the corner from one limb into the other by dipping below the horizon;
-    those points are not part of either limit, so removing them leaves the limb
-    ending exactly where it crosses alt = 0 (the cusp / green-line terminus).
-    A no-op for ends that never go below the horizon (grazing or open ends)."""
+    """Terminate a cone limb on the green line by keeping its LONGEST contiguous
+    above-horizon (sun_alt >= 0) run. The umbral limit exists only where the
+    eclipse is visible; at a terminator tip the contour rounds the corner from
+    one limb into the other by dipping below the horizon, and that arc is not part
+    of either limit. Keeping the longest visible run drops it cleanly EVEN when the
+    dip is bracketed by near-zero green-line touches at both ends (a high-ΔT case
+    where the apex itself sits at alt ~ 0, so a from-the-ends trim would stop short
+    and leave the dip — the original -1213 zigzag). A no-op for limbs entirely
+    above the horizon (open daytime ends)."""
     if len(limb) < 6:
         return limb
-    lo = 0
-    while lo < len(limb) - 3 and _cone_sun_alt(rec, limb[lo][1], limb[lo][0]) < 0.0:
-        lo += 1
-    hi = len(limb) - 1
-    while hi > lo + 3 and _cone_sun_alt(rec, limb[hi][1], limb[hi][0]) < 0.0:
-        hi -= 1
-    return limb[lo:hi + 1]
+    vis = [_cone_sun_alt(rec, p[1], p[0]) >= 0.0 for p in limb]
+    best_lo = 0; best_hi = len(limb); best = 0
+    i = 0; n = len(limb)
+    while i < n:
+        if not vis[i]:
+            i += 1; continue
+        j = i
+        while j < n and vis[j]:
+            j += 1
+        if j - i > best:
+            best = j - i; best_lo, best_hi = i, j
+        i = j
+    if best == 0:
+        return limb
+    return limb[best_lo:best_hi]
 
 
-def cone_limit_split(rec, accept_deg=20.0):
+
+def cone_limit_split(rec, accept_deg=20.0, cl_ends=None):
     """Attempt the zigzag-free umbral N/S limits via the cone-spheroid contour.
     Returns (north_limit, south_limit) as point lists if the split verifies clean
     (both limbs' worst interior turn <= accept_deg), else None so the caller falls
     back to the legacy envelope path. Only symmetric two-tip corridors qualify."""
     seed = _cone_seed(rec)
     if seed is None:
-        return None
-    # Cheap pre-filter: the clean-split topology is the mid-latitude two-tip
-    # corridor. Polar eclipses (GE near a pole) trace degenerately and always
-    # fall back; skip the expensive trace for them to avoid wasted build time.
-    lat_ge = rec.get('lat_dd_ge')
-    if lat_ge is not None and abs(lat_ge) > 70:
         return None
     try:
         loop = _cone_trace(rec, seed)
@@ -1511,45 +1617,52 @@ def cone_limit_split(rec, accept_deg=20.0):
     comp = loop
     n = len(comp)
     W = max(4, n // 180)
-    turn = [0.0] * n
-    for i in range(n):
-        b1 = _gc_bearing((comp[(i - W) % n][1], comp[(i - W) % n][0]), (comp[i][1], comp[i][0]))
-        b2 = _gc_bearing((comp[i][1], comp[i][0]), (comp[(i + W) % n][1], comp[(i + W) % n][0]))
-        d = abs(math.degrees(b2 - b1)) % 360
-        turn[i] = min(d, 360 - d)
-    order = [i for i in sorted(range(n), key=lambda i: -turn[i])
-             if turn[i] > 80 and abs(comp[i][1]) < 82]
-    peaks = []
-    for i in order:
-        if all(min(abs(i - p), n - abs(i - p)) > n * 0.05 for p in peaks):
-            peaks.append(i)
-        if len(peaks) >= 8: break
-    tips = []
-    for i in peaks:
-        for t in tips:
-            if _cone_gc(comp[i], comp[t[0]]) < 500: t.append(i); break
-        else:
-            tips.append([i])
-    if len(tips) < 2:
+    # The two tips of a totality corridor are the most-separated points of its
+    # (elongated, lens-shaped) depth=0 contour. Find them by the standard two-pass
+    # farthest-point heuristic, which is robust even when the tips are gentle
+    # slivers that a fixed curvature threshold would miss (the grazing-annular
+    # failure). O(n), antimeridian-safe via great-circle distance.
+    def _farthest(idx):
+        pi = comp[idx]; bj = idx; bd = -1.0
+        for j in range(n):
+            dd = _cone_gc(pi, comp[j])
+            if dd > bd: bd = dd; bj = j
+        return bj
+    if cl_ends is not None:
+        # The lens tips are the path termini, i.e. the centreline endpoints. Finding
+        # the contour point nearest each is robust even when the path rounds a pole,
+        # where great-circle distances between contour points collapse and the
+        # farthest-pair heuristic mis-locates the tips (the 1522-class pole zigzag).
+        def _nearest(target):
+            bj = 0; bd = 1e18
+            for j in range(n):
+                dd = _cone_gc(comp[j], target)
+                if dd < bd: bd = dd; bj = j
+            return bj
+        tipA = _nearest(cl_ends[0]); tipB = _nearest(cl_ends[1])
+        if tipA == tipB:
+            tipA = _farthest(0); tipB = _farthest(tipA)
+    else:
+        tipA = _farthest(0); tipB = _farthest(tipA)
+    if tipA == tipB:
         return None
-    tiploc = [comp[t[0]] for t in tips[:2]]
-    # Refine each tip-pass cut to the sharpest RAW (un-windowed) vertex near its
-    # windowed peak (the true apex), then cut at ALL passes. The loop crosses each
-    # tip twice (N pass + S pass); cutting at all of them and keeping the two
-    # longest segments gives the two clean limbs without straddling a tip.
+    # Refine each tip to the sharpest RAW (un-windowed) vertex in its neighbourhood
+    # (the true apex) so the cut lands exactly on the cusp, not a chord beside it.
     def _raw_turn(i):
         b1 = _gc_bearing((comp[(i - 1) % n][1], comp[(i - 1) % n][0]), (comp[i][1], comp[i][0]))
         b2 = _gc_bearing((comp[i][1], comp[i][0]), (comp[(i + 1) % n][1], comp[(i + 1) % n][0]))
         d = abs(math.degrees(b2 - b1)) % 360
         return min(d, 360 - d)
-    all_passes = [i for t in tips[:2] for i in t]
     refined = []
-    for base in all_passes:
+    for base in (tipA, tipB):
         rng = [(base + k) % n for k in range(-W, W + 1)]
         refined.append(max(rng, key=_raw_turn))
     cuts = sorted(set(refined))
     if len(cuts) < 2:
-        cuts = sorted(i for t in tips[:2] for i in t)
+        cuts = sorted({tipA, tipB})   # refinement windows overlapped on a tiny loop
+    if len(cuts) < 2:
+        return None
+    tiploc = [comp[c] for c in cuts]
     segs = []
     for k in range(len(cuts)):
         a = cuts[k]; b = cuts[(k + 1) % len(cuts)]
@@ -1564,21 +1677,38 @@ def cone_limit_split(rec, accept_deg=20.0):
     # terminator tip the contour rounds the corner below the horizon, so the
     # horizon clip drops that join and the limb ends exactly on green.
     limbs = [_cone_clip_horizon(rec, l) for l in raw]
-    bad = (len(limbs[0]) < 10 or len(limbs[1]) < 10 or
-           max(_cone_worst_turn(limbs[0]), _cone_worst_turn(limbs[1])) > accept_deg)
-    if bad:
-        # Grazing tip (shallow annular): the corner never crosses the horizon,
-        # so the clip is a no-op and the geometric corner remains. Trim the
-        # corner by proximity to the tip apex (the cusp where the limbs meet).
-        limbs = [[p for p in l if all(_cone_gc(p, tl) > 150 for tl in tiploc)]
-                 for l in raw]
-    if len(limbs) < 2 or len(limbs[1]) < 10:
+    # Per-limb resolution against the horizon. The umbral limit exists only on the
+    # sunlit Earth, so the clip is authoritative for each edge independently:
+    #   * clip keeps it cleanly            -> a real ground limit
+    #   * clip COLLAPSES a long raw edge   -> that edge is below the horizon and has
+    #                                         NO ground track: emit it EMPTY. A grazing
+    #                                         annular then has ONE limit, not two
+    #                                         (verified against Jubier ASE 1552, which
+    #                                         draws a northern limit and no southern).
+    #   * clip ~no-op but a tip corner folds -> grazing tip: trim by apex proximity.
+    final = []
+    for raw_l, clip_l in zip(raw, limbs):
+        if len(clip_l) >= 10 and _cone_worst_turn(clip_l, 4) <= accept_deg:
+            final.append(clip_l)
+        elif len(clip_l) < 10 and len(raw_l) >= 20:
+            final.append([])
+        else:
+            trimmed = [p for p in raw_l if all(_cone_gc(p, tl) > 150 for tl in tiploc)]
+            final.append(trimmed if (len(trimmed) >= 10 and
+                         _cone_worst_turn(trimmed, 4) <= accept_deg) else None)
+    if None in final or not any(final):
         return None
-    w1 = _cone_worst_turn(limbs[0]); w2 = _cone_worst_turn(limbs[1])
-    if max(w1, w2) > accept_deg:
-        return None
-    a, b = limbs
-    north, south = (a, b) if (sum(p[1] for p in a) / len(a)) >= (sum(p[1] for p in b) / len(b)) else (b, a)
+    a, b = final
+    def _ml(x): return (sum(p[1] for p in x) / len(x)) if x else None
+    la, lb = _ml(a), _ml(b)
+    if la is not None and lb is not None:
+        north, south = (a, b) if la >= lb else (b, a)
+    elif la is not None:
+        other = sum(p[1] for p in raw[1]) / len(raw[1])
+        north, south = (a, []) if la >= other else ([], a)
+    else:
+        other = sum(p[1] for p in raw[0]) / len(raw[0])
+        north, south = (b, []) if lb >= other else ([], b)
     return north, south
 
 
@@ -1878,55 +2008,11 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
                     else: out.append(P)
             return out
 
-        # Per-side bisection for umbra n and s
-        def _umbra_n_pt(t):
-            n, s = umbral_pts(rec, t)
-            return n
-        def _umbra_s_pt(t):
-            n, s = umbral_pts(rec, t)
-            return s
+        # (Umbral N/S limits are computed below by the unified perpendicular
+        # method from the centreline. The legacy per-side time-bisection
+        # (_umbra_n_pt/_umbra_s_pt, find_first_for/find_last_for) and the
+        # envelope walk that consumed it have been removed -- perp replaces them.)
 
-        def find_first_for(fn):
-            """Earliest t in [tmin, tmax] where fn(t) is not None,
-            refined by 40-iter bisection."""
-            scan = tmin
-            step = STEP_MIN / 60.0
-            prev_ok = False
-            while scan <= tmax + 1e-9:
-                ok = fn(scan) is not None
-                if ok:
-                    if prev_ok or scan <= tmin + 1e-9:
-                        return scan
-                    t_out, t_in = scan - step, scan
-                    for _ in range(40):
-                        tm = 0.5*(t_out + t_in)
-                        if fn(tm) is not None: t_in = tm
-                        else: t_out = tm
-                        if t_in - t_out < 1e-7: break
-                    return t_in
-                prev_ok = ok
-                scan += step
-            return None
-
-        def find_last_for(fn):
-            scan = tmax
-            step = STEP_MIN / 60.0
-            while scan >= tmin - 1e-9:
-                if fn(scan) is not None:
-                    t_in, t_out = scan, scan + step
-                    for _ in range(40):
-                        tm = 0.5*(t_in + t_out)
-                        if fn(tm) is not None: t_in = tm
-                        else: t_out = tm
-                        if t_out - t_in < 1e-7: break
-                    return t_in
-                scan -= step
-            return None
-
-        t_nA = find_first_for(_umbra_n_pt)
-        t_nB = find_last_for(_umbra_n_pt)
-        t_sA = find_first_for(_umbra_s_pt)
-        t_sB = find_last_for(_umbra_s_pt)
 
         # Walk centreline over its own valid interval.
         if t_cA is not None and t_cB is not None and t_cB > t_cA + 1e-9:
@@ -1936,19 +2022,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         for (_, lat, lon) in walk:
             cl.append([round(lon, 5), round(lat, 5)])
 
-        # Walk umbra n and s over their own intervals, independently.
-        if t_nA is not None and t_nB is not None and t_nB > t_nA + 1e-9:
-            n_walk = _extend_to_green(_visible_trim(adaptive_walk(t_nA, t_nB, _umbra_n_pt)), +1)
-        else:
-            n_walk = []
-        for (_, lat, lon) in n_walk:
-            un.append([round(lon, 5), round(lat, 5)])
-        if t_sA is not None and t_sB is not None and t_sB > t_sA + 1e-9:
-            s_walk = _extend_to_green(_visible_trim(adaptive_walk(t_sA, t_sB, _umbra_s_pt)), -1)
-        else:
-            s_walk = []
-        for (_, lat, lon) in s_walk:
-            us.append([round(lon, 5), round(lat, 5)])
+        # (umbra n / s are now produced by perpendicular_limits, below)
 
         # ── Tip caps ────────────────────────────────────────────────────
         # The envelope limits truncate a little short of each grazing tip
@@ -1977,52 +2051,38 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     un_segs = [un] if un else []
     us_segs = [us] if us else []
 
-    # Zigzag-free umbral limits: where the cone-spheroid contour splits into two
-    # clean N/S limbs (symmetric two-tip corridors, verified worst-turn small),
-    # use them; otherwise keep the legacy envelope walk above (no regression).
-    try:
-        _cl = cone_limit_split(rec)
-    except Exception:
-        _cl = None
-    if _cl is not None:
-        _n, _s = _cl
-        # Acceptance guard: the cone split and the envelope walk are two
-        # INDEPENDENT computations of the same physical curve. A correct cone
-        # limb agrees with the envelope to a few km in the median (a localized
-        # envelope zigzag cannot move the median); a mis-split corridor disagrees
-        # by hundreds of km. The worst-turn gate alone admits smooth-but-displaced
-        # limbs (e.g. 2060/2061), so require median agreement before trusting the
-        # cone result; otherwise keep the envelope. Not a tuned constant: real
-        # agreement is sub-3 km and a mis-split is >500 km, far either side of 50.
-        def _med_gap(cone, env):
-            if not cone or len(env) < 2:
-                return 1e12
-            def d(p, q):
-                dla = q[1] - p[1]
-                dlo = ((q[0] - p[0] + 180.0) % 360.0) - 180.0
-                la = math.radians((p[1] + q[1]) * 0.5)
-                return math.hypot(dla, dlo * math.cos(la)) * 111000.0
-            ds = []
-            stp = max(1, len(cone) // 40)
-            for i in range(0, len(cone), stp):
-                p = cone[i]
-                ds.append(min(d(p, q) for q in env))
-            ds.sort()
-            return ds[len(ds) // 2]
-        if max(_med_gap(_n, un), _med_gap(_s, us)) < 50000.0:
-            un = [[round(lo, 5), round(la, 5)] for (lo, la) in _n]
-            us = [[round(lo, 5), round(la, 5)] for (lo, la) in _s]
-            un_segs = [un]; us_segs = [us]
+    # ── Unified umbral N/S limits ───────────────────────────────────────
+    # The depth=0 locus, found by marching perpendicular to the (reliable)
+    # centreline until the continuous ever-total depth field crosses zero.
+    # ONE method for total / annular / hybrid / grazing / pole: at a hybrid
+    # pinch both limits converge to the centreline (no figure-8 to trace); at
+    # the pole the march is local (no coordinate degeneracy); grazing yields
+    # one limb (the other never clears the horizon). Replaces the legacy
+    # envelope walk and the cone-contour split. The envelope walk above is
+    # retained only as a fallback when the perpendicular method returns nothing.
+    if is_central and len(cl) >= 7:
+        try:
+            _n_segs, _s_segs = perpendicular_limits(rec, cl)
+        except Exception:
+            _n_segs, _s_segs = [], []
+        if _n_segs or _s_segs:
+            un_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _n_segs]
+            us_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _s_segs]
 
-    # Unwrap all three curves so they are continuous past the antimeridian
+    # Unwrap all curves so they are continuous past the antimeridian
     cl_segs = [unwrap(cl_segs[0])] if cl_segs else []
-    un_segs = [unwrap(un_segs[0])] if un_segs else []
-    us_segs = [unwrap(us_segs[0])] if us_segs else []
+    un_segs = [unwrap(s) for s in un_segs] if un_segs else []
+    us_segs = [unwrap(s) for s in us_segs] if us_segs else []
 
     # Remove degenerate spurs / duplicate vertices from the corridor limits
     # (lossless — only coincident-neighbour spurs; clean paths unchanged)
-    un_segs = [_despur_segment(un_segs[0])] if un_segs else []
-    us_segs = [_despur_segment(us_segs[0])] if us_segs else []
+    un_segs = [_despur_segment(s) for s in un_segs] if un_segs else []
+    us_segs = [_despur_segment(s) for s in us_segs] if us_segs else []
+
+    # (The envelope-era suppress-fold is gone: the perpendicular method marches
+    # from a smooth centreline, so each limit point is an independent depth-zero
+    # crossing -- it cannot produce the old envelope's zigzag. A sharp turn here
+    # is a legitimate tip cusp, not a fold, so nothing is suppressed.)
 
     # ── Penumbral limits ───────────────────────────────────────────────
     pn, ps, t_first, t_last = penumbral_limits(rec, step_min, pen_n)
@@ -2113,12 +2173,23 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         a = math.sin((p2-p1)/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
         return 6371.0 * 2*math.asin(math.sqrt(max(0.0, min(1.0, a))))
     def turn_deg(a, b, c):
-        v1 = (b[0]-a[0], b[1]-a[1])
-        v2 = (c[0]-b[0], c[1]-b[1])
-        n1 = math.hypot(*v1); n2 = math.hypot(*v2)
-        if n1 < 1e-9 or n2 < 1e-9: return 0.0
-        cs = max(-1.0, min(1.0, (v1[0]*v2[0]+v1[1]*v2[1])/(n1*n2)))
-        return math.degrees(math.acos(cs))
+        # Physical great-circle turn at b, in degrees. Computed from initial
+        # bearings, so longitude convergence near the pole and the antimeridian
+        # seam do not distort it (a raw lon/lat angle reads a smooth 86°N curve
+        # as a ~175° fold). Steps shorter than 1 km are skipped as noise.
+        def _brg(p, q):
+            la1 = math.radians(p[1]); la2 = math.radians(q[1])
+            dl = math.radians(((q[0]-p[0]+180.0) % 360.0) - 180.0)
+            return math.atan2(math.sin(dl)*math.cos(la2),
+                              math.cos(la1)*math.sin(la2) - math.sin(la1)*math.cos(la2)*math.cos(dl))
+        def _gckm(p, q):
+            la1 = math.radians(p[1]); la2 = math.radians(q[1])
+            dl = math.radians(((q[0]-p[0]+180.0) % 360.0) - 180.0)
+            h = math.sin((la2-la1)/2)**2 + math.cos(la1)*math.cos(la2)*math.sin(dl/2)**2
+            return 2*6371.0*math.asin(min(1.0, math.sqrt(h)))
+        if _gckm(a, b) < 1.0 or _gckm(b, c) < 1.0: return 0.0
+        d = abs(math.degrees(_brg(b, c) - _brg(a, b))) % 360.0
+        return min(d, 360.0 - d)
     def audit_curve(name, line, kind):
         if not line or len(line) < 2: return
         # Gap check across all consecutive pairs (skip the very first/last
@@ -2244,7 +2315,7 @@ def process_chunk(path, out_dir, step_min, pen_n, jobs=1):
         import multiprocessing as _mp
         with _mp.Pool(jobs) as pool:
             done = 0
-            for key, p in pool.imap(_build_one,
+            for key, p in pool.imap_unordered(_build_one,
                                     [(rec, step_min, pen_n) for rec in records],
                                     chunksize=1):
                 paths[key] = p
@@ -2259,12 +2330,22 @@ def process_chunk(path, out_dir, step_min, pen_n, jobs=1):
                   end="", flush=True)
             paths[key]=_round_path(build_path(rec, step_min, pen_n))
         print(f"\r    {n}/{n}  done{' '*20}")
+    # Self-identifying stamp so a rebuilt chunk is verifiable in-app
+    # (console.log(data.__meta)). Inserted last; the front-end reads paths by
+    # cat_no key only (no whole-dict iteration), so this extra key is inert there.
+    n_paths = len(paths)
+    paths['__meta'] = {
+        'generated': _dt.datetime.now(_dt.timezone.utc).isoformat(timespec='seconds'),
+        'generator': GEN_VERSION,
+        'chunk':     name,
+        'count':     n_paths,
+    }
     raw_bytes = json.dumps(paths, separators=(',',':')).encode()
     with _gz.open(out_path, 'wb', compresslevel=9) as f:
         f.write(raw_bytes)
     on_disk = os.path.getsize(out_path)
     print(f'    {len(raw_bytes)//1024}KB raw  {on_disk//1024}KB gz  '
-          f'{len(paths)} paths → {out_path}')
+          f'{n_paths} paths → {out_path}')
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────
@@ -2399,3 +2480,93 @@ if __name__=='__main__':
     else: main()
 
 
+
+
+def perpendicular_limits(rec, centreline, accept_deg=20.0):
+    """Umbral N/S limits as the depth=0 locus, found by marching perpendicular to
+    the (reliable) centreline until the continuous ever-total depth field crosses
+    zero. ALL geometry is done with 3D unit vectors, so there is no lat/lon
+    singularity at the pole and no antimeridian seam: one method for total /
+    annular / hybrid / grazing / pole. At a hybrid pinch both limits converge to
+    the centreline; at the pole the march is an ordinary great-circle rotation;
+    grazing yields one limb (the other never clears the horizon).
+    Returns (north_segs, south_segs)."""
+    D2R = math.pi / 180.0; Rk = 6371.0
+    def V(lat, lon):
+        la = lat * D2R; lo = lon * D2R; c = math.cos(la)
+        return (c * math.cos(lo), c * math.sin(lo), math.sin(la))
+    def LL(v):
+        return (math.degrees(math.asin(max(-1.0, min(1.0, v[2])))),
+                math.degrees(math.atan2(v[1], v[0])))
+    def nrm(v):
+        m = math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+        return (v[0]/m, v[1]/m, v[2]/m) if m > 1e-15 else None
+    def crs(a, b):
+        return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+    def dot(a, b): return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+    def axpy(s, a, b): return (s*a[0]+b[0], s*a[1]+b[1], s*a[2]+b[2])   # s*a + b
+    def scl(s, a): return (s*a[0], s*a[1], s*a[2])
+    def _dep(la, lo): return _cone_depth(rec, la, lo)[0]
+    def march(P, Dir, maxkm=400.0, step=10.0):
+        la0, lo0 = LL(P)
+        if _dep(la0, lo0) <= 0: return P            # pinch: limit is on the centreline
+        prev = P; dist = 0.0
+        while dist < maxkm:
+            dist += step; th = dist / Rk
+            Q = axpy(math.cos(th), P, scl(math.sin(th), Dir))   # rotate P toward Dir
+            la, lo = LL(Q)
+            if _dep(la, lo) <= 0:
+                a3, b3 = prev, Q
+                for _ in range(20):                 # bisection on the great circle
+                    m = nrm(axpy(1.0, a3, b3))
+                    lam, lom = LL(m)
+                    if _dep(lam, lom) > 0: a3 = m
+                    else: b3 = m
+                return a3
+            prev = Q
+        return None
+    cl = centreline
+    if len(cl) < 7: return [], []
+    Pc = [V(p[1], p[0]) for p in cl]                # centreline as unit vectors
+    left = []; right = []
+    for i in range(len(cl)):
+        P = Pc[i]; Pa = Pc[max(0, i-3)]; Pb = Pc[min(len(cl)-1, i+3)]
+        T = nrm(axpy(-1.0, Pa, Pb))                 # chord Pb - Pa (forward tangent)
+        if T is not None: T = nrm(axpy(-dot(T, P), P, T))   # project into tangent plane
+        Lh = nrm(crs(P, T)) if T is not None else None      # left perpendicular
+        if Lh is None:
+            left.append(None); right.append(None); continue
+        for Dir, acc in ((Lh, left), (scl(-1.0, Lh), right)):
+            M = march(P, Dir)
+            if M is None:
+                acc.append(None); continue
+            la, lo = LL(M)
+            acc.append((lo, la) if _cone_sun_alt(rec, la, lo) >= 0.0 else None)
+    def runs(side):                                 # split at below-horizon gaps
+        out = []; cur = []
+        for pt in side:
+            if pt is None:
+                if len(cur) >= 3: out.append(cur)
+                cur = []
+            else: cur.append(pt)
+        if len(cur) >= 3: out.append(cur)
+        return out
+    def smooth(c, w=4):                             # denoise in 3D: no seam, no pole
+        if len(c) < 2*w + 2: return c
+        vs = [V(p[1], p[0]) for p in c]
+        out = [c[0]]
+        for i in range(1, len(vs)-1):
+            lo_ = max(0, i-w); hi = min(len(vs), i+w+1)
+            sx = sum(vs[j][0] for j in range(lo_, hi))
+            sy = sum(vs[j][1] for j in range(lo_, hi))
+            sz = sum(vs[j][2] for j in range(lo_, hi))
+            la, lo = LL(nrm((sx, sy, sz)))
+            out.append((lo, la))
+        out.append(c[-1])
+        return out
+    left_segs = [smooth(r) for r in runs(left)]
+    right_segs = [smooth(r) for r in runs(right)]
+    def mlat(segs):
+        pts = [p for s in segs for p in s]
+        return sum(p[1] for p in pts) / len(pts) if pts else -999.0
+    return (left_segs, right_segs) if mlat(left_segs) >= mlat(right_segs) else (right_segs, left_segs)

@@ -504,12 +504,12 @@ function onMapClick(lat, lon) {
     showMapPopup(lat, lon, out.result, out.rec);
     clearMapMarkers();
     addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
-    /* On desktop (sidebar layout), if the user is on the Search sub-tab,
-       swap to Details so the local circumstances appear. Otherwise leave
-       the sidebar tab alone (they're already on Details or exploring overlays).
-       On mobile, stay on the map so the user can see the pin they placed. */
+    /* On desktop (sidebar layout), if the user is on the Search or Settings
+       sub-tab, swap to Details so the local circumstances appear. Otherwise
+       leave the sidebar tab alone (they're already on Details or exploring
+       overlays). On mobile, stay on the map so the user can see the pin. */
     if (window.matchMedia('(min-width: 900px)').matches) {
-      if (sidebarTab === 'search') sidebarTab = 'eclipse';
+      if (sidebarTab === 'search' || sidebarTab === 'settings') sidebarTab = 'eclipse';
     }
   });
 }

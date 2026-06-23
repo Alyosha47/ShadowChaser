@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="build" content="2026-06-16r">
+  <meta name="build" content="2026-06-20b">
   <title>ShadowChaser</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
@@ -211,10 +211,10 @@
           <thead><tr><th>Curve</th><th>Median error</th></tr></thead>
           <tbody>
             <tr><td>Centreline</td><td>~15 m</td></tr>
-            <tr><td>Umbra edges (N/S)</td><td>120&ndash;600 m</td></tr>
-            <tr><td>Penumbra edges</td><td>25 km (total) / 100+ km (annular)</td></tr>
-            <tr><td>Terminator lemniscates</td><td>3 km / 100 km at tips</td></tr>
-            <tr><td>Polar grazers (&gamma; &gt; 0.95)</td><td>Up to 35 km</td></tr>
+            <tr><td>Umbra edges (N/S)</td><td>0.1&ndash;2.5 km</td></tr>
+            <tr><td>Penumbra edges</td><td>10&ndash;30 km (any type)</td></tr>
+            <tr><td>Terminator lemniscates</td><td>1&ndash;7 km / ~50 km at tips</td></tr>
+            <tr><td>Polar grazers (&gamma; &gt; 0.95)</td><td>~1 km</td></tr>
             <tr><td>Pre-1900</td><td>&Delta;T-limited</td></tr>
             <tr><td>Post-2050</td><td>Increasing (&Delta;T extrapolation)</td></tr>
           </tbody>
@@ -334,7 +334,7 @@
 <script>
 'use strict';
 var DATA_BASE = './data';
-var BUILD     = '2026-06-16r';
+var BUILD     = '2026-06-20b';
 // Installed-PWA mode → tag <html> so CSS can drop the branding banner (older iOS
 // lacks the display-mode media query, so navigator.standalone is the fallback).
 if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) {
@@ -353,7 +353,7 @@ if ('serviceWorker' in navigator) {
 <script src="js/local.js?v=2026-06-05c"></script>
 <script src="js/details.js?v=2026-06-05c"></script>
 <script src="js/url.js?v=2026-06-05c"></script>
-<script src="js/map.js?v=2026-06-05c"></script>
+<script src="js/map.js?v=2026-06-20a"></script>
 <script src="js/share.js?v=2026-06-05c"></script>
 <script src="js/init.js?v=2026-06-05c"></script>
 </body>

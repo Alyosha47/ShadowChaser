@@ -14,74 +14,46 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-06-16 — merged the former BACKLOG into this single TODO (two-file system
-now: HANDOFF + TODO). Root-caused the umbral grazing-tip zigzag (proven cone–spheroid fix;
-splitter is the one blocker); removed the bisector; validated all path types vs Jubier;
-added the path-unification vision and the mobile/Safari-geo/search-box items.
+Last touched: 2026-06-20 — SOLVED the umbral grazing-tip zigzag: cone-limit splitter
+(single-trace closed contours + max-curvature tip detection + horizon-clip to the green line
++ envelope-agreement guard). Validated sub-km across 18 eclipses spanning every type (total,
+annular, hybrid, polar grazer, dateline, wide). Recalibrated the Tolerances panel to the
+measured numbers (umbra 0.1–2.5 km, penumbra 10–30 km any type, sun lobes 1–7 km, grazers
+~1 km). The path-accuracy arc is essentially closed; next field is open.
 
 ---
 
 ## PRIORITY ORDER (suggested re-entry)
-1. Bank state: commit/push the 2026-06-16 update; rebuild ANCIENT/BCE path centuries.
-2. Umbral grazing-tip zigzag — finish the N/S splitter (the one real path blocker), OR ship
-   the audit-triggered interim. (§Paths)
-3. Trivial cleanups: generator version stamp; map.js bisector comment.
-4. Path unification, phased (§Path unification).
-5. Mobile UX/layout pass (§Mobile). 6. Remaining bugs. 7. UX decisions. 8. Features.
+1. Bank state: commit the generator (cone-limit splitter + seed hill-climb + horizon-clip
+   longest-run fix + __meta stamp, GEN_VERSION 2026-06-20c), index.html (Tolerances + BUILD
+   2026-06-20b + map.js cache-bust), and js/map.js (settings-panel mapclick). Run the full
+   regen (every century incl. ANCIENT/BCE) watching umbra interior-turn audits; ancient
+   zigzags validated fixed on a BCE-totals sample.
+2. Trivial cleanups: map.js bisector comment.
+3. Path unification, phased — Phase 1 (umbra splitter) DONE; next is penumbra onto the
+   implicit engine (§Path unification).
+4. Mobile UX/layout pass (§Mobile). 5. Remaining bugs. 6. UX decisions. 7. Features.
 
 ---
 
 ## BUGS — open (detail; status in handoff)
-- **Sun-track marker vs contact-icon direction (NEEDS A CONCRETE EXAMPLE).** Reported that
-  the slider sun/moon orientation looked closer to OPPOSITE the table's contact icon than a
-  mere sampling drift. Possible benign cause: the C2/C3 diamond-ring icon places the BEAD
-  (sunlight point) at V, which is opposite the moon's bulk — so comparing the graph's moon
-  to a C2/C3 bead would look opposite and be CORRECT. But not yet confirmed vs a true sign
-  error. ACTION: user to supply a year + which contact; then verify bead-vs-moon vs a real
-  V sign bug in buildSunTrack/sampleEclipseAt. (Exact contact/max times are now injected as
-  samples, so it is NOT a snapping artifact.)
+- **FIXED 2026-06-20 — ancient/BCE umbral zigzag (root-caused, two stacked bugs).** Kept
+  here only as a pointer until the full regen confirms it; delete after. (1) `_cone_seed`
+  trusted the catalog greatest-eclipse coordinate as an inside-totality start; high-ΔT ancient
+  eclipses put GE hundreds of km off the generator's OWN shadow axis (−1213: ΔT≈7.8h, ~255 km),
+  so the seed bailed and the WHOLE ancient range fell to the zigzagging envelope. Fix: hill-
+  climb the depth field to the generator's own deepest point. (2) `_cone_clip_horizon` trimmed
+  below-horizon points only from the endpoint inward; when the tip apex sits at alt≈0 with the
+  N→S join-dip bracketed just inside, the dip survived as a ~58° kink. Fix: keep the longest
+  above-horizon run. Validated: −1213 T+A clean (0.4°); modern identical (1773 0.11/0.13);
+  7 BCE totals γ −0.87..+0.92 all 0–2°. GEN_VERSION 2026-06-20c.
 
-- **Umbral grazing-tip zigzag (generator).** On grazing eclipses the umbral N/S limit
-  shows a large gap (300–1200 km) paired with a ~150–177° fold at one or both ends. Audit
-  signature: `gap NNN km at idx X->X+1` together with `interior turn ~150–177° at idx X`.
-  Affects roughly half of eclipses (any with a grazing tip).
-  **Root cause (PROVEN):** the umbral limit is traced by an envelope-of-moving-shadow method
-  (`umbral_pts`: perpendicular offset from the axis + tangency angle + zeta fixed-point) plus
-  a straight-chord extension (`_extend_to_green`) to the green terminus. The envelope
-  correctly traces the limit until the shadow axis leaves Earth's disk (|C|→1) at the grazing
-  tip — past that no axis-on-disk point exists, so the envelope returns None ~hundreds of km
-  short of where totality actually ends (at the terminator/green line). The straight chord
-  bridging that real-totality stretch IS the zigzag. (This supersedes the older "corridor
-  sampling artifact / perpendicular-bisect" framing — same visible defect, now fully
-  root-caused.)
-  **Fix (PROVEN sub-km, prototyped):** trace the umbral limit directly as the cone–spheroid
-  intersection contour — the zero level set of the ever-total depth field
-  h(lat,lon) = max over time t of (|L2 − zeta·tan_f2| − m), where m = hypot(xi−X,(eta−Y)/rho1)
-  and (xi,eta,zeta)=`_geo_to_fund`. Same predictor–corrector tracer as `green_curve`, just a
-  different field. Validated: 2017 N 0.28 / S 0.15 km vs Jubier; 1144 BCE (a zigzag eclipse)
-  traces ONE clean component reaching the grazing tip, max consecutive gap 25 km (= tracer
-  step) vs the old 950 km chord. Build ~7–28 s/eclipse. Prototype + WIP integration exist in
-  the dev scratch (not shipped).
-  **THE ONE BLOCKER — N/S split (pure polyline topology, not physics):** the contour traces
-  as a single closed loop (the corridor outline). It must be cut into the two named limits.
-  Simple-geometry eclipses (e.g. 2033) split perfectly (worst-turn 2°). Corridor-shaped ones
-  do not yet. Four approaches tried and REJECTED:
-   1. Global longitude sort — scrambles limits that double back in longitude at high lat.
-   2. Centreline-side classification — FAILS: the loop crosses the centreline side 4× not 2×,
-      because near the tips the limit extends past the centreline ends (spurious flips).
-   3. Longest-run-per-side — discards half of each limit.
-   4. Farthest-apart-pair as the two tips — on a thin corridor the diameter lands on the SAME
-      long side, not the two opposite tips.
-  **NEXT approach (untried):** find the two true tips as maximum-curvature pinch points (where
-  the tangent reverses ~180° over a short arc), or a principled curve-bisection — NOT max
-  pairwise distance, NOT centreline side. Once split cleanly: re-validate the full 11-eclipse
-  limit table vs Jubier (must stay sub-km, tips improved) AND re-run the BCE audit (zigzag
-  reports must clear with no new artifacts) before replacing the envelope. Remove the dead
-  envelope + `_extend_to_green` only after the contour proves out everywhere.
-  **Interim option:** audit-triggered targeted repair — detect the zigzag signature and
-  re-run ONLY flagged eclipses with the contour method as a fallback (envelope for the clean
-  majority). The flagged ones are mostly simple grazers, exactly where the split already
-  works. Bridges the shipped envelope and the contour fix without needing a universal splitter.
+- **Residual terminus polish (low priority — rare, cosmetic, NOT a regen blocker).** Only the
+  grazing hybrid remains: 1986-10-03 (γ=+0.993) traces but the totality corridor is so tiny
+  (~22 pts) it renders kinked. Candidate fix: densify the cone trace when a limb returns under
+  ~40 pts. Gentle-tip decliners (e.g. −1294T, 2027) fall to the envelope but it is SMOOTH at
+  gentle tips (0–1°), so those are harmless, not bugs. The generator's audit pass prints an
+  `interior turn` flag on any umbra limb >30°, so residual zigzags self-report during regen.
 
 - **Penumbra threshold offset (low priority — user accepts "close").** Our penumbra limit
   sits ~7–10 km INSIDE Jubier's, asymmetric N/S. At Jubier's penumbra points our magnitude
@@ -92,21 +64,6 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
   envelope). Pursue only if chasing sub-km everywhere; otherwise the penumbra is "naturally
   fuzzy" and close is fine. Eventually migrate penumbra onto the implicit engine as
   {max magnitude = 0}.
-
-- **#R3 1950 polar "onion-ring" (deck.gl SolidPolygonLayer).** Path *lines* render fine;
-  corridor + oval *fills* whose vertices lie in a polar region render as phantom
-  concentric rings (canonical case: 1950-09-12). Underlying data is correct (no longitude
-  jumps; vertices step smoothly near the pole). Current workaround: corridor fill
-  disabled, ovals still filled. **Candidate fixes to evaluate:**
-   1. Split corridor and ovals at the antimeridian before passing to SolidPolygonLayer.
-   2. For polygons touching the polar cap, replace with a true polar-cap polygon
-      (vertices + the pole point).
-   3. Outline-only render for affected polygons.
-   4. Switch to GeoJsonLayer with proper GeoJSON Polygon types + antimeridian splitting.
-  Affects any eclipse whose path crosses a pole. NOT trivial — prior elegant attempts
-  (signedLonWinding, polarCapRing, splitAtAntimeridian, tiled-corridor) each fixed one
-  case and broke others. (Note: the same triangulator weakness is why markers aren't
-  moved into WebGL — see handoff far-side-marker note.) User: leave as-is for now.
 
 - **#R5 iOS pinch-zoom not blocked.** `user-scalable=no` is deliberately ignored by iOS
   Safari (accessibility, since iOS 10). Real fix: `touch-action: pan-y` on the scrollable
@@ -152,19 +109,9 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
 
 ## OPEN UX QUESTIONS (deliberation; decide before coding)
 
-- **Circumstances panel density** — Global Circumstances is tall; on map-click the user
-  should see local circs change without scrolling. Either tighten cell sizes/line-heights
-  or switch Global Circs to a compact list-table while keeping Local Circs as blocks.
-
 - **Mobile map-click microsheet** — with no sidebar on mobile, a map click gives no inline
   "this is what changed." Add a small dismissable bottom-of-map sheet showing at least
   umbral duration for the clicked point.
-- **Eclipse-type search semantics (#F5) — RESOLVED (already implemented).** Verified in
-  search_parser.js: WITH an obscuration filter, "total/annular" uses the eclipse's GLOBAL
-  type (total somewhere) and obscuration governs visibility at the location — so
-  `total (lat,lon) >40%` = "total somewhere AND >=40% obscuration from that location".
-  WITHOUT an obscuration filter, a scanned location uses LOCAL type ("total as seen here").
-  (Keys on the obscuration filter's presence, not the bare location — sensible as-is.)
 
 ---
 
@@ -195,8 +142,6 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
   plain-text ceiling of `navigator.share`/`mailto` (no tables/images/HTML otherwise).
   Also the home for "prettier share" visual polish (the share.js rewrite handled the
   functional/format cleanup).
-- Editable lat/lon/alt in the local-circumstances panel (coords are currently editable
-  only via the search field, not in the panel itself).
 - Splash / title page for installed-PWA mode; app icon; app logo / eclipse symbol.
 - Night-sky-during-totality view — planets/comets/bright stars near the Sun at totality,
   positioned for the selected eclipse.
@@ -206,7 +151,7 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
   Every path = the zero level set of a scalar field evaluated at each ground point's own
   moment of greatest eclipse, traced by one shared predictor–corrector:
     green     = {sun altitude at max = 0}        (DONE — sub-km)
-    umbra     = {ever-total depth = 0}           (proven; splitter pending — see zigzag bug)
+    umbra     = {ever-total depth = 0}           (DONE 2026-06-20 — cone-limit splitter, sub-km)
     penumbra  = {max magnitude = 0}              (prototype ~9 km)
     mag isolines = {max magnitude = c}           (enables Jubier's 0.2/0.4/0.6/0.8 curves free)
     centreline = ridge of the depth field        (max-finder, not a zero — mild extra work)
@@ -218,7 +163,7 @@ added the path-unification vision and the mobile/Safari-geo/search-box items.
   Evidence it works: green + umbra both hit sub-km via the same tracer across figure-8,
   two-blob, and polar topologies. Suggested two-branch discipline: freeze the shipped
   generator (bugfix-only) as the stable truth; develop the unified engine as the
-  experimental successor. ~4–6 phased sessions. Order: (1) finish umbra splitter; (2)
+  experimental successor. ~4–6 phased sessions. Order: (1) umbra splitter — DONE; (2)
   penumbra onto the engine; (3) terminator/centreline + unify the tracer + retire legacy.
 - **#F2 Cloud-cover / weather overlay** — the killer feature. Forecast (near-term) +
   climatology (far-future); needs data-source choice, globe-layer rendering, online/

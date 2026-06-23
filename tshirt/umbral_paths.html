@@ -49,13 +49,13 @@
   .graticule{display:none}
   .land{fill:var(--land);stroke:none}
   .band{mix-blend-mode:var(--blend);transition:opacity .25s}
-  .band.total{fill-opacity:var(--band-opacity);stroke-width:.12;fill:var(--total);stroke:var(--label-color,#ffd600)}
-  .band.annular{fill-opacity:var(--band-opacity);stroke-width:.12;fill:var(--annular);stroke:var(--label-color,#ffd600)}
-  .band.hybrid{fill-opacity:var(--band-opacity);stroke-width:.12;fill:var(--hybrid);stroke:var(--label-color,#ffd600)}
+  .band.total{fill-opacity:var(--band-opacity);stroke-width:.06;stroke-opacity:.7;fill:var(--total);stroke:var(--label-color,#ffd600)}
+  .band.annular{fill-opacity:var(--band-opacity);stroke-width:.06;stroke-opacity:.7;fill:var(--annular);stroke:var(--label-color,#ffd600)}
+  .band.hybrid{fill-opacity:var(--band-opacity);stroke-width:.06;stroke-opacity:.7;fill:var(--hybrid);stroke:var(--label-color,#ffd600)}
   .band.hidden{opacity:0;pointer-events:none}
   [data-id].hidden{display:none}
   .frame{display:none}
-  .pathlabel{font-size:2.5px;fill:var(--label-color,#ffd600);font-family:var(--mono);pointer-events:none;letter-spacing:.02em}
+  .pathlabel{font-size:2.5px;fill:var(--label-color,#ffd600);font-family:var(--mono);pointer-events:none;letter-spacing:.05em;font-weight:600}
   .cap{position:absolute;bottom:10px;right:14px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);opacity:.5;pointer-events:none}
 </style>
 </head>
@@ -370,6 +370,8 @@ function renderMap(projName){
   const isLabelMode=(cs.getPropertyValue('--label-mode').trim()==='1');
   let bandsHTML='',labelsHTML='',labelPositions=[];
 
+  // Pass A: project all bands' pieces + centrelines, build band groups (no labels yet)
+  const bandInfo=[];
   DATA.bands.forEach(b=>{
     let bandGroup='';
     b.pieces.forEach((pc)=>{
@@ -378,54 +380,85 @@ function renderMap(projName){
       bandGroup+=`<path class="band ${b.type}" data-id="${b.id}" d="${d}"><title>${b.date}</title></path>`;
     });
 
+    let clSegs=[],bestSeg=null,bestLen=0;
     if(isLabelMode){
-      // Use pre-split clSegs if available, else split centreline on the fly
-      let clSegs=[];
       if(b.clSegs&&b.clSegs.length){
         clSegs=b.clSegs.map(seg=>seg.map(([lon,lat])=>proj.project(lon,lat)));
       } else if(b.centreline&&b.centreline.length>1){
         clSegs=splitAndProject(b.centreline);
       }
-
-      // Render each centreline segment + label on longest
-      let longestSeg=null,longestSpan=0;
-      clSegs.forEach(seg=>{
+      clSegs.forEach((seg,si)=>{
         if(seg.length<2)return;
-        bandGroup+=`<polyline data-id="${b.id}" points="${seg.map(p=>p[0].toFixed(2)+','+p[1].toFixed(2)).join(' ')}" fill="none" stroke="var(--label-color,#ffd600)" stroke-width=".24" stroke-linecap="round"/>`;
-        const span=Math.hypot(seg[seg.length-1][0]-seg[0][0],seg[seg.length-1][1]-seg[0][1]);
-        if(span>longestSpan){longestSpan=span;longestSeg=seg;}
+        const pid=`clp_${b.id}_${si}`;
+        const d='M'+seg.map(p=>p[0].toFixed(2)+' '+p[1].toFixed(2)).join('L');
+        bandGroup+=`<path id="${pid}" data-id="${b.id}" d="${d}" fill="none" stroke="var(--label-color,#ffd600)" stroke-width=".24" stroke-linecap="round"/>`;
+        let len=0;
+        for(let i=1;i<seg.length;i++) len+=Math.hypot(seg[i][0]-seg[i-1][0],seg[i][1]-seg[i-1][1]);
+        if(len>bestLen){bestLen=len;bestSeg=seg;}
       });
-      if(longestSeg&&longestSeg.length>1){
-        const mid=Math.floor(longestSeg.length/2);
-        const p0=longestSeg[Math.max(0,mid-1)],p1=longestSeg[mid];
-        const angle=Math.atan2(p1[1]-p0[1],p1[0]-p0[0])*180/Math.PI;
-        const mx=(p0[0]+p1[0])/2,my=(p0[1]+p1[1])/2;
-        labelPositions.push({id:b.id,mx,my,angle,date:b.date});
-      }
     }
-    bandsHTML+=bandGroup;
+    bandInfo.push({id:b.id,date:b.date,bandGroup,clSegs,bestSeg});
   });
 
-  // Nudge overlapping labels apart
-  const MIN_DIST=8;
-  for(let pass=0;pass<30;pass++){
-    for(let i=0;i<labelPositions.length;i++){
-      for(let j=i+1;j<labelPositions.length;j++){
-        const a=labelPositions[i],bb=labelPositions[j];
-        const dx=a.mx-bb.mx,dy=a.my-bb.my;
-        const dist=Math.sqrt(dx*dx+dy*dy);
-        if(dist<MIN_DIST&&dist>0.01){
-          const push=(MIN_DIST-dist)/2;
-          a.mx+=dx/dist*push;a.my+=dy/dist*push;
-          bb.mx-=dx/dist*push;bb.my-=dy/dist*push;
-        }
-      }
+  // Pass B: place each band's date label on the spot along its centreline that is
+  // FARTHEST from every other visible band's centreline (avoids path crossings)
+  function isVisible(id){
+    const row=document.querySelector(`.row[data-id="${id}"]`);
+    return !(row&&row.classList.contains('off'));
+  }
+  const otherPts=[];
+  bandInfo.forEach(info=>{
+    if(!isVisible(info.id))return;
+    info.clSegs.forEach(seg=>seg.forEach(p=>otherPts.push({x:p[0],y:p[1],id:info.id})));
+  });
+
+  const placedLabelPts=[]; // {x,y} of labels already placed, in render order
+  bandInfo.forEach(info=>{
+    if(!info.bestSeg||info.bestSeg.length<2){bandsHTML+=info.bandGroup;return;}
+    const seg=info.bestSeg;
+    const winRadius=Math.max(8,Math.floor(seg.length*0.35));
+    let bestCenter=Math.floor(seg.length/2),bestScore=-1;
+    const candidates=[];
+    const lo=winRadius,hi=seg.length-winRadius;
+    if(hi>lo){
+      // Dense sampling: every point, not just ~6 — paths can be short so this is cheap
+      const step=Math.max(1,Math.floor((hi-lo)/20));
+      for(let cc=lo;cc<hi;cc+=step) candidates.push(cc);
     }
-  }
+    if(candidates.length===0)candidates.push(Math.floor(seg.length/2));
+    candidates.forEach(cc=>{
+      const px=seg[cc][0],py=seg[cc][1];
+      let minDist=Infinity;
+      for(const p of otherPts){
+        if(p.id===info.id)continue;
+        const d=Math.hypot(p.x-px,p.y-py);
+        if(d<minDist)minDist=d;
+      }
+      // Also stay clear of already-placed labels (own-path scan, cross-path scan)
+      for(const lp of placedLabelPts){
+        const d=Math.hypot(lp.x-px,lp.y-py);
+        if(d<minDist)minDist=d;
+      }
+      if(minDist>bestScore){bestScore=minDist;bestCenter=cc;}
+    });
+    let win=seg.slice(Math.max(0,bestCenter-winRadius),Math.min(seg.length,bestCenter+winRadius+1));
+    if(win.length<2)win=seg;
+    if(win[win.length-1][0]<win[0][0])win=[...win].reverse();
+    const lblId=`lblp_${info.id}`;
+    const lblD='M'+win.map(p=>p[0].toFixed(2)+' '+p[1].toFixed(2)).join('L');
+    info.bandGroup+=`<path id="${lblId}" d="${lblD}" fill="none" stroke="none"/>`;
+    labelPositions.push({id:info.id,pathId:lblId,date:info.date});
+    placedLabelPts.push({x:seg[bestCenter][0],y:seg[bestCenter][1]});
+    bandsHTML+=info.bandGroup;
+  });
+
+  // Stagger startOffset slightly per label so dense regions don't perfectly overlap
+  const OFFSETS=[50,35,65,42,58];
   let allLabels='';
-  for(const lp of labelPositions){
-    allLabels+=`<text class="pathlabel" data-id="${lp.id}" transform="translate(${lp.mx.toFixed(1)},${lp.my.toFixed(1)}) rotate(${lp.angle.toFixed(1)})" text-anchor="middle" dominant-baseline="auto" dy="-0.4">${lp.date}</text>`;
-  }
+  labelPositions.forEach((lp,idx)=>{
+    const offsetPct=OFFSETS[idx%OFFSETS.length];
+    allLabels+=`<text class="pathlabel" data-id="${lp.id}"><textPath href="#${lp.pathId}" startOffset="${offsetPct}%" text-anchor="middle" side="left">${lp.date}</textPath></text>`;
+  });
   document.getElementById('bands').innerHTML=bandsHTML+allLabels;
 
   // Frame
@@ -503,15 +536,22 @@ function buildExportSVG(){
 
   // Inline styles
   const style=document.createElementNS('http://www.w3.org/2000/svg','style');
+  // SVG viewBox width varies by projection; compute scale factor for physical units
+  const vbArr=mapEl.getAttribute('viewBox').split(' ').map(Number);
+  const vbW=vbArr[2]; // e.g. 318 for Natural Earth
+  // 0.1mm at 300mm wide print = 0.1/300 of viewBox width
+  const hairline=(vbW*0.1/300).toFixed(3);
+  const clLine=(vbW*0.2/300).toFixed(3);
+  const fontSize=(vbW*3.5/300).toFixed(2);
   style.textContent=[
     `.ocean{fill:${ocean}}`,
     `.land{fill:${land};stroke:none}`,
     `.graticule{display:none}`,
-    `.band.total{fill:${total};fill-opacity:${bop};stroke:${label};stroke-width:.4%;mix-blend-mode:${blend}}`,
-    `.band.annular{fill:${annular};fill-opacity:${bop};stroke:${label};stroke-width:.4%;mix-blend-mode:${blend}}`,
-    `.band.hybrid{fill:${hybrid};fill-opacity:${bop};stroke:${label};stroke-width:.4%;mix-blend-mode:${blend}}`,
-    `.pathlabel{font-size:2.5px;fill:${label};font-family:monospace}`,
-    `polyline[data-id]{stroke:${label};stroke-width:.24;fill:none}`,
+    `.band.total{fill:${total};fill-opacity:${bop};stroke:${label};stroke-width:${hairline};stroke-opacity:.8;mix-blend-mode:${blend}}`,
+    `.band.annular{fill:${annular};fill-opacity:${bop};stroke:${label};stroke-width:${hairline};stroke-opacity:.8;mix-blend-mode:${blend}}`,
+    `.band.hybrid{fill:${hybrid};fill-opacity:${bop};stroke:${label};stroke-width:${hairline};stroke-opacity:.8;mix-blend-mode:${blend}}`,
+    `.pathlabel{font-size:${fontSize}px;fill:${label};font-family:monospace;font-weight:bold}`,
+    `path[data-id]{stroke:${label};stroke-width:${clLine};fill:none;stroke-linecap:round}`,
     `.frame{display:none}`,
   ].join('');
   svg.insertBefore(style,svg.firstChild);
