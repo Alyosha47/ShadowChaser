@@ -504,12 +504,12 @@ function onMapClick(lat, lon) {
     showMapPopup(lat, lon, out.result, out.rec);
     clearMapMarkers();
     addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
-    /* On desktop (sidebar layout), if the user is on the Search or Settings
-       sub-tab, swap to Details so the local circumstances appear. Otherwise
-       leave the sidebar tab alone (they're already on Details or exploring
-       overlays). On mobile, stay on the map so the user can see the pin. */
+    /* On desktop (sidebar layout), if the user is on the Search sub-tab,
+       swap to Details so the local circumstances appear. Otherwise leave
+       the sidebar tab alone (they're already on Details or exploring overlays).
+       On mobile, stay on the map so the user can see the pin they placed. */
     if (window.matchMedia('(min-width: 900px)').matches) {
-      if (sidebarTab === 'search' || sidebarTab === 'settings') sidebarTab = 'eclipse';
+      if (sidebarTab === 'search') sidebarTab = 'eclipse';
     }
   });
 }
@@ -847,6 +847,14 @@ function drawEclipsePath(ep) {
         var ring = (r[0][0]===r[r.length-1][0] && r[0][1]===r[r.length-1][1])
           ? r.slice(0,-1) : r;
         return { id: 'oval-'+i, polygon: wrapContinuous(ring) };
+      })
+      .filter(function(d) {
+        /* Drop rings that encircle a pole (continuous longitude winds a full
+           turn). Their flat lon/lat triangulation is the inside-out sliver, and
+           this renderer cannot fill a polar cap. Omitting is honest; the fix is
+           the Cesium v2 pass. Normal ovals (winding ~0) are unaffected. */
+        var p = d.polygon;
+        return Math.abs(p[p.length-1][0] - p[0][0]) <= 270;
       });
     if (ovalData.length) {
       layers.push(new DeckGL.SolidPolygonLayer({

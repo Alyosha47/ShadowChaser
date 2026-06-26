@@ -1,36 +1,30 @@
-# ShadowChaser — Session Handoff — 2026-06-16 (standalone, authoritative)
+# ShadowChaser — Session Handoff — 2026-06-24 (standalone, authoritative)
 
 > ## ▶ START HERE (next session)
-> **State:** offline foundation complete (SW/PWA verified on iPhone). The **path generator
-> has been substantially advanced** this arc (see §SESSION 2026-06-16): the green
-> (Maximum-on-Horizon) line is now an implicit-contour trace validated **sub-km vs Jubier**;
-> the redundant **bisector is removed** (the green line supersedes it); all path types were
-> **validated against Jubier** (umbra sub-km, green sub-km, terminator 3–5 km, penumbra ~9 km).
-> The generator file is `data build tools/gen_eclipse_paths.py` (canonical; the working name
-> "gen_grail" is the same file — do NOT keep separate copies).
-> **The ONE remaining real path flaw is the grazing-tip zigzag** on umbral limits (gap +
-> ~170° fold at the ends of grazing eclipses). Root cause is PROVEN: the envelope method
-> stops where the shadow axis leaves Earth's disk, and the straight-chord extension across
-> the remaining real-totality stretch is the zigzag. The **fix is also proven** — trace the
-> umbral limit as the cone–spheroid intersection contour (field h = max_t(|L2'|−m)=0), which
-> is sub-km vs Jubier and reaches the tips. The ONLY blocker is a polyline-topology
-> sub-problem: splitting the traced closed loop into clean N/S limit polylines on
-> corridor-shaped eclipses (simple cases like 2033 already split perfectly). See §SESSION
-> 2026-06-16 and TODO "Umbral grazing-tip zigzag".
-> **Modern centuries render clean** after a rebuild + BUILD bump; **ancient/BCE centuries are
-> NOT yet rebuilt** (still show old data — a quick rebuild clears them).
-> **CACHE-BUSTER LESSON (cost a session morning):** if a rebuilt path file "doesn't appear"
-> in the app, it is almost always that `BUILD` in index.html wasn't bumped — the browser
-> serves the stale cached `.gz`. **BUILD must be bumped on every path rebuild.** Going
-> forward the build assistant bumps it automatically; ideally wire it into the build script.
-> **Before writing code:** skim §CRITICAL USER PREFERENCES and §RECURRING ANTI-PATTERNS —
-> they are the difference between a good session and a frustrating one. NOTE the hardest-won
-> lesson of this arc: a "principled" latitude-relabelling change was shipped without full
-> validation and badly broke clean eclipses (2017/2026/2002 → 150–170° folds). It was
-> reverted. **Never ship an umbral-limit change without the full multi-eclipse worst-turn
-> check.**
+> **State: math + mapping are CALLED DONE.** Every eclipse inspected across the 16th and 21st
+> centuries renders correctly. The umbral-limit topology space is fully handled (loops,
+> grazers, one-limit, dropped-limb, pole-transit, exact green-line termini) and the
+> `_terminate_on_green` antimeridian regression (2028/2041) is fixed with a spherical metric
+> — see §SESSION 2026-06-24. Generator `data build tools/gen_eclipse_paths.py` is
+> **GEN_VERSION 2026-06-24h**; frontend **BUILD 2026-06-24i**.
+> **Pre-ship gate = the full-catalog audit** (build all ~11,898, flag stub/asymmetric/wild-turn
+> umbra limbs; fold the checks INTO the regen — per-eclipse flags to a report, no extra
+> runtime). The 2028 regression proved spot-checks are insufficient.
+> **Mapping is diagnosed, not migrated.** The seam/pole rendering pain is the renderer
+> triangulating fills in flat lon/lat; the Antarctica wedge is ONLINE-only (OpenFreeMap),
+> the offline basemap was always fine. Pole-enclosing ovals are degraded to outline.
+> **The v2 cure is Cesium** (true-ellipsoid rendering) — see TODO v2 list.
+> **Before writing code:** skim §CRITICAL USER PREFERENCES and §RECURRING ANTI-PATTERNS.
+> Hardest-won lesson of THIS arc: on a sphere use a spherical metric — a planar
+> nearest-neighbour silently fails at the antimeridian (it gutted 2028/2041). And never ship
+> a terminus/umbral-limit change without the broad multi-eclipse no-gut / worst-turn check.
 
-**Last updated:** 2026-06-16 (Opus 4.8) — see §SESSION 2026-06-16: green line now a
+**Last updated:** 2026-06-24 (Opus 4.8) — see §SESSION 2026-06-24: umbral-limit topology
+closed (loops/grazers/one-limit/dropped-limb/pole-split/exact green termini); the
+`_terminate_on_green` antimeridian regression (2028/2041) fixed with a spherical metric +
+end-correspondence guard; mapping diagnosed (online-only Antarctica wedge, pole-oval outline,
+Cesium chosen for v2); arrow-key nav; run timers; dead-code cleanup byte-identical-verified.
+GEN_VERSION 2026-06-24h, BUILD 2026-06-24i. Prior 2026-06-16 (Opus 4.8) — see §SESSION 2026-06-16: green line now a
 sub-km implicit-contour trace; bisector removed; all path types validated vs Jubier;
 cone–spheroid umbral-limit fix proven (splitter remaining); BUILD cache-buster lesson
 captured. Prior 2026-06-07 (Opus 4.8) — adopted the corrected path generator (`data build
@@ -64,6 +58,80 @@ candidate fixes, UX-question deliberations, the feature idea-pool, perf/data not
 the refactor ledger; it accretes and is pruned, never restates status. When this handoff
 says "candidates in TODO.md," the detail is there. When an item is fixed, it is deleted
 from TODO.md (the handoff records the closure) — no "DONE" tombstones in the TODO.
+
+---
+
+## SESSION 2026-06-24 (what changed) — UMBRAL-LIMIT TOPOLOGY CLOSED; MAPPING DIAGNOSED
+
+**State: math/mapping called DONE.** Every eclipse inspected across the 16th and 21st
+centuries renders correctly. Path generator is `data build tools/gen_eclipse_paths.py`,
+**GEN_VERSION 2026-06-24h**; frontend **BUILD 2026-06-24i**.
+
+### Umbral-limit topology — the full space of limb shapes now handled
+Worked through every umbral-limit "topology" against Jubier and fixed each at root:
+- **Near-pole loops** (1533): depth field switched from ever-total (`_cone_depth`) to
+  **local-in-time peak** (`dep_local`, hill-climb to the nearest local max of g(t)). Closes
+  the loop-interior gap. `perpendicular_limits` now takes per-point times; march cap 600 km.
+- **Terminus completion** (`_terminate_on_green`): every limb ends exactly on the green line
+  at its analytic `_GREEN_TERMINI` tip (mag→1 ∩ alt→0 is a tangency the iterative march
+  cannot reach, so the exact corner is supplied). Corrected the global ~18–25 km terminus
+  shortfall on ALL central eclipses → 0–3 km of Jubier, and removed the 1533 curl.
+- **Non-central grazers + central one-limit** (Tn/Ts, A±/An/As): dispatch on the type-code
+  2nd char; analytic `umbra_pts` walk per limb, **each over its OWN validity interval**
+  (walking both over a shared interval under-samples the shorter limb to nothing). Fixed
+  1511/1523/1529/1552/1569/1598 (were blank/stub) and the two-limb cases 1547/1554/1565.
+- **Pole-transit split** (`_split_at_pole`): breaks a limb where two consecutive points are
+  both at |lat|≥89.9 (a spurious across-pole connector). Fixed 1591.
+
+### The `_terminate_on_green` regression — and the principled fix (the hard lesson)
+A first cut of terminus completion **gutted normal eclipses** whose ends sit at
+sunrise/sunset rather than a polar tip — **2028-07-22** (mainstream Australian total) and
+**2041-04-30** both collapsed to 2-point stubs. Two wrong turns before the real cause:
+a half-of-the-limb guard (a patch) and a sun-altitude gate (the data showed it does NOT
+separate the cases — overlapping values). **Root cause: a planar (lon,lat) distance metric.**
+2028's umbra crosses the antimeridian, so its endpoint (lon 180.8) and true terminus
+(lon −179.5) are 14 km apart on the globe but ~360° apart on a plane → it matched the wrong
+(far) terminus and truncated the limb. **Fix = the correct spherical metric (`_gc_dist`)
+throughout, plus an end-correspondence guard** (a terminus completes only the end on whose
+half its closest approach falls — handles the case where an end has no terminus at all, e.g.
+an umbra that lifts off mid-disc, as in 2041). Verified: 2028/2041 back to full, 1533 tip
+still exact at (−152, 62), zero gutted across a 10-eclipse spread (1203→2501).
+**Lesson: on a sphere, use a spherical metric; a planar nearest-neighbour silently fails at
+the antimeridian. And do not ship a terminus-completion change without the broad no-gut check.**
+
+### Mapping/rendering — diagnosed, NOT migrated (the big realization)
+The recurring seam/pole rendering pain was traced to a single architectural fact: **both
+renderers in the stack triangulate fills in flat lon/lat and wrap to the globe**, so poles
+and the antimeridian are singularities in the *renderer*, not the data. MapLibre's GeoJSON
+fill uses geojson-vt (Mercator-internal, documented "hole past 85°"); deck.gl's
+SolidPolygonLayer inverts a polygon that contains a pole. Findings:
+- **Two basemaps**: online = OpenFreeMap "liberty" vector tiles (`ONLINE_STYLE_URL`);
+  offline = the local GeoJSON bundle. **The Antarctica wedge is ONLINE-only** — the offline
+  land was already preprocessed (correctly-wound, antimeridian-split) and renders fine. A
+  latitude-clip of the offline land was tried and **reverted as unnecessary** (it fixed a map
+  that wasn't broken and added a pole hole). *Always confirm which basemap is live before
+  editing basemap data.*
+- **Pole-enclosing umbra ovals** can't be *filled* by either renderer; degraded to an
+  **outline** (a line across the pole renders fine) instead of inside-out or blank. Normal and
+  antimeridian ovals still fill (antimeridian ones split into in-range halves).
+- **Decision: Cesium (v2)** is the principled cure — it renders on the true WGS84 ellipsoid,
+  no flat-projection seam/pole singularities, fills poles natively. Apache-2.0/free, ion
+  optional, offline basemaps keep working, scoped to the map layer only. Deferred to v2; the
+  online Antarctica wedge and the pole-oval fill both resolve there. (See TODO v2 list.)
+
+### Also this session
+- **Arrow-key navigation** (`list.js`): ←/→ step prev/next through the current filtered list.
+- **Run timers** (generator): per-century elapsed line + a per-run total across centuries.
+- **Dead-code cleanup, byte-identical verified.** Generator −171 lines (`_v3u`, `_cross3`,
+  `cone_limit_split`, the superseded nested `_extend_to_green`); `map.js` −44
+  (`corridorToPolygonData`, leftover from the disabled corridor fill). Output proven
+  byte-identical across 13 eclipses / 5 centuries, so GEN_VERSION stays 24h (drop-in, no regen).
+
+### What remains (in TODO.md)
+The pre-ship gate is the **full-catalog audit** (build all ~11,898, flag stub/asymmetric/
+wild-turn umbra limbs) — foldable INTO the regen (per-eclipse flags to a report, no extra
+runtime). The 2028 regression proved spot-checks miss things. Plus the v2 map work and the
+small UI items. Residual cosmetics: 1533/1563/1587 terminus-join kinks, 1522 bumpy grazer.
 
 ---
 

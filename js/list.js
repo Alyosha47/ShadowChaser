@@ -1,5 +1,7 @@
 /* ── Eclipse list ────────────────────────────────────────────────────── */
 
+var _listItems = [];   /* the current filtered+ordered list, for arrow nav */
+
 function currentYear() { return new Date().getFullYear(); }
 
 function renderList() {
@@ -22,6 +24,7 @@ function renderList() {
   }
 
   var items  = applyFilter(source, currentFilter);
+  _listItems = items;   /* keep in sync for arrow-key navigation */
 
   if (items.length === 0) {
     list.innerHTML = '<div class="list-status">No eclipses match</div>';
@@ -121,4 +124,34 @@ function selectNextEclipse() {
 function updateHeaderSelection() {
   _renderMapStatus();
 }
+
+/* ── Arrow-key navigation ────────────────────────────────────────────────
+   Left/Right step to the previous/next eclipse in the CURRENT filtered list
+   (chronological), so you can walk a search result quickly. Right = later. */
+function stepEclipse(delta) {
+  var items = _listItems;
+  if (!items || !items.length || !selectedEntry) return;
+  var idx = -1;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].year === selectedEntry.year &&
+        items[i].month === selectedEntry.month &&
+        items[i].day === selectedEntry.day) { idx = i; break; }
+  }
+  if (idx < 0) return;
+  var next = idx + delta;
+  if (next < 0 || next >= items.length) return;
+  var e = items[next];
+  selectEclipse(e.year, e.month, e.day);
+  var row = document.querySelector('#eclipse-list .eclipse-item.selected');
+  if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+}
+
+document.addEventListener('keydown', function (ev) {
+  if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+  var t = ev.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' ||
+            t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (ev.key === 'ArrowRight')      { ev.preventDefault(); stepEclipse(1); }
+  else if (ev.key === 'ArrowLeft')  { ev.preventDefault(); stepEclipse(-1); }
+});
 

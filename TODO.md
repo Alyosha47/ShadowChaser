@@ -14,40 +14,113 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-06-20 — SOLVED the umbral grazing-tip zigzag: cone-limit splitter
-(single-trace closed contours + max-curvature tip detection + horizon-clip to the green line
-+ envelope-agreement guard). Validated sub-km across 18 eclipses spanning every type (total,
-annular, hybrid, polar grazer, dateline, wide). Recalibrated the Tolerances panel to the
-measured numbers (umbra 0.1–2.5 km, penumbra 10–30 km any type, sun lobes 1–7 km, grazers
-~1 km). The path-accuracy arc is essentially closed; next field is open.
+Last touched: 2026-06-24 — math/mapping CALLED DONE (16th + 21st centuries inspected clean).
+Closed the umbral-limit topology space (loops, grazers, one-limit, dropped-limb, pole-split,
+exact green termini) and the `_terminate_on_green` antimeridian regression (2028/2041) via a
+spherical metric. Mapping diagnosed: the seam/pole pain is the renderer triangulating fills
+in flat lon/lat; Antarctica wedge is ONLINE-only; Cesium chosen as the v2 cure. Added
+arrow-key nav + run timers; removed 215 lines of dead code (byte-identical verified). The
+remaining pre-ship gate is the full-catalog audit; then v2 (map paradigm + cosmetic kinks).
 
 ---
 
 ## PRIORITY ORDER (suggested re-entry)
-1. Bank state: commit the generator (cone-limit splitter + seed hill-climb + horizon-clip
-   longest-run fix + __meta stamp, GEN_VERSION 2026-06-20c), index.html (Tolerances + BUILD
-   2026-06-20b + map.js cache-bust), and js/map.js (settings-panel mapclick). Run the full
-   regen (every century incl. ANCIENT/BCE) watching umbra interior-turn audits; ancient
-   zigzags validated fixed on a BCE-totals sample.
-2. Trivial cleanups: map.js bisector comment.
-3. Path unification, phased — Phase 1 (umbra splitter) DONE; next is penumbra onto the
-   implicit engine (§Path unification).
+1. **Full-catalog audit — the pre-ship gate.** Build all ~11,898 with the current generator
+   and flag central eclipses with empty/stub umbra limbs, gross limb asymmetry, or wild
+   interior turns. Fold the checks INTO the regen (per-eclipse flags appended to an
+   `_audit.txt` beside the chunks) so it costs zero extra build time. The 2028/2041
+   regressions proved spot-checks miss things; this turns one-eclipse luck into systematic
+   coverage. No ground-truth comparison — it surfaces *suspicious* cases by internal
+   consistency for eyeballing vs Jubier.
+2. **Commit + regen.** Generator (GEN_VERSION 2026-06-24h — drop-in, output byte-identical
+   after the dead-code cleanup), `js/map.js` (pole-oval outline, antimeridian split),
+   `js/list.js` (arrow-key nav), index.html (BUILD 2026-06-24i). Bump BUILD on the rebuild.
+3. **v2 — map paradigm + cosmetics** (see "V2 — DEFERRED" below).
 4. Mobile UX/layout pass (§Mobile). 5. Remaining bugs. 6. UX decisions. 7. Features.
 
 ---
 
-## BUGS — open (detail; status in handoff)
-- **FIXED 2026-06-20 — ancient/BCE umbral zigzag (root-caused, two stacked bugs).** Kept
-  here only as a pointer until the full regen confirms it; delete after. (1) `_cone_seed`
-  trusted the catalog greatest-eclipse coordinate as an inside-totality start; high-ΔT ancient
-  eclipses put GE hundreds of km off the generator's OWN shadow axis (−1213: ΔT≈7.8h, ~255 km),
-  so the seed bailed and the WHOLE ancient range fell to the zigzagging envelope. Fix: hill-
-  climb the depth field to the generator's own deepest point. (2) `_cone_clip_horizon` trimmed
-  below-horizon points only from the endpoint inward; when the tip apex sits at alt≈0 with the
-  N→S join-dip bracketed just inside, the dip survived as a ~58° kink. Fix: keep the longest
-  above-horizon run. Validated: −1213 T+A clean (0.4°); modern identical (1773 0.11/0.13);
-  7 BCE totals γ −0.87..+0.92 all 0–2°. GEN_VERSION 2026-06-20c.
+## V2 — DEFERRED (decided 2026-06-24; revisit as a deliberate upgrade, not pre-ship)
+- **Map paradigm → CesiumJS.** The recurring seam/pole rendering pain is architectural: both
+  current renderers (MapLibre globe via geojson-vt, and deck.gl SolidPolygonLayer) triangulate
+  fills in flat lon/lat and wrap to the globe, so poles + the antimeridian are singularities in
+  the *renderer*, not the data (MapLibre has a documented "hole past 85°"; deck.gl inverts a
+  pole-containing polygon). Cesium renders on the true WGS84 ellipsoid — no flat-projection
+  singularities, fills poles natively. Apache-2.0 / free (ion optional; blank the token to run
+  without it), loads GeoJSON/KML natively, offline local basemaps keep working (online adds
+  streamed imagery). Scoped to the **map layer only** (`js/map.js` + script tags in index.html);
+  the Besselian math, catalog, search, list, details are untouched. This single move retires the
+  whole seam/pole bug class and the two items below.
+- **Online Antarctica wedge** (OpenFreeMap "liberty", `ONLINE_STYLE_URL`). Their land polygon
+  isn't wound/split for globe mode the way our local basemap is, so it wedges at the pole — only
+  visible on south-pole views, and only online (offline is fine). Can't edit their tiles; stopgap
+  is to overlay our correctly-wound local Antarctica fill over their style (needs a colour match,
+  un-eyeballable from the build box). Cesium fixes it for free.
+- **Pole-enclosing umbra-oval fills.** Currently degraded to an outline (a line across the pole
+  renders fine; a fill inverts). Cesium fills them properly. Normal + antimeridian ovals already
+  fill (antimeridian split into in-range halves).
+- **Cosmetic terminus-join kinks** — 1533 / 1563 / 1587 (small joins). And **1522** is a bumpy
+  mid-latitude grazer (γ +0.995, not polar) — livable. Low priority polish.
 
+---
+
+## SMALL UI ITEMS (cheap, do when convenient)
+- **Center the globe on the GE point** for central-path eclipses, not the whole penumbral
+  bounds (a `map.js` camera change).
+- **Clear set-location from within map mode** — an inline control on the map view, without
+  returning to the search panel.
+- **Hybrid duration label** → read "total duration" for hybrid eclipses.
+
+---
+
+## PATH-BUILDING — THE ROAD TO PURITY (generator 2026-06-21c)
+> **⚠ NEEDS RECONCILING (2026-06-24).** This section describes the *cone-limit-splitter*
+> approach. The current generator (GEN_VERSION 2026-06-24h) produces umbral limits via
+> `perpendicular_limits` (with `dep_local`) + analytic `umbra_pts` dispatch + exact
+> green-line termini (`_terminate_on_green`), and the dead `cone_limit_split` was removed
+> this session. The 16th + 21st centuries inspect clean under that approach. The pole-kernel
+> / sliver / threshold concerns below MAY be obsolete or may persist in a different form —
+> reconcile against the current code before acting (Aki has the fuller evolution). Kept
+> verbatim until reconciled.
+
+This session root-caused the curve-extraction heuristics (closure by turning-number theorem,
+tips by centreline termini, horizon by true sun-altitude; grazing-annular spurious limb fixed
+via below-horizon clip; pole-robust tips). Verified against Jubier KMZs (1526, 1552, 1522-S,
++ 5 totals). The physics core is pure; the remaining impurity is concentrated and listed in
+the order that unblocks deleting the legacy envelope:
+
+1. **Pole kernel — 1522-class.** The cone trace SPURS BACK near ±86° (1522-09-19 north limb:
+   body 180°, ~2× length), so the limb folds at the pole. South limb + split + clip are all
+   correct now; this is purely the trace's near-pole behaviour. Fix: dense near-pole
+   resampling / pole-aware corrector. Verify vs ASE_1522 KMZ (uploaded; N 7826 km, S 7686 km).
+2. **Sub-resolution slivers — the 8** (|γ|≈1, lat 61–75°). Cone returns None on contours
+   smaller than the 25 km step; currently suppress-fold draws nothing. Fix: scale-aware step
+   (shrink to local contour scale), scale-aware closure + min-length. Fixes the 58 s runaways
+   at the same time (they're the same degenerate contours).
+3. **Retire the envelope + guard + suppress-fold.** ONLY after 1 & 2: with the cone handling
+   100%, delete the perpendicular-offset envelope, the median-agreement guard, and suppress-
+   fold. One pure method, no fallback. Requires a full-catalog cone-only no-regression pass
+   (gated by build time) before deletion.
+4. **Derive/remove threshold gates.** 50 km median, 30° fold, 20° accept, 150 km tip-trim,
+   0.3° closure tol. Some physical (270° turn gate, centreline tips); others tuned — derive
+   from geometry where possible.
+5. **Optional perf — bound the runaway trace.** Measure the longest LEGITIMATE accepted trace
+   across the catalog, set maxpts just above it (identical output, runaways bail ~2.5× sooner).
+   Low value now that imap_unordered stops the straggler stall; do only if cheap.
+
+## FILE SIZE — path JSON has grown (curve thinning)
+Full-loop traces + pole tips added points (e.g. 1526 umbra 178→368 pts). Reduce file size
+WITHOUT losing accuracy:
+- **Primary: Douglas–Peucker (RDP) decimation** per curve at a sub-cartographic tolerance
+  (~200–500 m, far below visible-at-max-zoom). Removes redundant points on straight/gently
+  curved spans while preserving sharp tips. Apply to centreline + umbra limits; penumbra (already
+  2 dp) and terminators are also candidates. Expected 30–60% smaller, zero visible change.
+  Verify post-thin curves stay within tolerance of pre-thin (and re-check tip cusps).
+- Secondary (only if RDP insufficient): delta-encode coordinates before gzip; or spline-fit
+  curves to coefficients (higher effort — needs a front-end evaluator; RDP is simpler and
+  nearly as effective, so prefer it first).
+
+## BUGS — open (detail; status in handoff)
 - **Residual terminus polish (low priority — rare, cosmetic, NOT a regen blocker).** Only the
   grazing hybrid remains: 1986-10-03 (γ=+0.993) traces but the totality corridor is so tiny
   (~22 pts) it renders kinked. Candidate fix: densify the cone trace when a limb returns under
