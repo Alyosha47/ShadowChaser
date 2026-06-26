@@ -293,7 +293,10 @@
 
     /* Hybrid promotion: if the global eclipse is hybrid (H), a central observer
        experiences whichever phase applies locally, but we label it hybrid so the
-       UI can present the correct badge and type name. */
+       UI can present the correct badge and type name. localPhase keeps the actual
+       total/annular determination so callers (e.g. the duration row) can still say
+       which phase applies at THIS point, instead of just "hybrid". */
+    var localPhase = type;
     if ((rec.eclipse_type || '')[0] === 'H' && (type === 'total' || type === 'annular')) {
       type = 'hybrid';
     }
@@ -416,6 +419,7 @@
     return {
       visible:    true,
       type:       type,
+      localPhase: localPhase,
       mag:        Math.round(mag * 100000) / 100000,
       osc:        osc,
       sun:        sun,

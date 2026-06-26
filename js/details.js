@@ -152,7 +152,8 @@ function renderData(rec, _tz, _lat, _lon) {
     html += '<div class="no-eclipse">\uD83C\uDF11 Not visible from here \u2014 the Sun is below the horizon during this eclipse.</div>';
   } else {
     var res = localResult;
-    var lbl = typeName(res.type[0].toUpperCase());
+    var durType = (res.type === 'hybrid' && res.localPhase) ? res.localPhase : res.type;
+    var lbl = typeName(durType[0].toUpperCase());
 
     html +=
       '<table class="detail-table"><tbody>'
