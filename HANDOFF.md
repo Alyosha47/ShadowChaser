@@ -1,23 +1,98 @@
-# ShadowChaser — Session Handoff — 2026-06-24 (standalone, authoritative)
+# ShadowChaser — Session Handoff — 2026-06-26 (standalone, authoritative)
 
-> ## ▶ START HERE (next session)
-> **State: math + mapping are CALLED DONE.** Every eclipse inspected across the 16th and 21st
-> centuries renders correctly. The umbral-limit topology space is fully handled (loops,
-> grazers, one-limit, dropped-limb, pole-transit, exact green-line termini) and the
-> `_terminate_on_green` antimeridian regression (2028/2041) is fixed with a spherical metric
-> — see §SESSION 2026-06-24. Generator `data build tools/gen_eclipse_paths.py` is
-> **GEN_VERSION 2026-06-24h**; frontend **BUILD 2026-06-24i**.
-> **Pre-ship gate = the full-catalog audit** (build all ~11,898, flag stub/asymmetric/wild-turn
-> umbra limbs; fold the checks INTO the regen — per-eclipse flags to a report, no extra
-> runtime). The 2028 regression proved spot-checks are insufficient.
-> **Mapping is diagnosed, not migrated.** The seam/pole rendering pain is the renderer
-> triangulating fills in flat lon/lat; the Antarctica wedge is ONLINE-only (OpenFreeMap),
-> the offline basemap was always fine. Pole-enclosing ovals are degraded to outline.
-> **The v2 cure is Cesium** (true-ellipsoid rendering) — see TODO v2 list.
-> **Before writing code:** skim §CRITICAL USER PREFERENCES and §RECURRING ANTI-PATTERNS.
-> Hardest-won lesson of THIS arc: on a sphere use a spherical metric — a planar
-> nearest-neighbour silently fails at the antimeridian (it gutted 2028/2041). And never ship
-> a terminus/umbral-limit change without the broad multi-eclipse no-gut / worst-turn check.
+> ## ▶ START HERE (next session) — this block is self-sufficient; you need nothing else to begin
+>
+> ### What this project is
+> ShadowChaser (followtheshadow.com) — an **offline-capable eclipse-path web app**. A Python
+> generator computes shadow-path JSON from Besselian elements for ~11,898 eclipses; a vanilla-JS
+> frontend renders them on a MapLibre globe with a deck.gl overlay. Standard, non-negotiable:
+> **ships only when every case is correct vs Xavier Jubier's KMZ ground truth.**
+>
+> ### Where things are (don't ask the user — it's here)
+> - **Repo:** github.com/Alyosha47/ShadowChaser (branch `main`).
+> - **The user (Guy) runs locally from his repo root** — the directory containing `index.html`,
+>   `sw.js`, `js/`, `data/`, and `data build tools/`. In pasteable commands use `cd <repo root>`
+>   (Guy fills it; he runs from that dir).
+> - **You (assistant) get a FRESH throwaway clone each session.** It does NOT reflect Guy's local
+>   git state, BUILD, or uncommitted work. **Never trust your clone for `git log`/BUILD/commit
+>   state** — ask or infer from what Guy pastes.
+>
+> ### How to run (exact commands)
+> - **Serve the site:** from repo root → `python3 -m http.server 8000` → open http://localhost:8000
+> - **Rebuild one eclipse's path (fast check):** `python3 "data build tools/gen_eclipse_paths.py" --year 1994`
+> - **Rebuild all paths:** `python3 "data build tools/gen_eclipse_paths.py" --jobs 6`
+>   (defaults: `--data-dir ./data/besselian --out-dir ./data/paths`; `--test` runs self-tests)
+> - **Full dataset rebuild (only when changing ΔT/catalog, rare):** from `data build tools/` →
+>   `python3 verify_dt.py` → `python3 split_eclipse_data.py espenak_5000.csv ./data` →
+>   `python3 update_dt.py` → then bump BUILD.
+>
+> ### How to give the user commit code (he asked for this explicitly)
+> Always a **single pasteable blob from repo root**, and **stage explicitly — never `git add -A`
+> without a `git status` review** (stray scratch files lurk). Pattern:
+> ```bash
+> cd <repo root>
+> git add <the specific files changed>      # NOT -A blind
+> git status                                 # eyeball it
+> git commit -m "…"
+> git push
+> ```
+> Path data (`data/paths/*.json.gz`) is **gitignored** and rebuilt on deploy — do not stage it.
+>
+> ### BUILD + the service-worker cache (this cost a whole night — internalize it)
+> `index.html` holds `var BUILD = 'YYYY-MM-DD'+letter` (the single source of truth) AND a
+> `<meta name="build">`; `?v=BUILD` is appended to every `js/*` and `data/*` fetch. **Bump BUILD
+> on every deploy AND every path rebuild.** The service worker (`sw.js`) serves `js/*`/`data/*`
+> **cache-first with `ignoreSearch`**, so a changed file is masked by the old cached copy until
+> BUILD bumps. **Habit after ANY deploy/regen, and the FIRST move when "it broke again" with no
+> console error:** DevTools → Application → Service Workers → **Unregister** (or **Clear site
+> data**) → hard reload once. A poisoned cache resurfaces on *soft* reload while *hard* reload
+> bypasses it — that asymmetry is the tell.
+>
+> ### Cardinal rules (full list in §CRITICAL USER PREFERENCES — these are the load-bearing ones)
+> - **BE EXTREMELY CONCISE** in replies. (Reference docs like this one are the exception; chat is not.)
+> - **NEVER break working code.** Verify by **RUNNING the real thing**, not by `node -c`/syntax —
+>   a deleted variable passes syntax and dies at runtime (that was the night-killer). Diff pre/post
+>   any cleanup so ONLY intended lines moved.
+> - **Root-cause, not patches.** No guards stacked on guards; replace structures whole. If a path
+>   needs three special-cases, the structure is wrong.
+> - **NEVER GUESS.** All time is honest diagnosis time — verify against ground truth (Jubier KMZs),
+>   admit uncertainty, don't assert in a confident voice.
+> - **Don't make precision/default/UI decisions without consulting Guy.** Recommend ONE solution,
+>   don't stall with option-menus — but if he pushes back, re-examine honestly rather than fold or dig in.
+> - **Don't bulk-"tidy" working code.** Dead-code removal is low value and high risk; only do it
+>   verified (diff + run), and prefer leaving harmless dead code over risking a regression.
+>
+> ### Current state (committed & pushed on `main`, 2026-06-26)
+> **Math + mapping are DONE and banked.** Umbral-limit topology fully handled (loops, grazers,
+> one-limit, dropped-limb, pole-transit, exact green-line termini); the `_terminate_on_green`
+> antimeridian regression (2028/2041) fixed with a spherical (great-circle) metric. Pole-encircling
+> umbra ovals are **skipped** (not drawn) rather than rendered inside-out. Arrow-key list nav added.
+> Jubier ground-truth KMZs committed under `reference kmz/`. **GEN_VERSION 2026-06-24h; BUILD
+> 2026-06-24i** (bump on next deploy).
+>
+> ### What's next (priority)
+> 1. **UI / copy pass** — the active focus; see TODO **"CURRENT FOCUS"** (build-number fix, About
+>    text swap, ΔT vintage/wording, Centerline label, search-token design, mobile pass). Well-suited
+>    to **Sonnet**.
+> 2. **Full-catalog audit — the pre-ship GATE.** Build all ~11,898, flag stub/asymmetric/wild-turn
+>    umbra limbs, fold the check INTO the regen (per-eclipse flags to a report, zero extra runtime).
+>    The 2028/2041 regression proved spot-checks insufficient. **Do this before declaring ship-ready.**
+> 3. **v2 — map paradigm → Cesium** (true-ellipsoid rendering; retires the whole seam/pole bug class,
+>    fixes the polar ovals and the online Antarctica wedge). Scoped to the map layer only. See TODO "V2".
+>
+> ### Hardest-won lessons of this arc (do not relearn the hard way)
+> - **On a sphere, use a spherical metric** — a planar (lon,lat) nearest-neighbour silently fails at
+>   the antimeridian (it gutted 2028/2041; 14 km on the globe read as ~360° on the plane).
+> - **Never ship a terminus/umbral-limit change without a broad multi-eclipse no-gut / worst-turn check.**
+> - **The SW stale-cache trap** (above) masquerades as "you re-broke it" with zero errors. Clear the
+>   cache before debugging further.
+> - **`node -c` proves syntax, not behaviour.** Run map.js; a runtime `ReferenceError` is invisible
+>   to a syntax check.
+>
+> ### The two task docs
+> - **TODO.md** — the single task list (current UI items, bugs, features, the audit, v2). Start there.
+> - **THIS file (HANDOFF.md)** — knowledge & current status: how things work, what's closed, the
+>   derivations and lessons. Use the Table of Contents below to navigate.
 
 **Last updated:** 2026-06-24 (Opus 4.8) — see §SESSION 2026-06-24: umbral-limit topology
 closed (loops/grazers/one-limit/dropped-limb/pole-split/exact green termini); the
@@ -44,12 +119,34 @@ far-side markers, oval blink-off, vendoring.
 files (the dated ones in repo root — `HANDOFF-2026_05_18b.md`, `HANDOFF-2026_05_19.md` —
 are stale and can be archived/deleted).
 **BUILD cache-buster:** lives in `index.html` as `var BUILD = '...'` AND the
-`<meta name="build">` tag (currently `2026-06-16a`) and is appended as
+`<meta name="build">` tag (see START-HERE for the current value) and is appended as
 `?v=BUILD` to every `js/*` and `data/*` fetch. **Bump it
 on every deploy AND every path rebuild** (convention: `YYYY-MM-DD` + letter). If a fix or a
 rebuilt path "doesn't appear," 90% of the time BUILD wasn't bumped or the browser wasn't
 hard-refreshed. NB vendored libs in `vendor/` deliberately carry NO `?v=` — their version is
 in the filename.
+
+---
+
+## TABLE OF CONTENTS
+- **▶ START HERE** (top) — operating manual: repo, run/commit commands, BUILD+SW cache, cardinal
+  rules, current state, what's next, hardest-won lessons.
+- **Session logs** (most recent first): §SESSION 2026-06-24 (umbral-limit topology closed; mapping
+  diagnosed) · §SESSION 2026-06-16 (path-generator advances) · §SESSION 2026-06-07.
+- **§CRITICAL USER PREFERENCES** — the full cardinal-rules list. Read before coding.
+- **§WHEN TO USE OPUS VS SONNET**
+- **§REPOSITORY STRUCTURE** — the file tree.
+- **§CRITICAL OPERATIONAL NOTES**
+- **§OFFLINE GLOBE — DATA & RENDERING** — basemap pipeline, oval/zoom machinery, the 2026-05-31 work.
+- **§FOUNDATION — VENDORING** — why libs are vendored (service-worker prerequisite).
+- **§THE V-ANGLE DERIVATION** — authoritative; do NOT re-litigate.
+- **§CURRENT STATE OF FEATURES** — what's working.
+- **§OUTSTANDING ITEMS — PRIORITIZED** (note: live task list is TODO.md).
+- **§RECURRING ANTI-PATTERNS** — read before coding.
+- **§TECHNICAL CAVEATS / GOTCHAS**
+- **§DEPLOY CHECKLIST**
+- **§SERVICE WORKER / PWA** — the offline architecture (sw.js, caching strategy).
+- **§AFTER — the frontier.**
 
 **Document map (two files, one job each — do not duplicate):** THIS handoff owns *current
 status* — what changed, what's deployed, how things work, what's closed, what's next; it
