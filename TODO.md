@@ -14,59 +14,25 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-06-26 — math/mapping committed & pushed (umbral-limit topology, the
-2028/2041 antimeridian terminus fix, pole-encircling oval skip, arrow-key nav, ground-truth
-KMZs all banked on `main`). Focus now shifts to a **UI/copy pass** (see CURRENT FOCUS). The
-pre-ship gate (full-catalog audit) and the v2 map paradigm (Cesium) remain the two big
-non-UI items.
+Last touched: 2026-06-27 — UI/copy pass mostly closed out (see below for what's left); map
+camera logic for GE-centering and map-click behavior fixed; starfield.js added. The pre-ship
+gate (full-catalog audit) and the v2 map paradigm (Cesium) remain the two big non-UI items.
 
 ---
 
 ## PRIORITY ORDER (suggested re-entry)
-1. **CURRENT FOCUS — UI / copy pass.** The grouped, mostly-cheap items below. This is the
-   active workstream; well-suited to a lighter model (Sonnet) since it's copy/layout/wiring.
+1. **Search temporal tokens** — needs a design decision before any code (see below).
 2. **Full-catalog audit — the pre-ship GATE** (see PRE-SHIP GATE). The real blocker to
    shipping; the 2028/2041 regression proved spot-checks insufficient.
-3. **v2 — map paradigm (Cesium) + cosmetics** (see V2 — DEFERRED).
-4. Open bugs (see BUGS). 5. UX deliberations. 6. Features.
+3. **Remaining small UI items** (date label visibility, clear-location control — see below).
+4. **v2 — map paradigm (Cesium) + cosmetics** (see V2 — DEFERRED).
+5. **Mobile UX / layout pass** (interdependent — one sitting).
+6. Open bugs → UX deliberations → Features.
 
 ---
 
-## CURRENT FOCUS — UI / COPY PASS
+## OPEN — UI / COPY
 
-### Settings & copy fixes (index.html — batch these together)
-- **Build number is stale in two of three places — wire it to one source.** index.html has
-  THREE build strings and two never update: `<meta name="build">` (line ~6), the **Settings
-  "Build:" `<p>`** (line ~186, a separate hard-coded literal — currently frozen at an old
-  date), and the real `var BUILD` (line ~333). Fix: on load, have JS write the Settings build
-  text (and ideally the meta) FROM `BUILD`, so it can never drift again. (Single source of
-  truth already exists in `BUILD`; the display just isn't reading it.)
-- **Replace the About text** (the `<p>` at line ~180) with Guy's personal version (kept at
-  the end of this file under "STAGED COPY — About text" so it's not lost). NB the current
-  text is the "loose consortium" version; the new one is first-person. After swapping, the
-  font note in PERFORMANCE/DATA about Cormorant weights may change — re-check which weights
-  the new text actually uses.
-- **ΔT data sources — replace "last month" with the real vintage (now known).** Lines ~199–200.
-  The bundled USNO data is frozen at build time, not refreshed monthly. Verified limits from the
-  build files (`data build tools/deltat.data.txt`, `deltat.preds.txt`): observed `deltat.data`
-  runs **1973 → April 2026**; forecast `deltat.preds` runs **April 2026 → late 2033** (~7–8 yrs,
-  so the current "~5 years out" is also wrong). Set the text to those explicit dates. Past 2050 /
-  before −720 it's SMH-2016 LOD extrapolation; in between, Espenak–Meeus polynomials (already
-  described). **Durable option (preferred):** have `update_dt.py` stamp the observed cutoff into
-  a small value the page reads, so this never goes stale again — same single-source pattern as
-  the build-number fix.
-- **ΔT wording — use "metadelta" (Guy's preference).** Keep the existing sentence shape; change
-  "has its own delta over time" → "has its own **metadelta** over time" (line ~198). It's a
-  delta-of-a-delta, which is exactly the right word for it.
-- **Tolerances "(any type)"** (line ~215, "Penumbra edges 10–30 km (any type)") — reads
-  inconsistently since the other rows have no type qualifier. Drop it unless it's meaningfully
-  saying "this tolerance holds regardless of eclipse type." **Guy's call.**
-- **"Centreline" → "Centerline" — DISPLAY LABEL ONLY** (tolerances table, line ~213:
-  `<td>Centreline</td>`). Safe one-word text change to American spelling. **Do NOT touch the
-  `ep.centreline` data key** — see DO NOT DO. Only the visible table label changes.
-- **"Online / offline maps." label** (line ~280) — it's the bold lead-in to a real settings
-  paragraph about reload-to-switch-modes, not a stray fragment. Remove just the bold label
-  (keep the paragraph) per Guy's "86 the intro fragment."
 - **Search temporal tokens — open-ended *backward* ranges are useless (the "1999-" / "now-"
   problem). NEEDS A DESIGN DECISION — do not code yet.** Today a trailing-dash range like
   `1999-` lists ascending from the catalog's START (year ~1 or earlier), so the user drowns in
@@ -84,23 +50,36 @@ non-UI items.
   Decide the model first, then align the example text (line ~237). The underlying asymmetry Guy
   noticed (`today+` exists; `now-` semantics are murky) gets resolved by whichever model wins.
 
-### Small UI behaviour (cheap, do when convenient)
-- **Center the globe on the GE point** for central-path eclipses, not the whole penumbral
-  bounds (a `map.js` camera change).
-- **Clear set-location from within map mode** — an inline control on the map view, without
-  returning to the search panel.
-- **Hybrid duration label** → read "total duration" for hybrid eclipses.
 - **Date label hard to see on map (esp. mobile)** — placement/contrast; previously
   intersected the (now-removed) brightness slider. Reposition.
 
-### Verify (logic — handle with care; not pure copy)
+- **Instructions note: online/offline is reload-only.** Add a line explaining the map picks
+  online/offline at load; switching networks needs a page reload. (Related to the "Online /
+  offline maps." paragraph, already trimmed.)
+
+- **Dropped pin as a real 3-D-ish icon with a shadow (NOT a flat marker).** NB: emoji + SVG
+  teardrop both failed before (floating position, wrong anchor/scale); reverted to a red dot.
+  Needs a proper MapLibre symbol-layer approach — first understand why GeoJSON symbol layers
+  were abandoned.
+
+- **Umbra ovals: blink-off vs fade (revisit after living with it).** They blink off at zoom ≥ 7
+  (`OVAL_HIDE_ZOOM` in map.js; `visible` toggled on the `zoom` event via `layer.clone`).
+  Switching to a gradual alpha fade is the same machinery, just more `setProps` through the
+  fade band. Live with the blink; switch to fade only if the cutoff feels abrupt. Threshold is
+  a one-number change.
+
+---
+
+## VERIFY (logic — handle with care; not pure copy)
 - **Offline timezone for odd zones (Gander −3:30, Nepal +5:45).** Timezones resolve offline
   via the **tz-lookup** polygon DB, which DOES return the correct IANA zone (`America/St_Johns`,
   `Asia/Kathmandu`). The open question is whether details.js applies the half/quarter-hour
   offset (and historical/future DST for the eclipse date) correctly. Verify with a Gander and
   a Kathmandu test case across a couple of eras before declaring it handled.
 
-### Mobile UX / layout pass (interdependent — one sitting)
+---
+
+## MOBILE UX / LAYOUT PASS (interdependent — one sitting)
 - (a) Banner + tabs permanent, immobile, unscalable on mobile/PWA (pairs with #R5 pinch-zoom
   — don't scroll away or zoom); (b) move tabs to screen BOTTOM on mobile/PWA for thumb reach;
   (c) single-line date/duration bar pinned at the bottom on mobile (overlaps "date label hard
@@ -115,31 +94,16 @@ non-UI items.
 - **Mobile map-click microsheet** — with no sidebar on mobile, a map click gives no inline
   "this is what changed." Add a small dismissable bottom-of-map sheet showing at least umbral
   duration for the clicked point.
-- Dropped pin as a real 3-D-ish icon with a shadow (NOT a flat marker). NB: emoji + SVG
-  teardrop both failed before (floating position, wrong anchor/scale); reverted to a red dot.
-  Needs a proper MapLibre symbol-layer approach — first understand why GeoJSON symbol layers
-  were abandoned.
-
-### Instructions / help copy
-- **Instructions note: online/offline is reload-only.** Add a line explaining the map picks
-  online/offline at load; switching networks needs a page reload. (Related to the "Online /
-  offline maps." paragraph above.)
-
-### Revisit after living with it
-- **Umbra ovals: blink-off vs fade.** They blink off at zoom ≥ 7 (`OVAL_HIDE_ZOOM` in map.js;
-  `visible` toggled on the `zoom` event via `layer.clone`). Switching to a gradual alpha fade
-  is the same machinery, just more `setProps` through the fade band. Live with the blink;
-  switch to fade only if the cutoff feels abrupt. Threshold is a one-number change.
 
 ---
 
 ## ⛔ DO NOT DO (verified traps — recorded so they aren't re-attempted)
 - **Do NOT rename the `ep.centreline` DATA KEY → `centerline`.** This is the internal JSON key
   emitted by the generator and read by `map.js` (plus the layer id) — distinct from the visible
-  tolerances-table label (which CAN safely change; see UI pass). Renaming the key requires
-  changing generator output, regenerating EVERY path file, and changing the reader in lockstep:
-  a breaking refactor for zero user-visible payoff. If American spelling everywhere is ever
-  wanted, it's a deliberate v2 refactor, not a quick fix.
+  tolerances-table label (already changed; see refactor ledger / handoff). Renaming the key
+  requires changing generator output, regenerating EVERY path file, and changing the reader in
+  lockstep: a breaking refactor for zero user-visible payoff. If American spelling everywhere is
+  ever wanted, it's a deliberate v2 refactor, not a quick fix.
 
 ---
 
@@ -231,6 +195,9 @@ generalizes that into a saved, catalog-wide report.
 ## FEATURES — EASY
 - Server-side share page seedling lives under MEDIUM; keep EASY for genuinely small adds.
 - Make map date more visible on mobile (see Mobile UX pass).
+- Thumbnail path map per list row (small SVG) — MOBILE ONLY (not desktop).
+- Century scroller on the mobile right edge.
+- KMZ download.
 
 ## FEATURES — MEDIUM
 - Server-side share page (`followtheshadow.com/share?e=XXXXX`) — static HTML reading the
@@ -265,9 +232,6 @@ generalizes that into a saved, catalog-wide report.
 - **#F4 Topographic shadow overlay** — terrain shadows at the observer location.
 - **#F1 Personal "ShadowChaser log"** — eclipses visited / wishlist; schema, localStorage (or
   future sync), UI in list/details, "been there" vs "want to go", merge with selection state.
-- Thumbnail path map per list row (small SVG) — MOBILE ONLY (not desktop).
-- Century scroller on the mobile right edge.
-- KMZ download.
 
 ---
 
@@ -286,9 +250,8 @@ generalizes that into a saved, catalog-wide report.
 - Path thumbnails for list rows — feasibility/size for 5 centuries of tiny scaled flat-map
   paths; could be cheap if simplified.
 - Drop or make-optional pre-1000 CE eclipses — cost/benefit on load/data shed.
-- Trim unused Cormorant Garamond weights — only `.app-title` uses weight 300; the other four
-  loaded weights (400, 600, italics) are dead after the About-text font switch (~70%
-  font-payload reduction). **Re-verify against the NEW About text before trimming.**
+- **Trim unused Cormorant Garamond weights.** Re-check against the NEW (current, first-person)
+  About text — confirm which weights it actually uses before trimming.
 
 ---
 
@@ -354,30 +317,3 @@ generalizes that into a saved, catalog-wide report.
    0.3° closure tol. Some physical, some tuned — derive from geometry where possible.
 5. **Optional perf — bound the runaway trace.** Set maxpts just above the longest legitimate
    accepted trace. Low value now that imap_unordered stops the straggler stall.
-
----
-
-## STAGED COPY — About text (ready to paste into the `<p>` at index.html line ~180)
-> Replace the current "loose consortium of friends" About paragraph with this. Preserve the
-> existing `<p>` wrapper / surrounding markup; only the inner text changes. Mind the mailto
-> link and the em-dashes/italics.
-
-My name is Guy and I have been following eclipses since a fateful camping trip back in May
-1994. We all ate mushrooms and sat in a circle with drums between our knees, silver glasses on
-our faces, grinning like fools and staring upwards at the ring of fire. That kind of sealed the
-deal, and certainly changed my life. Since then, I have always had a direction — an endless
-series of predictable glorious events — to pursue, across mountains, jungles, and deserts, to
-the very farthest corners of the globe.
-
-Although there are many eclipse-adventure-planning tools out there (Thank you, Espenak! Thank
-you, Jubier!), I still missed certain features: search-by-date (all the eclipses on your
-birthday), search-by-location (what, no totals in Ouagadougou from 913 until 2219‽),
-search-by-vibe (what total eclipse happened somewhere close to Oslo but not in Oslo sometime in
-the 50s), historical weather-data cloud-cover planning (did he just use the C-word?),
-shadow-mapping from local topographies (doh that hill is in the way!), and offline map caching
-for in-the-field use. This app tries to cover all the bases in one convenient package, to help
-plan syzygystic adventures more efficiently. I also learned a *ton* about Besselian geometry
-while making it, which is always so much fun.
-
-Tuned to desktop + iOS and never tested on Android — if you have any suggestions or find any
-bugs, [drop me a line](mailto:app@followtheshadow.com) — *and don't stare at the sun!*
