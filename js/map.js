@@ -316,7 +316,17 @@ function createMap(style, isOnline, localStyleFallback) {
     });
   }
 
-  map.on('click', function (e) { onMapClick(e.lngLat.lat, e.lngLat.lng); });
+  map.on('click', function (e) {
+    /* In globe mode a click in empty space still returns a lngLat clamped to the
+       globe's edge (the "nearest spot on land" snap). Detect that by re-projecting
+       the returned lngLat back to screen: an ON-globe click round-trips to the
+       cursor; an OFF-globe click lands on the limb, far from where you clicked.
+       Off-globe → clear any set location instead of selecting a point. */
+    var back = map.project(e.lngLat);
+    var offGlobe = Math.hypot(back.x - e.point.x, back.y - e.point.y) > 8;
+    if (offGlobe) { clearLocationFilter(); return; }
+    onMapClick(e.lngLat.lat, e.lngLat.lng);
+  });
   map.on('mousemove', function () { map.getCanvas().style.cursor = 'crosshair'; });
   document.getElementById('map-popup-close').addEventListener('click', function () {
     document.getElementById('map-popup').style.display = 'none';
@@ -365,28 +375,26 @@ function updateMapState() {
     drawEclipsePath(ep);
     setMapStatus(null);
 
-    /* Camera: observer location if set, otherwise fit path/GE */
-    if (coords) {
-      map.flyTo({ center:[coords.lon, coords.lat], zoom:Math.max(map.getZoom(),4), duration:800 });
+    /* Camera: centre on the greatest-eclipse point for EVERY selection, keeping
+       the user's current zoom untouched (only the centre moves — easeTo with no
+       zoom given pans/rotates at the current zoom). Partial eclipses have no GE,
+       so fall back to the path's mean position (longitudes unwrapped around the
+       first point so an antimeridian-crossing path averages to the correct side). */
+    var ctr = null;
+    if (ep.ge && ep.ge[0] != null) {
+      ctr = [ep.ge[0], ep.ge[1]];
     } else {
-      var allPts = [];
-      ['centreline','penumbra_n','penumbra_s'].forEach(function(k){
-        (ep[k]||[]).forEach(function(seg){ allPts = allPts.concat(seg); });
+      var pts = [];
+      ['centreline','penumbra_n','penumbra_s'].forEach(function (k) {
+        (ep[k] || []).forEach(function (seg) { pts = pts.concat(seg); });
       });
-      if (allPts.length) {
-        /* Unwrap every longitude into a continuous window around the greatest-
-           eclipse meridian (else the first point) so antimeridian-crossing
-           paths give a correct centre and span instead of wrapping the wrong
-           way round the globe. One code path for all eclipses. */
-        var anchor = (ep.ge && ep.ge[0] != null) ? ep.ge[0] : allPts[0][0];
-        var lons = allPts.map(function(p){ return anchor + (((p[0]-anchor)%360+540)%360-180); });
-        var lats = allPts.map(function(p){ return p[1]; });
-        map.fitBounds([
-          [Math.min.apply(null,lons), Math.min.apply(null,lats)],
-          [Math.max.apply(null,lons), Math.max.apply(null,lats)]
-        ], { padding:40, duration:800, maxZoom:6 });
+      if (pts.length) {
+        var a = pts[0][0], lon = 0, lat = 0;
+        pts.forEach(function (p) { lon += a + (((p[0]-a)%360+540)%360-180); lat += p[1]; });
+        ctr = [lon / pts.length, lat / pts.length];
       }
     }
+    if (ctr) map.easeTo({ center: ctr, duration: 800 });
   }).catch(function () { setMapStatus('Could not load path'); });
 
   if (coords) {
