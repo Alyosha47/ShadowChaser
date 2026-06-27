@@ -361,6 +361,8 @@ function _renderMapStatus() {
 function updateMapState() {
   if (!mapReady)      return;
   if (!selectedEntry) return;   /* not ready yet (init-time only) */
+  var isNewEclipse = (selectedEntry !== updateMapState._lastEntry);
+  updateMapState._lastEntry = selectedEntry;
   clearMapLayers();
   clearMapMarkers();
   clearPathMarkers();
@@ -375,26 +377,31 @@ function updateMapState() {
     drawEclipsePath(ep);
     setMapStatus(null);
 
-    /* Camera: centre on the greatest-eclipse point for EVERY selection, keeping
-       the user's current zoom untouched (only the centre moves — easeTo with no
-       zoom given pans/rotates at the current zoom). Partial eclipses have no GE,
+    /* Camera: centre on the greatest-eclipse point only when the eclipse
+       SELECTION itself changed, keeping the user's current zoom untouched
+       (easeTo with no zoom given pans/rotates at the current zoom). This
+       function also runs on map clicks (coords/localResult change, same
+       eclipse) — those are handled separately in onMapClick, not here, so a
+       click doesn't yank the camera back to GE. Partial eclipses have no GE,
        so fall back to the path's mean position (longitudes unwrapped around the
        first point so an antimeridian-crossing path averages to the correct side). */
-    var ctr = null;
-    if (ep.ge && ep.ge[0] != null) {
-      ctr = [ep.ge[0], ep.ge[1]];
-    } else {
-      var pts = [];
-      ['centreline','penumbra_n','penumbra_s'].forEach(function (k) {
-        (ep[k] || []).forEach(function (seg) { pts = pts.concat(seg); });
-      });
-      if (pts.length) {
-        var a = pts[0][0], lon = 0, lat = 0;
-        pts.forEach(function (p) { lon += a + (((p[0]-a)%360+540)%360-180); lat += p[1]; });
-        ctr = [lon / pts.length, lat / pts.length];
+    if (isNewEclipse && !coords) {
+      var ctr = null;
+      if (ep.ge && ep.ge[0] != null) {
+        ctr = [ep.ge[0], ep.ge[1]];
+      } else {
+        var pts = [];
+        ['centreline','penumbra_n','penumbra_s'].forEach(function (k) {
+          (ep[k] || []).forEach(function (seg) { pts = pts.concat(seg); });
+        });
+        if (pts.length) {
+          var a = pts[0][0], lon = 0, lat = 0;
+          pts.forEach(function (p) { lon += a + (((p[0]-a)%360+540)%360-180); lat += p[1]; });
+          ctr = [lon / pts.length, lat / pts.length];
+        }
       }
+      if (ctr) map.easeTo({ center: ctr, duration: 800 });
     }
-    if (ctr) map.easeTo({ center: ctr, duration: 800 });
   }).catch(function () { setMapStatus('Could not load path'); });
 
   if (coords) {
@@ -490,6 +497,7 @@ function addGEMarker(lat, lon) {
 }
 
 function onMapClick(lat, lon) {
+  map.easeTo({ center: [lon, lat], duration: 800 });
   var search = document.getElementById('search');
   var f      = parseSearch(search.value);
   /* An explicit map click is an explicit location — drop any city name so it
