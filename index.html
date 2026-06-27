@@ -177,14 +177,13 @@
 
       <div class="settings-section">
         <div class="about-text">
-          <p>My name is Guy, and I have been following eclipses since a fateful camping trip back in May 1994. We all ate mushrooms and sat in a circle with drums between our knees, silver glasses on our faces, grinning like fools and staring upwards at the ring of fire. That kind of sealed the deal, and certainly changed my life. Since then, I have always had a direction &mdash; an endless series of predictable glorious events &mdash; to pursue: across mountains, jungles, and deserts, to the very farthest corners of the globe.</p>
-          <p>Although there are many eclipse-adventure-planning tools out there (Thank you, Mr. Espenak! Merci, M. Jubier!), I still missed certain features: search-by-date (all the eclipses on your birthday), search-by-location (what, no TSEs in Ouagadougou since the year 913&#8253;), search-by-vibe (was there a total eclipse right near but not in Oslo sometime in the 50s?), historical cloud data overlays (did he just use the C-word?), shadow-mapping from local topographies (d&rsquo;oh that hill is in the way!), and offline map caching for in-the-field use. This app tries to cover all the bases in one convenient package, to help plan syzygystic adventures more efficiently. I also learned a <em>ton</em> about Besselian geometry while making it, which is always so much fun.</p>
-          <p>Tuned to desktop + iOS and never tested on Android &mdash; if you have any suggestions or find any bugs, <a href="mailto:app@followtheshadow.com">drop me a line</a> &mdash; <em>and don&rsquo;t stare at the sun!</em></p>
+          <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. Although there are many eclipse-adventure-planning tools out there, we still missed certain features &mdash; search-by-location, accurate local timezone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We&rsquo;ve tried to cover all the bases in one convenient package.</p>
+          <p>Tuned to iPhone and never tested on Android &mdash; let us know if you have any suggestions. If you find any bugs, <a href="mailto:app@followtheshadow.com">drop us a line</a> &mdash; and <em>don&rsquo;t stare at the sun!</em></p>
         </div>
       </div>
 
       <div class="settings-section">
-        <p id="settings-build-display" style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: &hellip;</p>
+        <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: 2026-05-29u</p>
       </div>
 
       </details>
@@ -196,9 +195,9 @@
         <div class="top-section-header">Sources</div>
         <div class="about-text">
           <p><strong>Eclipse catalogue and Besselian elements</strong> are sourced from Espenak &amp; Meeus, <em>Five Millennium Canon of Solar Eclipses: &minus;1999 to +3000</em> (NASA/TP-2006-214141). Local circumstances are computed via the Besselian element method described by Jean Meeus in <em>Astronomical Algorithms</em> (Willmann-Bell, 2nd ed. 1998, Ch. 54).</p>
-          <p><strong>Delta T</strong> (&Delta;T = TT &minus; UT) drifts with the Earth&rsquo;s rotation and has its own metadelta over time. This code uses the best available source per date:
-            1973 to April 2026 &mdash; USNO observed monthly tables (<em>deltat.data</em>);
-            April 2026 to late 2033 &mdash; USNO quarterly forecast (<em>deltat.preds</em>);
+          <p><strong>Delta T</strong> (&Delta;T = TT &minus; UT) drifts with the Earth&rsquo;s rotation and has its own delta over time. This code uses the best available source per date:
+            1973 to last month &mdash; USNO observed monthly tables (<em>deltat.data</em>);
+            last month to ~5 years out &mdash; USNO quarterly forecast (<em>deltat.preds</em>);
             &minus;720 to 2050 (outside the USNO range) &mdash; Espenak&ndash;Meeus piecewise polynomial;
             before &minus;720 and after 2050 &mdash; Stephenson, Morrison &amp; Hohenkerk (2016) LOD integral extrapolation.</p>
           <p><strong>Basemaps</strong> are served from OpenFreeMap (Liberty vector style, <em>openfreemap.org</em>) when online, and from Natural Earth public-domain geodata (<em>naturalearthdata.com</em>) when offline.</p>
@@ -211,9 +210,9 @@
         <table class="syntax-table">
           <thead><tr><th>Curve</th><th>Median error</th></tr></thead>
           <tbody>
-            <tr><td>Centerline</td><td>~15 m</td></tr>
+            <tr><td>Centreline</td><td>~15 m</td></tr>
             <tr><td>Umbra edges (N/S)</td><td>0.1&ndash;2.5 km</td></tr>
-            <tr><td>Penumbra edges</td><td>10&ndash;30 km</td></tr>
+            <tr><td>Penumbra edges</td><td>10&ndash;30 km (any type)</td></tr>
             <tr><td>Terminator lemniscates</td><td>1&ndash;7 km / ~50 km at tips</td></tr>
             <tr><td>Polar grazers (&gamma; &gt; 0.95)</td><td>~1 km</td></tr>
             <tr><td>Pre-1900</td><td>&Delta;T-limited</td></tr>
@@ -278,7 +277,7 @@
           <p>Obscuration is the share of the Sun&rsquo;s area covered <em>at your
           location</em> whenever one is set; with no location it&rsquo;s the maximum
           anywhere on Earth.</p>
-          <p>The map picks online or offline mode when the page loads. If your connection changes &mdash; you go offline in the field, or come back online &mdash; reload the page to switch modes.</p>
+          <p><strong>Online / offline maps.</strong> The map picks online or offline mode when the page loads. If your connection changes &mdash; you go offline in the field, or come back online &mdash; reload the page to switch modes.</p>
         </div>
       </div>
 
@@ -336,10 +335,6 @@
 'use strict';
 var DATA_BASE = './data';
 var BUILD     = '2026-06-24i';
-// BUILD is the single source of truth; sync the two display copies so they can't drift.
-document.querySelector('meta[name="build"]').setAttribute('content', BUILD);
-var buildDisplay = document.getElementById('settings-build-display');
-if (buildDisplay) buildDisplay.textContent = 'Build: ' + BUILD;
 // Installed-PWA mode → tag <html> so CSS can drop the branding banner (older iOS
 // lacks the display-mode media query, so navigator.standalone is the fallback).
 if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) {
@@ -359,6 +354,7 @@ if ('serviceWorker' in navigator) {
 <script src="js/details.js?v=2026-06-05c"></script>
 <script src="js/url.js?v=2026-06-05c"></script>
 <script src="js/map.js?v=2026-06-24i"></script>
+<script src="js/starfield.js?v=2026-06-27b"></script>
 <script src="js/share.js?v=2026-06-05c"></script>
 <script src="js/init.js?v=2026-06-05c"></script>
 </body>
