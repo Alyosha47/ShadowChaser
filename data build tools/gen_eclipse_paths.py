@@ -2376,12 +2376,6 @@ def run_tests():
         print(f'  Size: {len(raw)//1024}KB raw  {len(_gz.compress(raw))//1024}KB gz')
 
 
-if __name__=='__main__':
-    import sys
-    if '--test' in sys.argv: run_tests()
-    else: main()
-
-
 def _gt_inst(rec, lat, lon, t):
     """Instantaneous integrand g(t): |umbra radius| - axis distance at a single
     time t (fundamental-plane units; >0 inside totality at that instant). This is
@@ -2582,3 +2576,9 @@ def perpendicular_limits(rec, centreline, times, accept_deg=20.0):
         pts = [p for s in segs for p in s]
         return sum(p[1] for p in pts) / len(pts) if pts else -999.0
     return (left_segs, right_segs) if mlat(left_segs) >= mlat(right_segs) else (right_segs, left_segs)
+
+
+if __name__=='__main__':
+    import sys
+    if '--test' in sys.argv: run_tests()
+    else: main()
