@@ -54,8 +54,11 @@ function loadBasemapData() {
   basemapLoading = Promise.all([
     fetchGz(base + 'countries.geojson.gz?v=' + BUILD),
     fetchGz(base + 'cities.geojson.gz?v='    + BUILD),
+    fetchGz(base + 'land.geojson.gz?v='      + BUILD),
+    fetchGz(base + 'lakes.geojson.gz?v='     + BUILD),
+    fetchGz(base + 'rivers.geojson.gz?v='    + BUILD),
   ]).then(function (r) {
-    basemapData = { countries:r[0], cities:r[1] };
+    basemapData = { countries:r[0], cities:r[1], land:r[2], lakes:r[3], rivers:r[4] };
     return basemapData;
   });
   return basemapLoading;
@@ -83,6 +86,7 @@ function loadPathChunk(entry) {
 
 var _forceOffline = false;
 function forceOfflineMap(on) { _forceOffline = on; initMap(); }
+function toggleOfflineMap() { _forceOffline = !_forceOffline; initMap(); return _forceOffline; }
 function isOffline() { return _forceOffline || navigator.onLine === false; }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -140,11 +144,11 @@ function createMap(data, savedCam) {
   Cesium.Ion.defaultAccessToken = undefined;
 
   var scene = map.scene, globe = scene.globe;
-  globe.baseColor          = col(COL.OCEAN);
+  globe.baseColor          = col('#dce4ea');   /* pale ice — shows at the poles, where Mercator relief can't reach */
   globe.showGroundAtmosphere = false;   /* haze washes out imagery — off for contrast */
   globe.enableLighting     = false;          /* day/night shading off for now */
   scene.skyAtmosphere.show = true;           /* keep the planet limb glow (cheap, pretty) */
-  scene.skyBox.show        = false;          /* drop the blurry star cube — clarity + GPU */
+  scene.skyBox.show        = true;           /* Cesium's real star map (sparser/fainter than a baked PNG) */
   scene.sun.show           = false;          /* no sun billboard */
   scene.moon.show          = false;
   scene.backgroundColor    = col('#05070f'); /* clean dark space */
@@ -212,29 +216,36 @@ function buildBasemap(data) {
     return;                          /* Esri tiles already have labels/borders */
   }
 
-  /* Offline base: bundled Natural Earth II raster. */
-  Cesium.TileMapServiceImageryProvider.fromUrl(
-    Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII')
+  /* Offline: a single full-globe Natural Earth II image (equirectangular, covers
+     the whole sphere incl. poles — no tiles, no projection seams, no caps). */
+  Cesium.SingleTileImageryProvider.fromUrl(
+    DATA_BASE + '/basemap/ne2.jpg'
   ).then(function (prov) {
-    var L = map.imageryLayers.addImageryProvider(prov);
-    L.saturation = 0.55; L.brightness = 1.08;   /* tone down so eclipse paths read clearly */
+    map.imageryLayers.addImageryProvider(prov);
     render();
-  }).catch(function (e) { console.error('Natural Earth II base failed:', e); });
+  }).catch(function (e) { console.error('Offline NE2 image failed:', e); });
 
   if (!data) { render(); return; }
 
-  /* Country borders → one batched PolylineCollection. */
-  if (data.countries && data.countries.features) {
-    var lines = scene.primitives.add(new Cesium.PolylineCollection());
-    var mat = Cesium.Material.fromType('Color', { color: col(COL.BORDER, 0.7) });
-    data.countries.features.forEach(function (f) {
+  /* Crisp vector lines over the raster — these stay sharp at any zoom (lines are
+     sphere-safe on Cesium; only filled polygons caused the earlier artifacts).
+     One batched PolylineCollection for all of them. */
+  var lines = scene.primitives.add(new Cesium.PolylineCollection());
+  function addLines(fc, hex, alpha, width) {
+    if (!fc || !fc.features) return;
+    var mat = Cesium.Material.fromType('Color', { color: col(hex, alpha) });
+    fc.features.forEach(function (f) {
       eachLine(f.geometry, function (line) {
         if (line.length < 2) return;
         lines.add({ positions: Cesium.Cartesian3.fromDegreesArray(flatten(line)),
-                    width: 1, material: mat });
+                    width: width, material: mat });
       });
     });
   }
+  addLines(data.land,      COL.COAST,  0.9, 1.2);   /* coastlines  */
+  addLines(data.lakes,     COL.RIVER,  0.8, 1);     /* lake shores */
+  addLines(data.rivers,    COL.RIVER,  0.7, 1);     /* rivers      */
+  addLines(data.countries, COL.BORDER, 0.6, 1);     /* borders     */
 
   /* Cities: dots + English labels, thinned by rank, depth-tested (no see-through). */
   if (data.cities && data.cities.features) {
@@ -242,7 +253,7 @@ function buildBasemap(data) {
     var labels = scene.primitives.add(new Cesium.BillboardCollection());
     var cityCol = col(COL.CITY), white = Cesium.Color.WHITE;
     var DOT_FAR   = { 1: 8.0e7, 2: 1.5e7, 3: 7.0e6 };
-    var LABEL_FAR = { 1: 1.0e7, 2: 4.0e6 };           /* names only when zoomed in a bit */
+    var LABEL_FAR = { 1: 1.0e7, 2: 4.0e6, 3: 1.2e6 };   /* rank 3 names only when zoomed in close */
     data.cities.features.forEach(function (f) {
       if (!f.geometry || f.geometry.type !== 'Point') return;
       var rank = (f.properties && f.properties.rank) || 4;
@@ -413,6 +424,9 @@ function addObserverMarker(lat, lon, sunAz) {
       image: sunArrowImage(),
       rotation: Cesium.Math.toRadians(-sunAz),   /* canvas arrow points N; rotate to azimuth (CW) */
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      /* Full size up close; shrink as the camera pulls back so it doesn't dwarf
+         the globe or shoot off-planet when zoomed out. */
+      scaleByDistance: new Cesium.NearFarScalar(2.0e6, 1.0, 2.4e7, 0.35),
     }});
   } else {
     dsObserver.entities.add({ position: pos, point: {
@@ -509,7 +523,19 @@ function showMapPopup(lat,lon,result,rec) {
 
 /* ── Eclipse path drawing (Cesium entities) ───────────────────────────── */
 
-var PATH_WIDTH = 1.0;            /* finer lines, closer to the old MapLibre look */
+var PATH_WIDTH = 1.4;            /* solid, bright, clearly visible — no casing */
+
+/* The two basemaps have opposite contrast needs, so the path palette is chosen
+   to match whichever is active: bright over the dark satellite (offline),
+   deep/saturated over the pale Esri street map (online). */
+var PAL_SAT = {   /* offline satellite — bright, pops on dark ocean & varied land */
+  penumbra:[120,180,255], umbraT:[245,140,30], umbraA:[80,160,255],
+  ovalTline:[255,185,95], ovalAline:[140,190,255], centre:[255,60,40], green:[70,215,85],
+};
+var PAL_STREET = { /* online street map — deep, shows on pale/white backgrounds */
+  penumbra:[28,92,205], umbraT:[200,92,0], umbraA:[18,70,175],
+  ovalTline:[205,110,25], ovalAline:[40,92,200], centre:[200,26,14], green:[0,140,22],
+};
 var OVAL_HIDE_HEIGHT = 6.0e6;   /* hide ovals when zoomed closer than this (m) */
 
 function clearMapLayers() {
@@ -533,11 +559,12 @@ function drawEclipsePath(ep) {
   clearMapLayers();
   var isCentral = /[TAH]/.test(ep.type||'');
   var isTotal   = /[TH]/.test(ep.type||'');
-  var uc        = isTotal ? [139,74,0] : [26,74,122];
+  var P         = isOffline() ? PAL_SAT : PAL_STREET;
+  var uc        = isTotal ? P.umbraT : P.umbraA;
 
-  /* Penumbra + terminator lines (thin blue). */
+  /* Penumbra + terminator lines. */
   ['penumbra_n','penumbra_s','terminator_first','terminator_last'].forEach(function (k) {
-    if (ep[k] && ep[k].length) polyline(ep[k], colBytes([42,90,140], 200), PATH_WIDTH);
+    if (ep[k] && ep[k].length) polyline(ep[k], colBytes(P.penumbra), PATH_WIDTH);
   });
 
   /* Umbra limit lines. */
@@ -549,8 +576,8 @@ function drawEclipsePath(ep) {
   /* Umbra ovals — now filled, INCLUDING pole-encircling rings (Cesium handles
      the polar cap; the old winding-drop guard is gone). */
   if (/[TAH]/.test(ep.type||'') && ep.umbra_ovals && ep.umbra_ovals.length) {
-    var fill = isTotal ? colBytes([139,74,0], 60)  : colBytes([26,74,122], 60);
-    var line = isTotal ? colBytes([180,120,20],200): colBytes([42,90,180],200);
+    var fill = isTotal ? colBytes(P.umbraT, 70)     : colBytes(P.umbraA, 70);
+    var line = isTotal ? colBytes(P.ovalTline,230)  : colBytes(P.ovalAline,230);
     ep.umbra_ovals.forEach(function (r) {
       if (!r || r.length < 3) return;
       var ring = (r[0][0]===r[r.length-1][0] && r[0][1]===r[r.length-1][1]) ? r.slice(0,-1) : r;
@@ -564,8 +591,8 @@ function drawEclipsePath(ep) {
     updateOvalVisibility();
   }
 
-  /* Centreline (red). */
-  if (isCentral && ep.centreline) polyline(ep.centreline, colBytes([204,34,0]), PATH_WIDTH);
+  /* Centreline. */
+  if (isCentral && ep.centreline) polyline(ep.centreline, colBytes(P.centre), PATH_WIDTH);
 
   /* Green line (Maximum-on-Horizon). Split on null delimiters; the antimeridian
      guard is gone — geodesic polylines wrap correctly. */
@@ -577,7 +604,7 @@ function drawEclipsePath(ep) {
       gcur.push(gp);
     });
     flushG();
-    polyline(gsegs, colBytes([0,160,0]), PATH_WIDTH);
+    polyline(gsegs, colBytes(P.green), PATH_WIDTH);
   }
 
   /* Greatest-eclipse dot. */
