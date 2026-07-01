@@ -1,42 +1,38 @@
-// sw.js — ShadowChaser offline shell + field cache.
+// sw_cesium.js — ShadowChaser (Cesium build) offline shell + field cache.
+// Parallel to sw.js; the MapLibre sw.js is left untouched. Registered by
+// index.html. Cache name is namespaced so the two don't collide.
 //
-// VERSION comes from the registration URL (sw.js?v=BUILD), so the BUILD constant
-// in index.html is the SINGLE version source — there is no second number to bump.
-// The cache name is keyed to it; activate() deletes every other cache. Because the
-// name already pins the build, lookups use {ignoreSearch:true} and precache URLs are
-// query-free: a request for foo.js?v=BUILD matches the cached foo.js.
+// Strategy:
+//   • CORE  — app shell + Cesium engine entry, precached atomically.
+//   • DATA  — besselian (all) + field-range paths, best-effort.
+//   • Cesium Workers/Assets, the Natural Earth II texture, and the offline
+//     shaded-relief tiles are SAME-ORIGIN, so the fetch handler caches them
+//     ON DEMAND as they load. Load the app online once and pan/zoom the offline
+//     view (toggle "force offline" while still online) so the regions you'll
+//     visit get cached — "plan at home, navigate in the field".
 const VERSION = new URL(self.location).searchParams.get('v') || 'dev';
-const CACHE = 'shadowchaser-' + VERSION;
+const CACHE = 'shadowchaser-cesium-' + VERSION;
 
-// CORE — the app shell. Atomic: if any of these fail, install fails (they are
-// essential). index.json is the eclipse index that drives the list offline.
 const CORE = [
   'index.html',
   'favicon.ico',
   'css/app.css',
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
       'search','list','local','details','share','map','url','init'].map(n => `js/${n}.js`),
-  'vendor/maplibre-gl-csp-5.5.0.js',
-  'vendor/maplibre-gl-csp-worker-5.5.0.js',
-  'vendor/maplibre-gl-5.5.0.css',
-  'vendor/deck.min.js',
-  ...['CormorantGaramond-Light','JetBrainsMono-Regular']
-      .map(n => `fonts/${n}.woff2`),
-  // Offline globe basemap (ocean.geojson.gz is orphaned — not cached).
-  'data/basemap/land.geojson.gz',
+  // Cesium engine entry (Workers/Assets are cached on demand on first online load).
+  'vendor/cesium-1.121/Build/Cesium/Cesium.js',
+  'vendor/cesium-1.121/Build/Cesium/Widgets/widgets.css',
+  ...['CormorantGaramond-Light','JetBrainsMono-Regular'].map(n => `fonts/${n}.woff2`),
+  // Basemap: single offline NE II image + vector line overlays (coast/rivers/borders/cities).
+  'data/basemap/ne2.jpg',
   'data/basemap/countries.geojson.gz',
+  'data/basemap/cities.geojson.gz',
+  'data/basemap/land.geojson.gz',
   'data/basemap/lakes.geojson.gz',
   'data/basemap/rivers.geojson.gz',
-  'data/basemap/cities.geojson.gz',
   'data/index.json',
 ];
 
-// DATA — best-effort (a flaky / large file must NOT wipe the shell; anything that
-// fails here is cached on demand later when viewed online).
-//   • Besselian: ALL centuries (~9.5MB total, cheap) — makes the per-century scan
-//     and local circumstances work fully offline for any eclipse, any era.
-//   • Paths: the 1900–2100 field range only (~6MB/century; the full set is ~274MB).
-//     Eclipses outside this range still draw their path if you viewed them online.
 const BESSELIAN = [
   '-1099_-1000','-1199_-1100','-1299_-1200','-1399_-1300','-1499_-1400','-1599_-1500',
   '-1699_-1600','-1799_-1700','-1899_-1800','-1999_-1900','-199_-100','-299_-200',
@@ -57,13 +53,13 @@ const DATA = [
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
-    await c.addAll(CORE);                       // atomic — essential shell
+    await c.addAll(CORE);
     let data = 0;
-    await Promise.all(DATA.map(async url => {   // best-effort — bulky field data
+    await Promise.all(DATA.map(async url => {
       try {
         const r = await fetch(url, { cache: 'reload' });
         if (r.ok) { await c.put(url, r); data++; }
-      } catch (_) { /* offline / flaky — fill in later on demand */ }
+      } catch (_) {}
     }));
     console.log(`[SW] ${CACHE}: shell + ${data}/${DATA.length} field-data cached`);
     await self.skipWaiting();
@@ -80,14 +76,10 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const req = e.request;
-  if (req.method !== 'GET') return;                  // mutations → network, untouched
+  if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;   // tiles, connectivity probe, APIs → untouched
+  if (url.origin !== self.location.origin) return;   // online Esri tiles etc. → untouched
 
-  // Navigations: network-first but TIME-BOUNDED. Online → fresh index.html (picks
-  // up new deploys/worker). If the device already reports offline, serve the cached
-  // shell instantly (no doomed fetch). Otherwise try the network but race it against
-  // a short timer, since iOS may leave an offline fetch hanging rather than failing.
   if (req.mode === 'navigate') {
     e.respondWith((async function () {
       var shell = function () {
@@ -108,9 +100,8 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Cache-first (ignoreSearch so versioned URLs match query-free cached keys);
-  // cache-on-demand for the rest same-origin (besselian/paths outside the field
-  // range, etc). Offline misses fail quietly instead of throwing.
+  // Cache-first; cache-on-demand for everything same-origin (relief tiles, Cesium
+  // Workers/Assets, besselian/paths outside the field range). Offline misses fail quietly.
   e.respondWith(
     caches.match(req, { ignoreSearch: true }).then(hit => {
       if (hit) return hit;
@@ -125,9 +116,6 @@ self.addEventListener('fetch', e => {
   );
 });
 
-/* Friendly offline fallback for a navigation that can't be served from cache
-   (the worker is alive but the app shell isn't cached yet). Fully self-contained
-   — no external assets — so it renders with zero cache. */
 function offlinePage() {
   var html =
     '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
@@ -137,17 +125,12 @@ function offlinePage() {
     'body{background:#0b0e14;color:#e8e6e0;display:flex;align-items:center;' +
     'justify-content:center;text-align:center;' +
     'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;padding:1.5rem}' +
-    '.wrap{max-width:22rem}' +
-    '.sun{font-size:3rem;color:#c8a96e;text-shadow:0 0 40px rgba(200,169,110,.5)}' +
+    '.wrap{max-width:22rem}.sun{font-size:3rem;color:#c8a96e;text-shadow:0 0 40px rgba(200,169,110,.5)}' +
     'h1{font-size:1.15rem;font-weight:600;margin:1rem 0 .5rem;letter-spacing:.02em}' +
     'p{font-size:.95rem;line-height:1.5;color:#a8a6a0;margin:0}' +
     '</style></head><body><div class="wrap">' +
-    '<div class="sun">\u2609</div>' +
-    '<h1>ShadowChaser is offline</h1>' +
+    '<div class="sun">\u2609</div><h1>ShadowChaser is offline</h1>' +
     '<p>Connect to the internet once to download maps for offline use.</p>' +
     '</div></body></html>';
-  return new Response(html, {
-    status: 200,
-    headers: { 'Content-Type': 'text/html; charset=utf-8' }
-  });
+  return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }

@@ -1,46 +1,42 @@
-/* ── Map ─────────────────────────────────────────────────────────────── */
+/* ── Map (Cesium renderer) ───────────────────────────────────────────────
+   Cesium port of the MapLibre+deck.gl renderer. Public surface is unchanged:
+     initMap, forceOfflineMap, isOffline, onMapTabActivated,
+     clearMapMarkers, addObserverMarker, redrawIfMapVisible
+   `map` (the Cesium Viewer) and `mapReady` remain AppState-backed globals.
 
-/* `map` and `mapReady` are AppState properties; see js/state.js. */
-var pathCache      = {};
-/* `pathMarkers` are bound to the selected eclipse (e.g. greatest-eclipse dot)
-   and only change when selectedEntry changes. `mapMarkers` are bound to the
-   observer location and may be cleared independently when the user clicks. */
-var mapMarkers     = [];
-var pathMarkers    = [];
-var currentPathKey = null;
-var deckOverlay = null; /* deck.gl MapboxOverlay */
-var _deckLayers = null; /* last layers array pushed to the overlay */
+   Deleted vs the MapLibre version (the seam machinery — Cesium is a true
+   ellipsoid, so none of it is needed):
+     buildLocalStyle / seamFreeLines / densifySegment / wrapContinuous /
+     gcDistance / corridorToPolygonData / updateMarkerOcclusion (depth-tested
+     for free) / the antimeridian + polar-oval winding guards.
+   Path polylines use ArcType.GEODESIC, so great-circle arcs are exact with no
+   densification, and pole-encircling umbra ovals now fill correctly.        */
 
-/* ── Basemap loading ──────────────────────────────────────────────────
-   We support two basemap modes:
-   - LOCAL: a small bundle of GeoJSON files in ./data/basemap/, loaded
-     into memory and rendered via a hand-built MapLibre style. Used
-     offline or when the online style fails. Always available.
-   - ONLINE: the OpenFreeMap Liberty vector style, loaded directly from
-     their CDN. Higher detail (streets, labels, etc.). Used as an
-     upgrade when the network is reachable.
+var pathCache = {};
+/* Cesium data sources let us clear categories independently. */
+var dsBasemap     = null;   /* land/countries/lakes/rivers/cities          */
+var dsPaths       = null;   /* eclipse path geometry (per selection)        */
+var dsObserver    = null;   /* observer dot + sun arrow (per click)         */
+var dsGE          = null;   /* greatest-eclipse dot (per selection)         */
+var _ovalEntities = [];     /* umbra ovals, toggled by camera height        */
+var _clickHandler = null;
+var _cityPoints   = null;   /* batched city PointPrimitiveCollection */
 
-   Optional layer files (drop in ./data/basemap/, all .geojson.gz):
-     countries.geojson.gz   — required (country borders + fills)
-     land.geojson.gz        — required (coastline outline)
-     cities.geojson.gz      — optional (Point features; populated places)
-     rivers.geojson.gz      — optional (LineString/MultiLineString)
-     lakes.geojson.gz       — optional (Polygon/MultiPolygon)
+/* Palette — lifted verbatim from the old buildLocalStyle so the look matches. */
+var COL = {
+  OCEAN:  '#b8d0e8',
+  LAND:   '#d4e8c8',
+  BORDER: '#a0b090',
+  COAST:  '#6a8870',
+  RIVER:  '#90b8d8',
+  CITY:   '#c8a96e',
+};
+var ONLINE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'; /* (probe only; online imagery is deferred polish) */
 
-   Schemas:
-     cities  : Feature properties may include `name` (string) and
-               `rank` or `pop_max` (number; bigger = more important).
-               Used to filter labels at low zoom.
-     rivers  : no properties needed
-     lakes   : no properties needed
-*/
+/* ── Data layer (unchanged from MapLibre version) ─────────────────────── */
 
-var ONLINE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
-var basemapData = null;     /* parsed GeoJSON cache: {countries, land, cities?, rivers?, lakes?} */
-var basemapLoading = null;  /* in-flight Promise so we only fetch once */
+var basemapData = null, basemapLoading = null;
 
-/* Fetch + decompress a single .geojson.gz file. Returns parsed object,
-   or null if missing/failed. */
 function fetchGz(url) {
   return fetch(url).then(function (r) {
     if (!r.ok) return null;
@@ -49,305 +45,265 @@ function fetchGz(url) {
   }).catch(function () { return null; });
 }
 
-/* Load all basemap layers (required + optional). Caches the result. */
 function loadBasemapData() {
-  if (basemapData) return Promise.resolve(basemapData);
+  if (basemapData)    return Promise.resolve(basemapData);
   if (basemapLoading) return basemapLoading;
   var base = DATA_BASE + '/basemap/';
+  /* With the Natural Earth II raster base we only need overlays now:
+     country borders + city labels. (land/lakes/rivers come from the raster.) */
   basemapLoading = Promise.all([
-    fetchGz(base + 'land.geojson.gz?v='      + BUILD),
     fetchGz(base + 'countries.geojson.gz?v=' + BUILD),
+    fetchGz(base + 'cities.geojson.gz?v='    + BUILD),
+    fetchGz(base + 'land.geojson.gz?v='      + BUILD),
     fetchGz(base + 'lakes.geojson.gz?v='     + BUILD),
     fetchGz(base + 'rivers.geojson.gz?v='    + BUILD),
-    fetchGz(base + 'cities.geojson.gz?v='    + BUILD),
   ]).then(function (r) {
-    basemapData = {
-      land:      r[0], countries: r[1],
-      lakes:     r[2], rivers:    r[3], cities: r[4],
-    };
-    /* Cities became available — any pending city-name token in the search
-       input couldn't resolve at first parse. Re-run the search now so
-       those tokens light up. */
-    if (typeof onSearchChanged === 'function') onSearchChanged(true);
+    basemapData = { countries:r[0], cities:r[1], land:r[2], lakes:r[3], rivers:r[4] };
     return basemapData;
   });
   return basemapLoading;
 }
 
-/* Build seam-free line geometry from polygon fill data.
-
-   The antimeridian split that fixes globe FILL artifacts inserts edges along
-   the ±180° meridian and a ring of vertices around the poles. Those edges are
-   correct for filling, but when stroked as coastline/borders they appear as
-   meridian lines crossing land and a small circle at the pole. We rebuild the
-   outlines as lines, breaking the path wherever an edge lies on the seam or
-   the polar cap so those artifact edges are never drawn. Fill is unaffected. */
-function seamFreeLines(fc) {
-  if (!fc || !fc.features) return fc;
-  var SEAM = 179.9, POLE = 89.9, feats = [];
-  function isCut(a, b) {
-    var seam = Math.abs(a[0]) >= SEAM && Math.abs(b[0]) >= SEAM && (a[0] > 0) === (b[0] > 0);
-    var pole = Math.abs(a[1]) >= POLE && Math.abs(b[1]) >= POLE;
-    return seam || pole;
-  }
-  function emit(run) {
-    if (run.length > 1) feats.push({ type: 'Feature', properties: {},
-      geometry: { type: 'LineString', coordinates: run } });
-  }
-  function addRing(ring) {
-    var run = ring.length ? [ring[0]] : [];
-    for (var i = 1; i < ring.length; i++) {
-      if (isCut(ring[i - 1], ring[i])) { emit(run); run = [ring[i]]; }
-      else run.push(ring[i]);
-    }
-    emit(run);
-  }
-  fc.features.forEach(function (f) {
-    var g = f.geometry; if (!g) return;
-    var polys = g.type === 'Polygon' ? [g.coordinates]
-              : g.type === 'MultiPolygon' ? g.coordinates : [];
-    polys.forEach(function (poly) { poly.forEach(addRing); });
+function loadPathChunk(entry) {
+  var chunkName = entry._chunk;
+  if (!chunkName) return Promise.resolve(null);
+  if (pathCache[chunkName]) return Promise.resolve(pathCache[chunkName]);
+  var url = DATA_BASE + '/paths/paths_' + chunkName + '.json.gz?v=' + BUILD;
+  return fetch(url).then(function (r) {
+    if (!r.ok) return null;
+    var stream = r.body.pipeThrough(new DecompressionStream('gzip'));
+    return new Response(stream).json();
+  }).then(function (d) {
+    if (d) pathCache[chunkName] = d;
+    return d;
+  }).catch(function (err) {
+    console.error('loadPathChunk failed for', chunkName, err);
+    return null;
   });
-  return { type: 'FeatureCollection', features: feats };
 }
 
-/* Build a MapLibre style spec from whatever basemap data we have.
-   Colours match the existing dark theme.
-
-   Layer order:
-     background (ocean colour) → land fill → coastline → country lines
-     → lakes → rivers → cities
-
-   The background colour is the ocean; there is no separate ocean layer. */
-function buildLocalStyle(data) {
-  var BG       = '#b8d0e8';   /* ocean — matches online water tint  */
-  var LAND     = '#d4e8c8';   /* land fill — matches online land    */
-  var BORDER   = '#a0b090';   /* country lines                      */
-  var COAST    = '#6a8870';   /* coastline                          */
-  var RIVER    = '#90b8d8';   /* rivers                             */
-  var LAKE     = BG;          /* lakes same as ocean                */
-  var CITY     = '#c8a96e';   /* gold city dots                     */
-
-  var sources = {};
-  var layers  = [{ id: 'background', type: 'background', paint: { 'background-color': BG } }];
-
-  /* Land fill. Polar/antimeridian fill artifacts are fixed at the data level
-     (antimeridian-split, correctly-wound polygons), so no lat filter is
-     needed here. */
-  if (data.land) {
-    sources.land = { type: 'geojson', data: data.land, tolerance: 0.5 };
-    sources.coast = { type: 'geojson', data: seamFreeLines(data.land), tolerance: 0.5 };
-    layers.push({ id: 'land-fill', type: 'fill', source: 'land',
-      maxzoom: 22,
-      paint: { 'fill-color': LAND, 'fill-opacity': 1, 'fill-antialias': true } });
-    layers.push({ id: 'coast-line', type: 'line', source: 'coast',
-      paint: { 'line-color': COAST, 'line-width': 0.8, 'line-opacity': 0.9 } });
-  }
-
-  if (data.countries) {
-    sources.countries = { type: 'geojson', data: seamFreeLines(data.countries), tolerance: 0.5 };
-    layers.push({ id: 'countries-line', type: 'line', source: 'countries',
-      paint: { 'line-color': BORDER, 'line-width': 0.6, 'line-opacity': 0.8 } });
-  }
-
-  if (data.lakes) {
-    sources.lakes = { type: 'geojson', data: data.lakes, tolerance: 0.5 };
-    layers.push({ id: 'lakes-fill', type: 'fill', source: 'lakes',
-      paint: { 'fill-color': LAKE, 'fill-opacity': 1 } });
-  }
-
-  if (data.rivers) {
-    sources.rivers = { type: 'geojson', data: data.rivers, tolerance: 0.5 };
-    layers.push({ id: 'rivers-line', type: 'line', source: 'rivers',
-      paint: { 'line-color': RIVER, 'line-width': 0.6, 'line-opacity': 0.8 } });
-  }
-
-  if (data.cities) {
-    sources.cities = { type: 'geojson', data: data.cities };
-    var cityPaint = function(baseRadius) {
-      return {
-        'circle-color': CITY,
-        'circle-radius': ['interpolate', ['linear'], ['zoom'],
-          1, baseRadius, 5, baseRadius * 1.6, 9, baseRadius * 2.4],
-        'circle-opacity': 0.9,
-        'circle-stroke-width': 0.5,
-        'circle-stroke-color': '#ffffff',
-      };
-    };
-    layers.push({ id: 'cities-r1', type: 'circle', source: 'cities',
-      filter: ['==', ['get', 'rank'], 1], paint: cityPaint(2.5) });
-    layers.push({ id: 'cities-r2', type: 'circle', source: 'cities',
-      minzoom: 2, filter: ['==', ['get', 'rank'], 2], paint: cityPaint(1.8) });
-    layers.push({ id: 'cities-r3', type: 'circle', source: 'cities',
-      minzoom: 3.5, filter: ['==', ['get', 'rank'], 3], paint: cityPaint(1.4) });
-    layers.push({ id: 'cities-r4', type: 'circle', source: 'cities',
-      minzoom: 5, filter: ['==', ['get', 'rank'], 4], paint: cityPaint(1.1) });
-
-  }
-
-  return {
-    version: 8,
-    projection: { type: 'globe' },
-    sources: sources,
-    layers: layers,
-  };
-}
-
-/* Probe the network with a short-timeout HEAD against the online style.
-   Resolves true if reachable, false otherwise. */
-
-
-/* ── Map init (globe-only, local basemap with online upgrade) ────────── */
+/* ── Offline state (unchanged) ────────────────────────────────────────── */
 
 var _forceOffline = false;
-function forceOfflineMap(on) {
-  _forceOffline = on;
-  initMap();
+function forceOfflineMap(on) { _forceOffline = on; initMap(); }
+function toggleOfflineMap() { _forceOffline = !_forceOffline; initMap(); return _forceOffline; }
+function isOffline() { return _forceOffline || navigator.onLine === false; }
+
+/* ── Helpers ──────────────────────────────────────────────────────────── */
+
+function col(hex, alpha) {
+  var c = Cesium.Color.fromCssColorString(hex);
+  return (alpha == null) ? c : c.withAlpha(alpha);
+}
+/* In request-render mode, ask for a frame after any programmatic change. */
+function render() { if (map) map.scene.requestRender(); }
+function colBytes(rgb, a) {
+  return Cesium.Color.fromBytes(rgb[0], rgb[1], rgb[2], a == null ? 255 : a);
+}
+/* Flatten [[lon,lat],...] → [lon,lat,lon,lat,...] for Cesium.fromDegreesArray. */
+function flatten(seg) {
+  var out = [];
+  for (var i = 0; i < seg.length; i++) { out.push(seg[i][0], seg[i][1]); }
+  return out;
 }
 
-/* Single source of truth for "are we offline?" — consulted by the map
-   connectivity probe and by any feature that would otherwise fire a doomed
-   network request (e.g. elevation lookup). Conservative: true only when we
-   KNOW we're offline (force-offline toggle, or the device reports no
-   connection). A device that claims online still gets the active probe below,
-   so this never produces a false "online". */
-function isOffline() {
-  return _forceOffline || navigator.onLine === false;
-}
+/* ── Init ─────────────────────────────────────────────────────────────── */
 
 function initMap() {
+  var savedCam = null;
   if (map) {
-    map.remove();
-    map = null;
-    mapReady = false;
-    mapMarkers = [];
-    pathMarkers = [];
-    deckOverlay = null;
+    try { savedCam = {
+      pos:     map.camera.position.clone(),
+      heading: map.camera.heading, pitch: map.camera.pitch, roll: map.camera.roll,
+    }; } catch (e) {}
+    try { map.destroy(); } catch (e) {}
+    map = null; mapReady = false;
   }
+  dsBasemap = dsPaths = dsObserver = dsGE = null;
+  _ovalEntities = [];
 
-  /* Choose the basemap from the device's own online state — NOT a third-party
-     ping (Brave and ad/privacy blockers block connectivitycheck.gstatic.com,
-     which made the probe falsely report "offline" and show the local style while
-     actually online). If we're online but the online tiles fail to load, the
-     style.load error handler below still falls back to local. */
   loadBasemapData().then(function (data) {
-    var online     = (navigator.onLine !== false) && !_forceOffline;
-    var localStyle = buildLocalStyle(data);
-    createMap(online ? ONLINE_STYLE_URL : localStyle, online, localStyle);
+    createMap(data, savedCam);
   }).catch(function () {
-    createMap(ONLINE_STYLE_URL, true, null);
+    createMap(null, savedCam);
   });
 }
 
-function createMap(style, isOnline, localStyleFallback) {
-  map = new maplibregl.Map({
-    container: 'map',
-    style: style,
-    /* On narrow viewports start more zoomed-out so users can see where on the
-       globe they are. Desktop starts at the usual zoom level. */
-    center: [0, 30],
-    zoom: window.matchMedia('(min-width: 900px)').matches ? 2 : 0.6,
-    minZoom: 0.4, maxZoom: 18,
-    maxPitch: 0,
-    dragRotate: false,
-    touchPitch: false,
-    pitchWithRotate: false,
-    preserveDrawingBuffer: true,
+function createMap(data, savedCam) {
+  var wide = window.matchMedia('(min-width: 900px)').matches;
+
+  map = new Cesium.Viewer('map', {
+    baseLayer: false,            /* no imagery tiles — GeoJSON basemap only  */
+    baseLayerPicker: false, geocoder: false, timeline: false, animation: false,
+    homeButton: false, sceneModePicker: false, navigationHelpButton: false,
+    fullscreenButton: false, infoBox: false, selectionIndicator: false,
+    creditContainer: document.createElement('div'),   /* hide the credit bar */
+    requestRenderMode: true,           /* render only on change — not every frame */
+    maximumRenderTimeChange: Infinity, /* static sun: don't force time-based redraws */
   });
+  Cesium.Ion.defaultAccessToken = undefined;
 
-  /* Globe spins on its AXIS only — the two-finger twist would otherwise roll it
-     off-axis and the deck.gl path overlay can't follow, drifting out of register.
-     Keeps pinch-zoom. */
-  map.touchZoomRotate.disableRotation();
+  var scene = map.scene, globe = scene.globe;
+  globe.baseColor          = col('#dce4ea');   /* pale ice — shows at the poles, where Mercator relief can't reach */
+  globe.showGroundAtmosphere = false;   /* haze washes out imagery — off for contrast */
+  globe.enableLighting     = false;          /* day/night shading off for now */
+  scene.skyAtmosphere.show = true;           /* keep the planet limb glow (cheap, pretty) */
+  scene.skyBox.show        = true;           /* Cesium's real star map (sparser/fainter than a baked PNG) */
+  scene.sun.show           = false;          /* no sun billboard */
+  scene.moon.show          = false;
+  scene.backgroundColor    = col('#05070f'); /* clean dark space */
+  scene.screenSpaceCameraController.enableTilt = false;  /* axis-style spin   */
+  scene.msaaSamples = 4;                                  /* crisp lines — raster base freed the GPU for this */
+  scene.fog.enabled = false;                              /* real cost, little value on a globe */
+  try { scene.postProcessStages.fxaa.enabled = true; } catch (e) {}
 
-  map.on('style.load', function () {
-    try { map.setProjection({ type: 'globe' }); } catch (e) {}
-    try { map.setFog({
-      'color': '#b8d0e8', 'high-color': '#7aadce',
-      'horizon-blend': 0.04, 'space-color': '#0a0c1a', 'star-intensity': 0.3
-    }); } catch (e) {}
+  /* Data sources */
+  dsBasemap  = new Cesium.CustomDataSource('basemap');
+  dsPaths    = new Cesium.CustomDataSource('paths');
+  dsObserver = new Cesium.CustomDataSource('observer');
+  dsGE       = new Cesium.CustomDataSource('ge');
+  [dsBasemap, dsPaths, dsGE, dsObserver].forEach(function (d) { map.dataSources.add(d); });
 
-    map.on('render', updateMarkerOcclusion);
-    map.on('zoom', updateOvalVisibility);
+  buildBasemap(data);
 
-    if (!deckOverlay) {
-      deckOverlay = new DeckGL.MapboxOverlay({ layers: [], interleaved: false });
-      map.addControl(deckOverlay);
-      var dc = document.getElementById('deckgl-overlay');
-      if (dc) dc.style.pointerEvents = 'none';
-      if (setDeckLayers._pending) {
-        deckOverlay.setProps({ layers: setDeckLayers._pending });
-        setDeckLayers._pending = null;
-      }
-    }
-
-    /* Tint the OpenFreeMap style to match our palette. Local style is
-       already correctly coloured so we skip tinting for it. */
-    if (isOnline) {
-      map.getStyle().layers.forEach(function (layer) {
-        try {
-          if (layer.id === 'background') {
-            map.setPaintProperty(layer.id, 'background-color', '#e8e0d8');
-          } else if (layer.type === 'fill') {
-            if (/water/.test(layer.id)) {
-              map.setPaintProperty(layer.id, 'fill-color', '#b8d0e8');
-            } else if (/land|cover|park|grass|wood|sand|scrub/.test(layer.id)) {
-              map.setPaintProperty(layer.id, 'fill-color', '#d4e8c8');
-              map.setPaintProperty(layer.id, 'fill-opacity', 0.8);
-            }
-          } else if (layer.type === 'line' && /water/.test(layer.id)) {
-            map.setPaintProperty(layer.id, 'line-color', '#a0c0dc');
-          }
-        } catch (e) {}
-      });
-    }
-
-    mapReady = true;
-  });
-
-  /* If online style fails, fall back to local */
-  if (isOnline && localStyleFallback) {
-    map.on('error', function (e) {
-      var msg = (e && e.error && e.error.message) || '';
-      if (/style|source/i.test(msg)) {
-        console.warn('Online basemap failed, using local:', msg);
-        try { map.setStyle(localStyleFallback); } catch (err) {}
-      }
+  /* Camera: restore prior view across an offline/online toggle, else default. */
+  if (savedCam) {
+    map.camera.setView({ destination: savedCam.pos, orientation: {
+      heading: savedCam.heading, pitch: savedCam.pitch, roll: savedCam.roll } });
+  } else {
+    map.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(0, 30, wide ? 2.2e7 : 3.6e7),
     });
   }
 
-  map.on('click', function (e) {
-    /* In globe mode a click in empty space still returns a lngLat clamped to the
-       globe's edge (the "nearest spot on land" snap). Detect that by re-projecting
-       the returned lngLat back to screen: an ON-globe click round-trips to the
-       cursor; an OFF-globe click lands on the limb, far from where you clicked.
-       Off-globe → clear any set location instead of selecting a point. */
-    var back = map.project(e.lngLat);
-    var offGlobe = Math.hypot(back.x - e.point.x, back.y - e.point.y) > 8;
-    if (offGlobe) { clearLocationFilter(); return; }
-    onMapClick(e.lngLat.lat, e.lngLat.lng);
-  });
-  map.on('mousemove', function () { map.getCanvas().style.cursor = 'crosshair'; });
-  document.getElementById('map-popup-close').addEventListener('click', function () {
+  /* Click → globe pick (off-globe → clear location). */
+  _clickHandler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
+  _clickHandler.setInputAction(function (movement) {
+    var ray  = map.camera.getPickRay(movement.position);
+    var cart = globe.pick(ray, scene);
+    if (!cart) { if (typeof clearLocationFilter === 'function') clearLocationFilter(); return; }
+    var c = Cesium.Cartographic.fromCartesian(cart);
+    onMapClick(Cesium.Math.toDegrees(c.latitude), Cesium.Math.toDegrees(c.longitude));
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+  /* Oval visibility by camera height (replaces the deck zoom toggle). */
+  map.camera.changed.addEventListener(updateOvalVisibility);
+  scene.canvas.style.cursor = 'crosshair';
+
+  var closeBtn = document.getElementById('map-popup-close');
+  if (closeBtn) closeBtn.addEventListener('click', function () {
     document.getElementById('map-popup').style.display = 'none';
   });
+
+  mapReady = true;
 }
+
+/* Online → Esri World Street Map raster: deep street-level zoom (z19), fast CDN,
+   free/no-token, street-map look close to the old MapLibre Liberty. Esri tiles
+   carry their own labels/borders, so no overlays online.
+   Offline → Cesium's bundled Natural Earth II raster (ships in vendor/, instant,
+   no artifacts) + our own borders + English city labels, since NE II is bare. */
+var ONLINE_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+
+function buildBasemap(data) {
+  var scene = map.scene;
+
+  if (!isOffline()) {
+    map.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+      url: ONLINE_TILES, maximumLevel: 19, credit: 'Esri',
+    }));
+    render();
+    return;                          /* Esri tiles already have labels/borders */
+  }
+
+  /* Offline: a single full-globe Natural Earth II image (equirectangular, covers
+     the whole sphere incl. poles — no tiles, no projection seams, no caps). */
+  Cesium.SingleTileImageryProvider.fromUrl(
+    DATA_BASE + '/basemap/ne2.jpg'
+  ).then(function (prov) {
+    map.imageryLayers.addImageryProvider(prov);
+    render();
+  }).catch(function (e) { console.error('Offline NE2 image failed:', e); });
+
+  if (!data) { render(); return; }
+
+  /* Crisp vector lines over the raster — these stay sharp at any zoom (lines are
+     sphere-safe on Cesium; only filled polygons caused the earlier artifacts).
+     One batched PolylineCollection for all of them. */
+  var lines = scene.primitives.add(new Cesium.PolylineCollection());
+  function addLines(fc, hex, alpha, width) {
+    if (!fc || !fc.features) return;
+    var mat = Cesium.Material.fromType('Color', { color: col(hex, alpha) });
+    fc.features.forEach(function (f) {
+      eachLine(f.geometry, function (line) {
+        if (line.length < 2) return;
+        lines.add({ positions: Cesium.Cartesian3.fromDegreesArray(flatten(line)),
+                    width: width, material: mat });
+      });
+    });
+  }
+  addLines(data.land,      COL.COAST,  0.9, 1.2);   /* coastlines  */
+  addLines(data.lakes,     COL.RIVER,  0.8, 1);     /* lake shores */
+  addLines(data.rivers,    COL.RIVER,  0.7, 1);     /* rivers      */
+  addLines(data.countries, COL.BORDER, 0.6, 1);     /* borders     */
+
+  /* Cities: dots + English labels, thinned by rank, depth-tested (no see-through). */
+  if (data.cities && data.cities.features) {
+    var pts    = scene.primitives.add(new Cesium.PointPrimitiveCollection());
+    var labels = scene.primitives.add(new Cesium.BillboardCollection());
+    var cityCol = col(COL.CITY), white = Cesium.Color.WHITE;
+    var DOT_FAR   = { 1: 8.0e7, 2: 1.5e7, 3: 7.0e6 };
+    var LABEL_FAR = { 1: 1.0e7, 2: 4.0e6, 3: 1.2e6 };   /* rank 3 names only when zoomed in close */
+    data.cities.features.forEach(function (f) {
+      if (!f.geometry || f.geometry.type !== 'Point') return;
+      var rank = (f.properties && f.properties.rank) || 4;
+      if (rank >= 4) return;
+      var pos = Cesium.Cartesian3.fromDegrees(f.geometry.coordinates[0], f.geometry.coordinates[1]);
+      pts.add({
+        position: pos, pixelSize: ({1:5, 2:4, 3:3})[rank] || 3,
+        color: cityCol, outlineColor: white, outlineWidth: 0.5,
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, DOT_FAR[rank]),
+      });
+      var name = f.properties && f.properties.name;
+      if (name && LABEL_FAR[rank]) {
+        labels.add({
+          position: pos, image: labelImage(name),
+          horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          pixelOffset: new Cesium.Cartesian2(8, 0),
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, LABEL_FAR[rank]),
+        });   /* depth-tested by default → globe occludes far-side labels */
+      }
+    });
+    _cityPoints = pts;
+  }
+  render();
+}
+
+/* GeoJSON geometry walkers. eachPolygon yields the full ring array
+   [outer, hole1, …] so holes (inland seas) are preserved. */
+function eachPolygon(geom, cb) {
+  if (!geom) return;
+  if (geom.type === 'Polygon')           cb(geom.coordinates);
+  else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(function (poly) { cb(poly); });
+}
+function eachLine(geom, cb) {
+  if (!geom) return;
+  if (geom.type === 'LineString')        cb(geom.coordinates);
+  else if (geom.type === 'MultiLineString') geom.coordinates.forEach(cb);
+  else if (geom.type === 'Polygon')      geom.coordinates.forEach(cb);
+  else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(function (p) { p.forEach(cb); });
+}
+
+/* ── Tab / status (unchanged DOM) ─────────────────────────────────────── */
 
 function onMapTabActivated() {
   if (!map || !mapReady) { initMap(); return; }
-  map.resize();
-  /* updateMapState will fire via the activeTab event subscription below. */
+  try { map.resize(); } catch (e) {}
 }
 
-/* map-status overlay: two layers — a persistent eclipse label (low priority)
-   and a transient message (loading/error). Transient wins when set. */
 var _mapStatusTransient = null;
-
-function setMapStatus(msg) {
-  _mapStatusTransient = msg || null;
-  _renderMapStatus();
-}
-
+function setMapStatus(msg) { _mapStatusTransient = msg || null; _renderMapStatus(); }
 function _renderMapStatus() {
   var el = document.getElementById('map-status');
   if (!el) return;
@@ -358,9 +314,11 @@ function _renderMapStatus() {
   else      { el.style.display = 'none'; }
 }
 
+/* ── State → render (logic preserved; rendering swapped) ──────────────── */
+
 function updateMapState() {
   if (!mapReady)      return;
-  if (!selectedEntry) return;   /* not ready yet (init-time only) */
+  if (!selectedEntry) return;
   var isNewEclipse = (selectedEntry !== updateMapState._lastEntry);
   updateMapState._lastEntry = selectedEntry;
   clearMapLayers();
@@ -377,14 +335,6 @@ function updateMapState() {
     drawEclipsePath(ep);
     setMapStatus(null);
 
-    /* Camera: centre on the greatest-eclipse point only when the eclipse
-       SELECTION itself changed, keeping the user's current zoom untouched
-       (easeTo with no zoom given pans/rotates at the current zoom). This
-       function also runs on map clicks (coords/localResult change, same
-       eclipse) — those are handled separately in onMapClick, not here, so a
-       click doesn't yank the camera back to GE. Partial eclipses have no GE,
-       so fall back to the path's mean position (longitudes unwrapped around the
-       first point so an antimeridian-crossing path averages to the correct side). */
     if (isNewEclipse && !coords) {
       var ctr = null;
       if (ep.ge && ep.ge[0] != null) {
@@ -400,14 +350,13 @@ function updateMapState() {
           ctr = [lon / pts.length, lat / pts.length];
         }
       }
-      if (ctr) map.easeTo({ center: ctr, duration: 800 });
+      if (ctr) flyToLonLat(ctr[0], ctr[1]);
     }
   }).catch(function () { setMapStatus('Could not load path'); });
 
   if (coords) {
     addObserverMarker(coords.lat, coords.lon,
       localResult && localResult.visible ? localResult.sun.az : null);
-    /* Auto-populate map popup if local result already available */
     if (localResult) {
       loadPathChunk(selectedEntry).then(function (pathData) {
         var catKey = String(Math.round(selectedEntry.cat_no));
@@ -420,110 +369,113 @@ function updateMapState() {
   }
 }
 
-/* Path chunks are gzipped JSON keyed by cat_no.
-   We decompress with the native DecompressionStream (Chrome 80+, Firefox 113+,
-   Safari 16.4+). No third-party library required, which keeps the app fully
-   offline-capable. If we ever need to support older browsers, vendor pako
-   locally and add a fallback here. */
-function loadPathChunk(entry) {
-  var chunkName = entry._chunk;
-  if (!chunkName) return Promise.resolve(null);
-  if (pathCache[chunkName]) return Promise.resolve(pathCache[chunkName]);
-  var url = DATA_BASE+'/paths/paths_'+chunkName+'.json.gz?v='+BUILD;
-  return fetch(url).then(function (r) {
-    if (!r.ok) return null;
-    /* Pipe the gzipped body through DecompressionStream, then parse as JSON. */
-    var ds = new DecompressionStream('gzip');
-    var stream = r.body.pipeThrough(ds);
-    return new Response(stream).json();
-  }).then(function (d) {
-    if (d) pathCache[chunkName] = d;
-    return d;
-  }).catch(function (err) {
-    console.error('loadPathChunk failed for', chunkName, err);
-    return null;
+/* Camera helper: keep current height, recentre on lon/lat. */
+function flyToLonLat(lon, lat) {
+  var h = map.camera.positionCartographic.height;
+  map.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(lon, lat, h),
+    duration: 0.8,
   });
 }
 
-/* HTML markers (observer dot, greatest-eclipse dot) are DOM overlays. MapLibre
-   v5 fades an occluded marker to opacityWhenCovered (default 0.2) but leaves it
-   faintly visible AND still clickable — so a marker on the far side of the globe
-   can be seen through the planet and can capture a click meant for the surface
-   (placing a pin). Use MapLibre's own globe-aware occlusion test as the SINGLE
-   predicate for both hiding and disabling interaction, so the two can never
-   disagree (the prior bug: a hand-rolled 90° test diverged from the true
-   horizon, leaving a band that was clickable but visually behind the globe).
-   Runs on every 'render'. */
-function updateMarkerOcclusion() {
-  if (!map || !map.transform || !map.transform.isLocationOccluded) return;
-  function update(m) {
-    var occluded = map.transform.isLocationOccluded(m.getLngLat());
-    var el  = m.getElement();
-    var vis = occluded ? 'hidden' : 'visible';
-    var pe  = occluded ? 'none'   : 'auto';
-    if (el.style.visibility    !== vis) el.style.visibility    = vis;
-    if (el.style.pointerEvents !== pe)  el.style.pointerEvents = pe;
-  }
-  mapMarkers.forEach(update);
-  pathMarkers.forEach(update);
+/* ── Markers ──────────────────────────────────────────────────────────── */
+
+function clearMapMarkers()  { if (dsObserver) dsObserver.entities.removeAll(); render(); }
+function clearPathMarkers() { if (dsGE)       dsGE.entities.removeAll(); render(); }
+
+/* Clean text labels rendered to canvas (avoids Cesium's grainy SDF outline/box). */
+var _labelCache = {};
+function labelImage(text) {
+  if (_labelCache[text]) return _labelCache[text];
+  var font = '600 13px -apple-system, system-ui, sans-serif', pad = 4, h = 20;
+  var meas = document.createElement('canvas').getContext('2d'); meas.font = font;
+  var w = Math.ceil(meas.measureText(text).width) + pad * 2;
+  var c = document.createElement('canvas'); c.width = w; c.height = h;
+  var x = c.getContext('2d');
+  x.font = font; x.textBaseline = 'middle';
+  x.shadowColor = 'rgba(0,0,0,0.95)'; x.shadowBlur = 3;
+  x.fillStyle = '#fff';
+  x.fillText(text, pad, h / 2 + 1);
+  x.fillText(text, pad, h / 2 + 1);   /* twice → denser halo for legibility */
+  _labelCache[text] = c; return c;
 }
 
-function clearMapMarkers()  { mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
-function clearPathMarkers() { pathMarkers.forEach(function(m){m.remove();}); pathMarkers=[]; }
+/* Sun-direction marker — emulates the original DOM arrow: a fixed-size red dot
+   with a thin line + arrowhead, rotated to the sun azimuth (screen-space, so it
+   stays the same pixel size at any zoom). */
+var _sunArrowImg = null;
+function sunArrowImage() {
+  if (_sunArrowImg) return _sunArrowImg;
+  var c = document.createElement('canvas'); c.width = c.height = 72;
+  var x = c.getContext('2d'), cx = 36, cy = 36, RED = '#cc2200';
+  x.strokeStyle = RED; x.fillStyle = RED; x.lineWidth = 2; x.lineCap = 'round';
+  x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx, cy - 28); x.stroke();          /* shaft (points up = north) */
+  x.beginPath(); x.moveTo(cx, cy - 34); x.lineTo(cx - 5, cy - 24); x.lineTo(cx + 5, cy - 24); x.closePath(); x.fill();  /* head */
+  x.fillStyle = RED; x.strokeStyle = '#fff'; x.lineWidth = 2;
+  x.beginPath(); x.arc(cx, cy, 5, 0, 7); x.fill(); x.stroke();                 /* observer dot */
+  _sunArrowImg = c; return c;
+}
 
 function addObserverMarker(lat, lon, sunAz) {
-  var wrap=document.createElement('div');
-  wrap.className='sun-arrow-wrap';
-  var dot=document.createElement('div');
-  dot.className='observer-dot';
-  wrap.appendChild(dot);
-  if (sunAz!==null&&sunAz!==undefined) {
-    var arrow=document.createElement('div');
-    arrow.className='sun-arrow';
-    arrow.style.transform='rotate('+(sunAz-90)+'deg)';
-    wrap.appendChild(arrow);
+  if (!dsObserver) return;
+  var pos = Cesium.Cartesian3.fromDegrees(lon, lat);
+  if (sunAz != null) {
+    dsObserver.entities.add({ position: pos, billboard: {
+      image: sunArrowImage(),
+      rotation: Cesium.Math.toRadians(-sunAz),   /* canvas arrow points N; rotate to azimuth (CW) */
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      /* Full size up close; shrink as the camera pulls back so it doesn't dwarf
+         the globe or shoot off-planet when zoomed out. */
+      scaleByDistance: new Cesium.NearFarScalar(2.0e6, 1.0, 2.4e7, 0.35),
+    }});
+  } else {
+    dsObserver.entities.add({ position: pos, point: {
+      pixelSize: 10, color: col('#cc2200'), outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    }});
   }
-  var m=new maplibregl.Marker({element:wrap,anchor:'center'})
-    .setLngLat([lon,lat]).addTo(map);
-  mapMarkers.push(m);
+  render();
 }
 
 function addGEMarker(lat, lon) {
-  var dot = document.createElement('div');
-  dot.className = 'ge-dot';
-  var m = new maplibregl.Marker({ element: dot, anchor: 'center' })
-    .setLngLat([lon, lat]).addTo(map);
-  pathMarkers.push(m);
+  if (!dsGE) return;
+  dsGE.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(lon, lat),
+    point: { pixelSize: 8, color: col('#cc2200'),
+             outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+             disableDepthTestDistance: Number.POSITIVE_INFINITY },
+  });
+  render();
 }
 
+/* Great-circle destination from (lat,lon) on bearing az for distance d (km). */
+function destPoint(lat, lon, az, d) {
+  var R = 6371, br = az*Math.PI/180, la = lat*Math.PI/180, lo = lon*Math.PI/180, dr = d/R;
+  var la2 = Math.asin(Math.sin(la)*Math.cos(dr) + Math.cos(la)*Math.sin(dr)*Math.cos(br));
+  var lo2 = lo + Math.atan2(Math.sin(br)*Math.sin(dr)*Math.cos(la),
+                            Math.cos(dr) - Math.sin(la)*Math.sin(la2));
+  return { lat: la2*180/Math.PI, lon: lo2*180/Math.PI };
+}
+
+/* ── Click / popup (logic preserved) ──────────────────────────────────── */
+
 function onMapClick(lat, lon) {
-  map.easeTo({ center: [lon, lat], duration: 800 });
+  flyToLonLat(lon, lat);
   var search = document.getElementById('search');
   var f      = parseSearch(search.value);
-  /* An explicit map click is an explicit location — drop any city name so it
-     can't re-resolve and override the clicked point on the next parse. */
   search.value = filterToString(Object.assign({}, f, {
-    coords: { lat: lat, lon: lon },
-    city:   null
+    coords: { lat: lat, lon: lon }, city: null
   }));
   onSearchChanged(true);
   lookupElevationAndTz(lat, lon);
-
-  /* Auto-trigger location scan so the eclipse list populates */
   if (eclipseIndex.length) scanLocation();
 
-  /* Single computation via computeLocal — it sets localResult, renders the
-     data panel, and we then feed the same result into the map popup. */
   showMapPopupLoading(lat, lon);
   computeLocal().then(function (out) {
     if (!out) return;
     showMapPopup(lat, lon, out.result, out.rec);
     clearMapMarkers();
     addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
-    /* On desktop (sidebar layout), if the user is on the Search sub-tab,
-       swap to Details so the local circumstances appear. Otherwise leave
-       the sidebar tab alone (they're already on Details or exploring overlays).
-       On mobile, stay on the map so the user can see the pin they placed. */
     if (window.matchMedia('(min-width: 900px)').matches) {
       if (sidebarTab === 'search') sidebarTab = 'eclipse';
     }
@@ -569,374 +521,124 @@ function showMapPopup(lat,lon,result,rec) {
   document.getElementById('map-popup').style.display='block';
 }
 
+/* ── Eclipse path drawing (Cesium entities) ───────────────────────────── */
+
+var PATH_WIDTH = 1.4;            /* solid, bright, clearly visible — no casing */
+
+/* The two basemaps have opposite contrast needs, so the path palette is chosen
+   to match whichever is active: bright over the dark satellite (offline),
+   deep/saturated over the pale Esri street map (online). */
+var PAL_SAT = {   /* offline satellite — bright, pops on dark ocean & varied land */
+  penumbra:[120,180,255], umbraT:[245,140,30], umbraA:[80,160,255],
+  ovalTline:[255,185,95], ovalAline:[140,190,255], centre:[255,60,40], green:[70,215,85],
+};
+var PAL_STREET = { /* online street map — deep, shows on pale/white backgrounds */
+  penumbra:[28,92,205], umbraT:[200,92,0], umbraA:[18,70,175],
+  ovalTline:[205,110,25], ovalAline:[40,92,200], centre:[200,26,14], green:[0,140,22],
+};
+var OVAL_HIDE_HEIGHT = 6.0e6;   /* hide ovals when zoomed closer than this (m) */
+
 function clearMapLayers() {
-  if (deckOverlay) deckOverlay.setProps({ layers: [] });
+  if (dsPaths) dsPaths.entities.removeAll();
+  _ovalEntities = [];
+  render();
 }
 
-/* Auto-redraw the map whenever the data behind it changes — but only when
-   the map is actually visible. On desktop the map is always visible (sidebar
-   layout); on mobile, only when the Map tab is active. */
-function isMapVisible() {
-  return mapReady && (activeTab === 'map' ||
-                      window.matchMedia('(min-width: 900px)').matches);
+/* Line width is in pixels, so a fixed width looks proportionally fat when zoomed
+   out (the path shrinks, the line doesn't). Scale width down as the camera pulls
+   back: full up close, ~half at globe view. */
+function pathZoomScale() {
+  if (!map || !map.camera || !map.camera.positionCartographic) return 1;
+  var h = map.camera.positionCartographic.height;
+  var t = (h - 2.0e6) / (2.4e7 - 2.0e6);
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return 1 - 0.5 * t;
 }
-function redrawIfMapVisible() {
-  if (isMapVisible()) updateMapState();
-}
-AppState.on('selectedEntry', redrawIfMapVisible);
-AppState.on('localResult',   redrawIfMapVisible);
-AppState.on('mapReady',      redrawIfMapVisible);
-AppState.on('activeTab',     redrawIfMapVisible);
-
-/* ── Geodesic densification ───────────────────────────────────────────
-   MapLibre draws GeoJSON LineStrings as straight lines in lon/lat space.
-   Near the poles, adjacent vertices can have large longitude jumps while
-   staying at nearly the same latitude — the renderer then draws a long
-   chord at high latitude instead of the correct short arc over the pole.
-
-   Fix: insert intermediate great-circle points between any two consecutive
-   vertices whose great-circle distance exceeds MAX_SEG_KM.
-
-   Maths: convert [lon,lat] → unit 3-vector, slerp along the great circle,
-   convert back. We preserve the original unwrapped longitude convention
-   (lons may exceed ±180) by tracking cumulative longitude offset. */
-
-var MAX_SEG_KM = 50;   /* base threshold; tightened at high latitudes */
-var R_EARTH    = 6371; /* km */
-
-function toRad(d) { return d * Math.PI / 180; }
-function toDeg(r) { return r * 180 / Math.PI; }
-
-function gcDistance(lon1, lat1, lon2, lat2) {
-  /* Great-circle distance in km via haversine. Uses normalised lons. */
-  var φ1 = toRad(lat1), φ2 = toRad(lat2);
-  var Δφ = toRad(lat2 - lat1);
-  var Δλ = toRad(((lon2 - lon1 + 540) % 360) - 180);
-  var a = Math.sin(Δφ/2)*Math.sin(Δφ/2) +
-          Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)*Math.sin(Δλ/2);
-  return 2 * R_EARTH * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
-
-/* Clip a polyline to the mercator-safe latitude range.
-   MapLibre's GeoJSON pipeline uses geojson-vt internally which is mercator-based
-   and breaks above ~85°. We clip segments that cross the boundary by linear
-   interpolation to the exact crossing point, preserving the path up to that limit. */
-
-function densifySegment(seg) {
-  /* Takes a polyline [[lon,lat], ...] and returns a densified version.
-     The threshold tightens near the poles: at high latitudes MapLibre's
-     straight 3D chords accumulate drift even for short segments, because
-     the curvature of parallels is extreme. Scaling by cos(midLat) keeps
-     the angular chord error constant regardless of latitude.
-     Unwrapped longitudes (|lon| > 180) are handled by normalising for
-     the great-circle maths, then restoring the offset afterwards. */
-  if (!seg || seg.length < 2) return seg;
-  var out = [seg[0]];
-  for (var i = 0; i < seg.length - 1; i++) {
-    var p0 = seg[i], p1 = seg[i+1];
-    var lon0 = p0[0], lat0 = p0[1];
-    var lon1 = p1[0], lat1 = p1[1];
-    var dist = gcDistance(lon0, lat0, lon1, lat1);
-    /* Latitude-adaptive threshold: tighten near the poles so that the
-       angular extent of each chord stays below ~0.5° regardless of lat. */
-    var midLat = (lat0 + lat1) / 2;
-    var cosLat = Math.cos(toRad(Math.abs(midLat)));
-    var threshold = Math.max(2, MAX_SEG_KM * Math.max(cosLat, 0.04));
-    if (dist <= threshold) { out.push(p1); continue; }
-
-    /* Number of sub-segments needed */
-    var n = Math.ceil(dist / threshold);
-
-    /* Slerp in 3D unit-vector space.
-       Use the normalised lon for the slerp; we'll restore the offset. */
-    var normLon0 = ((lon0 + 180) % 360) - 180;
-    var normLon1 = ((lon1 + 180) % 360) - 180;
-    /* Prefer the short-way-around delta */
-    var dLon = normLon1 - normLon0;
-    if (dLon >  180) dLon -= 360;
-    if (dLon < -180) dLon += 360;
-
-    var φ0 = toRad(lat0), λ0 = toRad(normLon0);
-    var φ1 = toRad(lat1), λ1 = toRad(normLon0 + dLon);
-
-    var x0 = Math.cos(φ0)*Math.cos(λ0), y0 = Math.cos(φ0)*Math.sin(λ0), z0 = Math.sin(φ0);
-    var x1 = Math.cos(φ1)*Math.cos(λ1), y1 = Math.cos(φ1)*Math.sin(λ1), z1 = Math.sin(φ1);
-
-    /* Angular distance between unit vectors */
-    var dot = Math.max(-1, Math.min(1, x0*x1 + y0*y1 + z0*z1));
-    var omega = Math.acos(dot);
-
-    /* Longitude offset to restore unwrapped convention */
-    var lonOffset = lon0 - normLon0;
-
-    for (var j = 1; j < n; j++) {
-      var t = j / n;
-      var sinOmega = Math.sin(omega);
-      var s0 = (sinOmega > 1e-10) ? Math.sin((1-t)*omega) / sinOmega : (1-t);
-      var s1 = (sinOmega > 1e-10) ? Math.sin(t*omega)    / sinOmega : t;
-      var xi = s0*x0 + s1*x1, yi = s0*y0 + s1*y1, zi = s0*z0 + s1*z1;
-      var latI = toDeg(Math.asin(Math.max(-1, Math.min(1, zi))));
-      var lonI = toDeg(Math.atan2(yi, xi)) + lonOffset;
-      out.push([Math.round(lonI * 1e5) / 1e5, Math.round(latI * 1e5) / 1e5]);
-    }
-    out.push(p1);
-  }
-  return out;
-}
-
-/* ── Custom WebGL rendering ──────────────────────────────────────────
-   All eclipse path geometry bypasses MapLibre's geojson-vt pipeline,
-   which uses mercator internally and corrupts geometry above ~85°N/S.
-   Instead we convert lon/lat → MercatorCoordinate (0..1 range) in JS,
-   upload a Float32 buffer once, and draw with MapLibre's projectTile()
-   shader — which handles globe projection correctly at any latitude.
-
-   All eclipse geometry uses deck.gl PathLayer and SolidPolygonLayer.  */
-
-/* ── deck.gl rendering helpers ───────────────────────────────────────
-   All eclipse geometry is rendered via deck.gl PathLayer and
-   SolidPolygonLayer, which handle polar regions, antimeridian crossings,
-   line width, and spherical polygon fills correctly and natively.
-
-   setDeckLayers() is the single point of truth — call it with an array
-   of deck.gl layer objects whenever the eclipse changes.               */
-
-function setDeckLayers(layers) {
-  _deckLayers = layers;
-  if (deckOverlay) {
-    deckOverlay.setProps({ layers: layers });
-  } else {
-    /* Overlay not yet initialized — store and apply when ready */
-    setDeckLayers._pending = layers;
-  }
-}
-
-/* Toggle just the umbra-ovals layer's visibility when zoom crosses
-   OVAL_HIDE_ZOOM. deck.gl diffs layers by reference, so we clone that one layer
-   with the new `visible` value into a fresh array and re-push. Markers are
-   MapLibre objects, not deck layers, so they are untouched. */
-function updateOvalVisibility() {
-  if (!deckOverlay || !_deckLayers) return;
-  var vis = map.getZoom() < OVAL_HIDE_ZOOM;
-  var changed = false;
-  var next = _deckLayers.map(function (L) {
-    if (L && L.id === 'umbra-ovals' && L.props.visible !== vis) {
-      changed = true;
-      return L.clone({ visible: vis });
-    }
-    return L;
+function polyline(segs, color, width, idPrefix) {
+  if (!segs) return;
+  var wProp = new Cesium.CallbackProperty(function () { return width * pathZoomScale(); }, false);
+  segs.forEach(function (seg) {
+    if (!seg || seg.length < 2) return;
+    dsPaths.entities.add({ polyline: {
+      positions: Cesium.Cartesian3.fromDegreesArray(flatten(seg)),
+      width: wProp, material: color, arcType: Cesium.ArcType.GEODESIC, clampToGround: false,
+    }});
   });
-  if (changed) setDeckLayers(next);
 }
-
-/* Flatten segments into a single array of paths for PathLayer */
-function wrapContinuous(pts) {
-  if (!pts || !pts.length) return pts;
-  var out = [[((pts[0][0]+180)%360+360)%360-180, pts[0][1]]];
-  for (var i = 1; i < pts.length; i++) {
-    var prev = out[i-1][0];
-    var lon = ((pts[i][0]+180)%360+360)%360-180;
-    while (lon - prev >  180) lon -= 360;
-    while (lon - prev < -180) lon += 360;
-    out.push([lon, pts[i][1]]);
-  }
-  return out;
-}
-
-function segsToPathData(segs, id) {
-  if (!segs) return [];
-  return (segs).map(function(seg, i) {
-    if (!seg || seg.length < 2) return null;
-    return { id: id + '_' + i, path: wrapContinuous(densifySegment(seg)) };
-  }).filter(Boolean);
-}
-
-/* Build corridor polygon data from two edge arrays for SolidPolygonLayer.
-   Uses arc-length parameterization to pair vertices correctly. */
-function corridorToPolygonData(nSegs, sSegs, id) {
-  if (!nSegs||!sSegs||!nSegs.length||!sSegs.length) return [];
-  var north = densifySegment(nSegs[0]);
-  var south = densifySegment(sSegs[0]);
-  if (!north||!north.length||!south||!south.length) return [];
-
-  function arcLengthParams(edge) {
-    var dists=[0];
-    for(var i=1;i<edge.length;i++){
-      var p0=edge[i-1],p1=edge[i];
-      dists.push(dists[i-1]+gcDistance(p0[0],p0[1],p1[0],p1[1]));
-    }
-    var total=dists[dists.length-1];
-    return dists.map(function(d){return total>0?d/total:0;});
-  }
-
-  var np=arcLengthParams(north), sp=arcLengthParams(south);
-  function resampleByParam(edge,srcP,tgtP){
-    var out=[],si=0;
-    for(var i=0;i<tgtP.length;i++){
-      var t=tgtP[i];
-      while(si<srcP.length-2&&srcP[si+1]<t)si++;
-      var t0=srcP[si],t1=srcP[si+1]||t0,f=t1>t0?(t-t0)/(t1-t0):0;
-      var a=edge[si],b=edge[Math.min(si+1,edge.length-1)];
-      out.push([a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f]);
-    }
-    return out;
-  }
-
-  var southR = resampleByParam(south, sp, np);
-  /* Closed ring: north forward + south reversed, longitude-continuous. */
-  var ring = wrapContinuous(north.concat(southR.slice().reverse()));
-  return [{ id: id, polygon: ring }];
-}
-
-
-
-
-/* Umbra ovals are informative at regional/global zoom but counterproductive up
-   close (they darken the very point being inspected). Hide them past a zoom
-   threshold. The ovals layer is built with visible: zoom < OVAL_HIDE_ZOOM, and
-   a 'zoom' listener toggles that one layer's visibility via setProps when the
-   threshold is crossed — touching only the deck layers, not markers. */
-var OVAL_HIDE_ZOOM = 7;
 
 function drawEclipsePath(ep) {
   clearMapLayers();
   var isCentral = /[TAH]/.test(ep.type||'');
   var isTotal   = /[TH]/.test(ep.type||'');
-  var uc        = isTotal ? [139,74,0] : [26,74,122];
-  var layers    = [];
+  var P         = isOffline() ? PAL_SAT : PAL_STREET;
+  var uc        = isTotal ? P.umbraT : P.umbraA;
 
-  /* Polygon offset pushes all deck.gl geometry just above the globe surface
-     to prevent z-fighting when using interleaved: true. */
+  /* Penumbra + terminator lines. */
+  ['penumbra_n','penumbra_s','terminator_first','terminator_last'].forEach(function (k) {
+    if (ep[k] && ep[k].length) polyline(ep[k], colBytes(P.penumbra), PATH_WIDTH);
+  });
 
-  /* ── Penumbra boundary lines ───────────────────────────────────────
-     Penumbra limits, terminator lemniscates, and bisector — all drawn
-     as the same style of thin blue line. No fill: the closed-ring
-     assembly across penumbra ± terminator joins is not always
-     well-defined (polar shadows have no closed ring at all), so we
-     omit it entirely and let the outlines speak for themselves. */
-  var penPaths = ['penumbra_n','penumbra_s','terminator_first','terminator_last']
-    .reduce(function(acc, key) {
-      var segs = ep[key];
-      return segs && segs.length ? acc.concat(segsToPathData(segs, key)) : acc;
-    }, []);
-  if (penPaths.length) {
-    layers.push(new DeckGL.PathLayer({
-      id: 'penumbra-lines',
-      data: penPaths,
-      getPath: function(d) { return d.path; },
-      getColor: [42,90,140,200],
-      getWidth: 1.5,
-      widthUnits: 'pixels',
-      widthMinPixels: 1,
-    }));
-  }
-
-  /* ── Umbra fill (disabled) ────────────────────────────────────────────
-     SolidPolygonLayer triangulates the corridor as a flat lon/lat polygon.
-     Paths that pass near a pole or cross the antimeridian produce wrong
-     fills (concentric polar rings, hemisphere-spanning sweeps). Until
-     this is properly solved, the corridor is communicated by its outline
-     paths alone (drawn below). See BACKLOG.md for the full diagnosis. */
-
-  /* ── Umbra boundary lines ────────────────────────────────────────── */
+  /* Umbra limit lines. */
   if (isCentral && ep.umbra_n && ep.umbra_s) {
-    var umbraPaths = segsToPathData(ep.umbra_n, 'un')
-                       .concat(segsToPathData(ep.umbra_s, 'us'));
-    layers.push(new DeckGL.PathLayer({
-      id: 'umbra-lines',
-      data: umbraPaths,
-      getPath: function(d) { return d.path; },
-      getColor: uc.concat([255]),
-      getWidth: 1.5,
-      widthUnits: 'pixels',
-      widthMinPixels: 1,
-    }));
+    polyline(ep.umbra_n, colBytes(uc), PATH_WIDTH);
+    polyline(ep.umbra_s, colBytes(uc), PATH_WIDTH);
   }
 
-  /* ── Umbra ovals ───────────────────────────────────────────────────── */
+  /* Umbra ovals — now filled, INCLUDING pole-encircling rings (Cesium handles
+     the polar cap; the old winding-drop guard is gone). */
   if (/[TAH]/.test(ep.type||'') && ep.umbra_ovals && ep.umbra_ovals.length) {
-    var ovalFill = /[TH]/.test(ep.type||'') ? [139,74,0,60]   : [26,74,122,60];
-    var ovalLine = /[TH]/.test(ep.type||'') ? [180,120,20,200] : [42,90,180,200];
-    var ovalData = ep.umbra_ovals
-      .filter(function(r) { return r && r.length >= 3; })
-      .map(function(r, i) {
-        var ring = (r[0][0]===r[r.length-1][0] && r[0][1]===r[r.length-1][1])
-          ? r.slice(0,-1) : r;
-        return { id: 'oval-'+i, polygon: wrapContinuous(ring) };
-      })
-      .filter(function(d) {
-        /* Drop rings that encircle a pole (continuous longitude winds a full
-           turn). Their flat lon/lat triangulation is the inside-out sliver, and
-           this renderer cannot fill a polar cap. Omitting is honest; the fix is
-           the Cesium v2 pass. Normal ovals (winding ~0) are unaffected. */
-        var p = d.polygon;
-        return Math.abs(p[p.length-1][0] - p[0][0]) <= 270;
-      });
-    if (ovalData.length) {
-      layers.push(new DeckGL.SolidPolygonLayer({
-        id:                 'umbra-ovals',
-        data:               ovalData,
-        visible:            map.getZoom() < OVAL_HIDE_ZOOM,
-        getPolygon:         function(d) { return d.polygon; },
-        getFillColor:       ovalFill,
-        getLineColor:       ovalLine,
-        stroked:            true,
-        filled:             true,
-        lineWidthMinPixels: 1,
-      }));
-    }
+    var fill = isTotal ? colBytes(P.umbraT, 70)     : colBytes(P.umbraA, 70);
+    var line = isTotal ? colBytes(P.ovalTline,230)  : colBytes(P.ovalAline,230);
+    ep.umbra_ovals.forEach(function (r) {
+      if (!r || r.length < 3) return;
+      var ring = (r[0][0]===r[r.length-1][0] && r[0][1]===r[r.length-1][1]) ? r.slice(0,-1) : r;
+      var e = dsPaths.entities.add({ polygon: {
+        hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flatten(ring))),
+        material: fill, outline: true, outlineColor: line,
+        arcType: Cesium.ArcType.GEODESIC,
+      }});
+      _ovalEntities.push(e);
+    });
+    updateOvalVisibility();
   }
 
-  /* ── Centreline ─────────────────────────────────────────────────── */
-  if (isCentral && ep.centreline) {
-    layers.push(new DeckGL.PathLayer({
-      id: 'centreline',
-      data: segsToPathData(ep.centreline, 'cl'),
-      getPath: function(d) { return d.path; },
-      getColor: [204,34,0,255],
-      getWidth: 1.5,
-      widthUnits: 'pixels',
-      widthMinPixels: 1,
-    }));
-  }
+  /* Centreline. */
+  if (isCentral && ep.centreline) polyline(ep.centreline, colBytes(P.centre), PATH_WIDTH);
 
-  /* ── Green line (Maximum-on-Horizon curve) ────────────────────────────
-     Locus of points whose greatest eclipse occurs with the sun on the horizon;
-     the true termination boundary for the limits/centreline. The data is a flat
-     [lon,lat] list with `null` delimiters between separate components (a
-     two-blob eclipse has two, a figure-8 has one self-connected loop). Split on
-     the null delimiters, and additionally guard against antimeridian wrap
-     within a component (a ~360° longitude jump streaks across the map even when
-     the two points are physically close at high latitude). */
+  /* Green line (Maximum-on-Horizon). Split on null delimiters; the antimeridian
+     guard is gone — geodesic polylines wrap correctly. */
   if (isCentral && ep.green_curve && ep.green_curve.length) {
     var gsegs = [], gcur = [];
     function flushG() { if (gcur.length > 1) gsegs.push(gcur); gcur = []; }
-    for (var gi = 0; gi < ep.green_curve.length; gi++) {
-      var gp = ep.green_curve[gi];
-      if (gp === null) { flushG(); continue; }       // component delimiter
-      if (gcur.length) {
-        var prevG = gcur[gcur.length - 1];
-        if (Math.abs(gp[0] - prevG[0]) > 180) flushG(); // antimeridian wrap
-      }
+    ep.green_curve.forEach(function (gp) {
+      if (gp === null) { flushG(); return; }
       gcur.push(gp);
-    }
+    });
     flushG();
-    layers.push(new DeckGL.PathLayer({
-      id: 'green_curve',
-      data: gsegs.map(function(s){ return { path: s }; }),
-      getPath: function(d) { return d.path; },
-      getColor: [0,160,0,255],
-      getWidth: 1.5,
-      widthUnits: 'pixels',
-      widthMinPixels: 1,
-    }));
+    polyline(gsegs, colBytes(P.green), PATH_WIDTH);
   }
 
-  /* ── Greatest eclipse point — pixel-space marker (zoom-invariant) ─── */
-  if (ep.ge && ep.ge[0] != null) {
-    addGEMarker(ep.ge[1], ep.ge[0]);
-  }
-
-  setDeckLayers(layers);
+  /* Greatest-eclipse dot. */
+  if (ep.ge && ep.ge[0] != null) addGEMarker(ep.ge[1], ep.ge[0]);
+  render();
 }
 
+/* Toggle oval fills off when zoomed in close (they darken the inspected spot). */
+function updateOvalVisibility() {
+  if (!map || !_ovalEntities.length) return;
+  var show = map.camera.positionCartographic.height > OVAL_HIDE_HEIGHT;
+  _ovalEntities.forEach(function (e) { e.show = show; });
+  render();
+}
+
+/* ── Visibility / redraw wiring (unchanged) ───────────────────────────── */
+
+function isMapVisible() {
+  return mapReady && (activeTab === 'map' ||
+                      window.matchMedia('(min-width: 900px)').matches);
+}
+function redrawIfMapVisible() { if (isMapVisible()) updateMapState(); }
+AppState.on('selectedEntry', redrawIfMapVisible);
+AppState.on('localResult',   redrawIfMapVisible);
+AppState.on('mapReady',      redrawIfMapVisible);
+AppState.on('activeTab',     redrawIfMapVisible);

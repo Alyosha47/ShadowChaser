@@ -11,13 +11,12 @@
     @font-face { font-family:'JetBrains Mono'; font-weight:400; font-style:normal;
       src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2'); }
   </style>
-  <link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
+  <link href="vendor/cesium-1.121/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#0b0e14">
-  <script src="vendor/maplibre-gl-csp-5.5.0.js"></script>
-  <script>maplibregl.setWorkerUrl('vendor/maplibre-gl-csp-worker-5.5.0.js');</script>
-  <script src="vendor/deck.min.js"></script>
-  <script src="./js/tz_lookup.js"></script>
+  <script>window.CESIUM_BASE_URL='vendor/cesium-1.121/Build/Cesium/';</script>
+  <script src="vendor/cesium-1.121/Build/Cesium/Cesium.js"></script>
+    <script src="./js/tz_lookup.js"></script>
 
   <link rel="stylesheet" href="css/app.css?v=2026-06-05c">
 </head>
@@ -161,9 +160,14 @@
 
       <div class="tab-panel" id="tab-mapctrl">
         <div class="panel">
-          <p style="font-family:var(--mono);font-size:0.78rem;color:var(--text-dim);padding:1rem">
-            Map overlay controls &mdash; coming soon.
-          </p>
+          <div class="settings-row" style="margin:1rem">
+            <label for="map-toggle">Offline map</label>
+            <input type="checkbox" id="map-toggle" style="cursor:pointer;accent-color:var(--blue)"
+                   onchange="forceOfflineMap(this.checked)">
+          </div>
+          <div class="about-text" style="margin:0 1rem 1rem">
+            <p>Use the cached satellite basemap instead of online street tiles &mdash; for testing, or when you know you'll be offline in the field.</p>
+          </div>
         </div>
       </div><!-- #tab-mapctrl -->
 
@@ -306,11 +310,6 @@
         <div class="about-text" style="margin-top:0.5rem">
           <p>Limits which eclipses appear in results. Smaller ranges search faster. An explicit year in your search always overrides this.</p>
         </div>
-        <div class="settings-row" style="margin-top:1rem">
-          <label for="map-toggle">Force offline map</label>
-          <input type="checkbox" id="map-toggle" style="cursor:pointer;accent-color:var(--blue)"
-                 onchange="forceOfflineMap(this.checked)">
-        </div>
       </div>
 
       </details>
@@ -353,8 +352,7 @@ if ('serviceWorker' in navigator) {
 <script src="js/local.js?v=2026-06-05c"></script>
 <script src="js/details.js?v=2026-06-05c"></script>
 <script src="js/url.js?v=2026-06-05c"></script>
-<script src="js/map.js?v=2026-06-24i"></script>
-<script src="js/starfield.js?v=2026-06-27b"></script>
+<script src="js/map.js?v=cesium-spike"></script>
 <script src="js/share.js?v=2026-06-05c"></script>
 <script src="js/init.js?v=2026-06-05c"></script>
 </body>
