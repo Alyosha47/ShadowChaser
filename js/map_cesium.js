@@ -544,13 +544,24 @@ function clearMapLayers() {
   render();
 }
 
+/* Line width is in pixels, so a fixed width looks proportionally fat when zoomed
+   out (the path shrinks, the line doesn't). Scale width down as the camera pulls
+   back: full up close, ~half at globe view. */
+function pathZoomScale() {
+  if (!map || !map.camera || !map.camera.positionCartographic) return 1;
+  var h = map.camera.positionCartographic.height;
+  var t = (h - 2.0e6) / (2.4e7 - 2.0e6);
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return 1 - 0.5 * t;
+}
 function polyline(segs, color, width, idPrefix) {
   if (!segs) return;
+  var wProp = new Cesium.CallbackProperty(function () { return width * pathZoomScale(); }, false);
   segs.forEach(function (seg) {
     if (!seg || seg.length < 2) return;
     dsPaths.entities.add({ polyline: {
       positions: Cesium.Cartesian3.fromDegreesArray(flatten(seg)),
-      width: width, material: color, arcType: Cesium.ArcType.GEODESIC, clampToGround: false,
+      width: wProp, material: color, arcType: Cesium.ArcType.GEODESIC, clampToGround: false,
     }});
   });
 }
