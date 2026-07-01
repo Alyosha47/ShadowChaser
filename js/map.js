@@ -86,7 +86,6 @@ function loadPathChunk(entry) {
 
 var _forceOffline = false;
 function forceOfflineMap(on) { _forceOffline = on; initMap(); }
-function toggleOfflineMap() { _forceOffline = !_forceOffline; initMap(); return _forceOffline; }
 function isOffline() { return _forceOffline || navigator.onLine === false; }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -280,13 +279,9 @@ function buildBasemap(data) {
   render();
 }
 
-/* GeoJSON geometry walkers. eachPolygon yields the full ring array
-   [outer, hole1, …] so holes (inland seas) are preserved. */
-function eachPolygon(geom, cb) {
-  if (!geom) return;
-  if (geom.type === 'Polygon')           cb(geom.coordinates);
-  else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(function (poly) { cb(poly); });
-}
+/* GeoJSON geometry walker: yields each line/ring as a coordinate array.
+   Handles LineString, MultiLineString, and polygon rings (used for coastlines,
+   lake shores, rivers, borders — all drawn as lines). */
 function eachLine(geom, cb) {
   if (!geom) return;
   if (geom.type === 'LineString')        cb(geom.coordinates);
@@ -446,15 +441,6 @@ function addGEMarker(lat, lon) {
              disableDepthTestDistance: Number.POSITIVE_INFINITY },
   });
   render();
-}
-
-/* Great-circle destination from (lat,lon) on bearing az for distance d (km). */
-function destPoint(lat, lon, az, d) {
-  var R = 6371, br = az*Math.PI/180, la = lat*Math.PI/180, lo = lon*Math.PI/180, dr = d/R;
-  var la2 = Math.asin(Math.sin(la)*Math.cos(dr) + Math.cos(la)*Math.sin(dr)*Math.cos(br));
-  var lo2 = lo + Math.atan2(Math.sin(br)*Math.sin(dr)*Math.cos(la),
-                            Math.cos(dr) - Math.sin(la)*Math.sin(la2));
-  return { lat: la2*180/Math.PI, lon: lo2*180/Math.PI };
 }
 
 /* ── Click / popup (logic preserved) ──────────────────────────────────── */
