@@ -1,13 +1,9 @@
-data/paths/*
-!data/paths/paths_1901_2000.json.gz
-!data/paths/paths_2001_2100.json.gz
 .DS_Store
 *.pyc
 __pycache__/
 .DS_Store
 *.DS_Store
 
-data/paths/
 .DS_Store
 **/.DS_Store
 
