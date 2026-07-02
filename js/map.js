@@ -21,6 +21,8 @@ var dsGE          = null;   /* greatest-eclipse dot (per selection)         */
 var _ovalEntities = [];     /* umbra ovals, toggled by camera height        */
 var _clickHandler = null;
 var _cityPoints   = null;   /* batched city PointPrimitiveCollection */
+var _offlineLayer = null;   /* offline satellite imagery layer (faded at extreme zoom) */
+var _landFill     = null;
 
 /* Palette — lifted verbatim from the old buildLocalStyle so the look matches. */
 var COL = {
@@ -108,6 +110,7 @@ function flatten(seg) {
 
 /* ── Init ─────────────────────────────────────────────────────────────── */
 
+var _initSeq = 0;
 function initMap() {
   var savedCam = null;
   if (map) {
@@ -120,16 +123,23 @@ function initMap() {
   }
   dsBasemap = dsPaths = dsObserver = dsGE = null;
   _ovalEntities = [];
+  _offlineLayer = _landFill = null;
 
+  var myseq = ++_initSeq;   /* only the latest init may build — prevents duplicate viewers from concurrent calls */
   loadBasemapData().then(function (data) {
+    if (myseq !== _initSeq) return;
     createMap(data, savedCam);
   }).catch(function () {
+    if (myseq !== _initSeq) return;
     createMap(null, savedCam);
   });
 }
 
 function createMap(data, savedCam) {
   var wide = window.matchMedia('(min-width: 900px)').matches;
+
+  var container = document.getElementById('map');
+  if (container) container.innerHTML = '';   /* drop any orphaned canvas before building */
 
   map = new Cesium.Viewer('map', {
     baseLayer: false,            /* no imagery tiles — GeoJSON basemap only  */
@@ -143,7 +153,7 @@ function createMap(data, savedCam) {
   Cesium.Ion.defaultAccessToken = undefined;
 
   var scene = map.scene, globe = scene.globe;
-  globe.baseColor          = col('#dce4ea');   /* pale ice — shows at the poles, where Mercator relief can't reach */
+  globe.baseColor          = col('#a9c9e0');   /* ocean blue — the "water" that shows when the raster fades at extreme zoom */
   globe.showGroundAtmosphere = false;   /* haze washes out imagery — off for contrast */
   globe.enableLighting     = false;          /* day/night shading off for now */
   scene.skyAtmosphere.show = true;           /* keep the planet limb glow (cheap, pretty) */
@@ -164,6 +174,21 @@ function createMap(data, savedCam) {
   [dsBasemap, dsPaths, dsGE, dsObserver].forEach(function (d) { map.dataSources.add(d); });
 
   buildBasemap(data);
+  try { console.log('[ShadowChaser] map built — #map canvases:', document.getElementById('map').querySelectorAll('canvas').length); } catch (e) {}
+
+  /* At extreme offline zoom the raster is just noise, so crossfade it out and a
+     flat green-land fill in — leaving crisp vectors on blue water + green land.
+     Runs each render (which only happens when the camera moves). */
+  scene.preRender.addEventListener(function () {
+    if (!isOffline() || !map.camera.positionCartographic) return;
+    var h = map.camera.positionCartographic.height;
+    /* Non-overlapping bands: raster fades out by 3e5, land fill only starts
+       below 3e5 — so the satellite land and the vector land are never both
+       visible (that co-visibility was the "two landmasses"). */
+    if (_offlineLayer) _offlineLayer.alpha = band(h, 3.0e5, 5.0e5);
+    var fa = 1 - band(h, 3.0e5, 5.0e5);   /* fills fade in as raster fades out */
+    if (_landFill && _landFill.appearance) _landFill.appearance.material.uniforms.color = Cesium.Color.fromCssColorString('#bcdca6').withAlpha(fa);
+  });
 
   /* Camera: restore prior view across an offline/online toggle, else default. */
   if (savedCam) {
@@ -215,33 +240,50 @@ function buildBasemap(data) {
     return;                          /* Esri tiles already have labels/borders */
   }
 
-  /* Offline: a single full-globe Natural Earth II image (equirectangular, covers
-     the whole sphere incl. poles — no tiles, no projection seams, no caps). */
+  /* Offline base: single full-globe NE II satellite image. Captured so we can
+     fade it out at extreme zoom (where it's just noise), revealing green land on
+     blue water underneath. */
   Cesium.SingleTileImageryProvider.fromUrl(
     DATA_BASE + '/basemap/ne2.jpg'
   ).then(function (prov) {
-    map.imageryLayers.addImageryProvider(prov);
+    _offlineLayer = map.imageryLayers.addImageryProvider(prov);
     render();
   }).catch(function (e) { console.error('Offline NE2 image failed:', e); });
 
   if (!data) { render(); return; }
 
+  /* Green land fill (draped on the globe → no z-fighting). Starts fully
+     transparent; the preRender crossfade brings it in as the raster fades. */
+  _landFill = buildFill(data.land,  '#bcdca6', 0);   /* green land   */
+  if (_landFill) scene.primitives.add(_landFill);
+
   /* Crisp vector lines over the raster — these stay sharp at any zoom (lines are
      sphere-safe on Cesium; only filled polygons caused the earlier artifacts).
      One batched PolylineCollection for all of them. */
-  var lines = scene.primitives.add(new Cesium.PolylineCollection());
+  /* Crisp vector lines, clamped to the globe so they drape identically to the
+     land fill (no parallax between line and fill edge). */
   function addLines(fc, hex, alpha, width) {
     if (!fc || !fc.features) return;
-    var mat = Cesium.Material.fromType('Color', { color: col(hex, alpha) });
+    var instances = [];
     fc.features.forEach(function (f) {
       eachLine(f.geometry, function (line) {
         if (line.length < 2) return;
-        lines.add({ positions: Cesium.Cartesian3.fromDegreesArray(flatten(line)),
-                    width: width, material: mat });
+        instances.push(new Cesium.GeometryInstance({
+          geometry: new Cesium.GroundPolylineGeometry({
+            positions: Cesium.Cartesian3.fromDegreesArray(flatten(line)), width: width }),
+        }));
       });
     });
+    if (!instances.length) return;
+    scene.groundPrimitives.add(new Cesium.GroundPolylinePrimitive({
+      geometryInstances: instances,
+      appearance: new Cesium.PolylineMaterialAppearance({
+        material: Cesium.Material.fromType('Color', { color: col(hex, alpha) }) }),
+      asynchronous: true,
+    }));
   }
-  addLines(data.land,      COL.COAST,  0.9, 1.2);   /* coastlines  */
+  /* Coast is shown by the land-fill edge itself, so no separate coastline line
+     (that duplicated the country-border coast → two offset lines). */
   addLines(data.lakes,     COL.RIVER,  0.8, 1);     /* lake shores */
   addLines(data.rivers,    COL.RIVER,  0.7, 1);     /* rivers      */
   addLines(data.countries, COL.BORDER, 0.6, 1);     /* borders     */
@@ -288,6 +330,53 @@ function eachLine(geom, cb) {
   else if (geom.type === 'MultiLineString') geom.coordinates.forEach(cb);
   else if (geom.type === 'Polygon')      geom.coordinates.forEach(cb);
   else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(function (p) { p.forEach(cb); });
+}
+
+/* Walk polygon fills: yields a PolygonHierarchy (outer ring + holes) per polygon. */
+function eachFillRing(geom, cb) {
+  if (!geom) return;
+  function poly(rings) {
+    if (!rings || !rings.length || rings[0].length < 4) return;
+    var outer = Cesium.Cartesian3.fromDegreesArray(flatten(rings[0]));
+    var holes = [];
+    for (var i = 1; i < rings.length; i++) {
+      if (rings[i].length >= 4)
+        holes.push(new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flatten(rings[i]))));
+    }
+    cb(new Cesium.PolygonHierarchy(outer, holes));
+  }
+  if (geom.type === 'Polygon')           poly(geom.coordinates);
+  else if (geom.type === 'MultiPolygon') geom.coordinates.forEach(poly);
+}
+
+/* Linear ramp: 0 at h<=lo, 1 at h>=hi. */
+function band(h, lo, hi) {
+  if (h >= hi) return 1;
+  if (h <= lo) return 0;
+  return (h - lo) / (hi - lo);
+}
+
+/* Green land fill, draped on the globe (GroundPrimitive avoids the z-fighting
+   that plain filled polygons hit on a sphere). Single translucent material so
+   the crossfade is one uniform update, not thousands. Starts transparent. */
+function buildFill(fc, hex, h) {
+  if (!fc || !fc.features) return null;
+  var instances = [];
+  fc.features.forEach(function (f) {
+    eachFillRing(f.geometry, function (hierarchy) {
+      instances.push(new Cesium.GeometryInstance({
+        geometry: new Cesium.PolygonGeometry({ polygonHierarchy: hierarchy, arcType: Cesium.ArcType.GEODESIC,
+          height: h || 0, vertexFormat: Cesium.MaterialAppearance.MaterialSupport.BASIC.vertexFormat }),
+      }));
+    });
+  });
+  if (!instances.length) return null;
+  return new Cesium.Primitive({
+    geometryInstances: instances,
+    appearance: new Cesium.MaterialAppearance({ flat: true, translucent: true,
+      material: Cesium.Material.fromType('Color', { color: Cesium.Color.fromCssColorString(hex).withAlpha(0) }) }),
+    asynchronous: true,
+  });
 }
 
 /* ── Tab / status (unchanged DOM) ─────────────────────────────────────── */
