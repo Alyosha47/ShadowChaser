@@ -53,7 +53,7 @@ const DATA = [
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
-    await c.addAll(CORE);
+    await Promise.all(CORE.map(async function(url){ try{ const r=await fetch(url,{cache:"reload"}); if(r.ok) await c.put(url,r); }catch(_){} }));
     let data = 0;
     await Promise.all(DATA.map(async url => {
       try {

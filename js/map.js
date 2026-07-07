@@ -1,3 +1,4 @@
+/* map.js — build 2026-07-07ej */
 /* ── Map (Cesium renderer) ───────────────────────────────────────────────
    Cesium port of the MapLibre+deck.gl renderer. Public surface is unchanged:
      initMap, forceOfflineMap, isOffline, onMapTabActivated,
@@ -89,6 +90,18 @@ function loadPathChunk(entry) {
 var _forceOffline = false;
 function forceOfflineMap(on) { _forceOffline = on; initMap(); }
 function isOffline() { return _forceOffline || navigator.onLine === false; }
+var _esriLayer = null;
+function applyOnlineState() {
+  if (isOffline()) {
+    if (window._scLoadNE2) window._scLoadNE2();
+    if (window._scBuildVectors) window._scBuildVectors();   /* mobile: build vectors now */
+  }
+  if (_esriLayer) { _esriLayer.show = !isOffline(); render(); }
+}
+if (!window._scConnHook) { window._scConnHook = true;
+  addEventListener('online',  applyOnlineState);
+  addEventListener('offline', applyOnlineState);
+}
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
@@ -232,24 +245,24 @@ var ONLINE_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_S
 function buildBasemap(data) {
   var scene = map.scene;
 
-  if (!isOffline()) {
-    map.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-      url: ONLINE_TILES, maximumLevel: 19, credit: 'Esri',
-    }));
-    render();
-    return;                          /* Esri tiles already have labels/borders */
-  }
+  /* NE2 base sits under Esri. Desktop preloads it, so going offline instantly
+     reveals it (Esri tiles just fail). Mobile can't hold NE2 + Esri at once
+     (iOS OOM), so it loads NE2 lazily — only when actually offline. */
+  var _wide = window.matchMedia('(min-width: 900px)').matches;
+  window._scLoadNE2 = function () {
+    if (_offlineLayer) return;
+    Cesium.SingleTileImageryProvider.fromUrl(DATA_BASE + '/basemap/ne2.jpg')
+      .then(function (prov) { _offlineLayer = map.imageryLayers.addImageryProvider(prov, 0); render(); })
+      .catch(function (e) { console.error('Offline NE2 image failed:', e); });
+  };
+  if (_wide) window._scLoadNE2();
 
-  /* Offline base: single full-globe NE II satellite image. Captured so we can
-     fade it out at extreme zoom (where it's just noise), revealing green land on
-     blue water underneath. */
-  Cesium.SingleTileImageryProvider.fromUrl(
-    DATA_BASE + '/basemap/ne2.jpg'
-  ).then(function (prov) {
-    _offlineLayer = map.imageryLayers.addImageryProvider(prov);
-    render();
-  }).catch(function (e) { console.error('Offline NE2 image failed:', e); });
+  _esriLayer = map.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url: ONLINE_TILES, maximumLevel: 19, credit: 'Esri',
+  }));
+  _esriLayer.show = !isOffline();
 
+  window._scBuildVectors = function () {
   if (!data) { render(); return; }
 
   /* Green land fill (draped on the globe → no z-fighting). Starts fully
@@ -319,6 +332,8 @@ function buildBasemap(data) {
     _cityPoints = pts;
   }
   render();
+  };   /* end _scBuildVectors */
+  if (_wide) window._scBuildVectors();
 }
 
 /* GeoJSON geometry walker: yields each line/ring as a coordinate array.
