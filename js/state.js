@@ -1,17 +1,30 @@
 /* ── Data loading ────────────────────────────────────────────────────── */
 
-var chunkCache = {};
+var chunkCache   = {};
+var chunkLoading = {};   /* in-flight fetches, keyed by chunk */
 
+/* Two caches, not one. `chunkCache` holds RESOLVED data; `chunkLoading` holds the
+   in-flight promise. Without the second, every caller that arrives while a fetch
+   is still in flight sees an empty cache and starts its own fetch — N concurrent
+   scans meant N identical downloads of every century. Returning the pending
+   promise collapses them to one. (Same pattern as `basemapLoading` in map.js.) */
 function loadChunk(key) {
-  if (chunkCache[key]) return Promise.resolve(chunkCache[key]);
+  if (chunkCache[key])   return Promise.resolve(chunkCache[key]);
+  if (chunkLoading[key]) return chunkLoading[key];
   var url = DATA_BASE + '/besselian/' + key + '.json?v=' + BUILD;
-  return fetch(url).then(function (r) {
+  var p = fetch(url).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status + ' \u2014 ' + key + '.json');
     return r.json();
   }).then(function (data) {
     chunkCache[key] = data;
+    delete chunkLoading[key];
     return data;
+  }).catch(function (err) {
+    delete chunkLoading[key];   /* clear on failure so a later call can retry */
+    throw err;                  /* callers already handle rejection */
   });
+  chunkLoading[key] = p;
+  return p;
 }
 
 
