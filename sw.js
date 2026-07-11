@@ -5,11 +5,11 @@
 // Strategy:
 //   • CORE  — app shell + Cesium engine entry, precached atomically.
 //   • DATA  — besselian (all) + field-range paths, best-effort.
-//   • Cesium Workers/Assets, the Natural Earth II texture, and the offline
-//     shaded-relief tiles are SAME-ORIGIN, so the fetch handler caches them
-//     ON DEMAND as they load. Load the app online once and pan/zoom the offline
-//     view (toggle "force offline" while still online) so the regions you'll
-//     visit get cached — "plan at home, navigate in the field".
+//   • CESIUM — the geometry Web Workers are PRECACHED (see the CESIUM array), so
+//     an offline reload never hangs on iOS waiting for an uncached worker.
+//   • The Natural Earth II texture + vector overlays are precached in CORE.
+//     Online Esri street tiles are cached ON DEMAND as you pan — "plan at home
+//     online, navigate offline in the field".
 const VERSION = new URL(self.location).searchParams.get('v') || 'dev';
 const CACHE = 'shadowchaser-cesium-' + VERSION;
 
@@ -19,7 +19,7 @@ const CORE = [
   'css/app.css',
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
       'search','list','local','details','share','map','url','init'].map(n => `js/${n}.js`),
-  // Cesium engine entry (Workers/Assets are cached on demand on first online load).
+  // Cesium engine entry (the geometry Workers are precached via the CESIUM array, below).
   'vendor/cesium-1.121/Build/Cesium/Cesium.js',
   'vendor/cesium-1.121/Build/Cesium/Widgets/widgets.css',
   ...['CormorantGaramond-Light','JetBrainsMono-Regular'].map(n => `fonts/${n}.woff2`),
@@ -30,6 +30,11 @@ const CORE = [
   'data/basemap/land.geojson.gz',
   'data/basemap/lakes.geojson.gz',
   'data/basemap/rivers.geojson.gz',
+  'data/basemap/states.geojson.gz',
+  'data/basemap/land_lo.geojson.gz',       // 110m mobile set
+  'data/basemap/countries_lo.geojson.gz',
+  'data/basemap/rivers_lo.geojson.gz',
+  'data/basemap/lakes_lo.geojson.gz',
   'data/index.json',
 ];
 
@@ -217,7 +222,11 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // online Esri tiles etc. → untouched
 
-  if (req.mode === 'navigate') {
+  /* Shell fallback is for HTML route navigations only. A direct navigation to a
+     file with an extension (js, gz, json, png…) must return THAT file (cache-first
+     below), not the shell — otherwise browsing to js/map.js offline shows index.html
+     and diagnostics lie. */
+  if (req.mode === 'navigate' && !/\.[a-z0-9]{2,5}$/i.test(url.pathname)) {
     e.respondWith((async function () {
       var shell = function () {
         return caches.match('index.html', { cacheName: CACHE, ignoreSearch: true });

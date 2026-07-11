@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="build" content="2026-07-08e">
+  <meta name="build" content="">   <!-- filled from BUILD at runtime -->
   <title>ShadowChaser</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
@@ -181,13 +181,14 @@
 
       <div class="settings-section">
         <div class="about-text">
-          <p>ShadowChaser is developed by <strong>followtheshadow</strong>, a loose consortium of friends who have been following eclipses together since May 10, 1994. Although there are many eclipse-adventure-planning tools out there, we still missed certain features &mdash; search-by-location, accurate local timezone resolution, historical weather planning, shadow-mapping from local topographies, and offline map caching for in-the-field use. We&rsquo;ve tried to cover all the bases in one convenient package.</p>
-          <p>Tuned to iPhone and never tested on Android &mdash; let us know if you have any suggestions. If you find any bugs, <a href="mailto:app@followtheshadow.com">drop us a line</a> &mdash; and <em>don&rsquo;t stare at the sun!</em></p>
+          <p>My name is Guy, and I have been following eclipses since a fateful camping trip back in May 1994. We all ate mushrooms and sat in a circle with drums between our knees, silver glasses on our faces, grinning like fools and staring upwards at the ring of fire. That kind of sealed the deal, and certainly changed my life. Since then, I have always had a direction &mdash; an endless series of predictable glorious events &mdash; to pursue: across mountains, jungles, and deserts, to the very farthest corners of the globe.</p>
+          <p>Although there are many eclipse-adventure-planning tools out there (Thank you, Mr. Espenak! Merci, M. Jubier!), I still missed certain features: search-by-date (all the eclipses on your birthday), search-by-location (what, no TSEs in Ouagadougou since the year 913&#8253;), search-by-vibe (was there a total eclipse right near but not in Oslo sometime in the 50s?), historical cloud data overlays (did he just use the C-word?), shadow-mapping from local topographies (d&rsquo;oh that hill is in the way!), and offline map caching for in-the-field use. This app tries to cover all the bases in one convenient package, to help plan syzygystic adventures more efficiently. I also learned a <em>ton</em> about Besselian geometry while making it, which is always so much fun.</p>
+          <p>Tuned to desktop + iOS and never tested on Android &mdash; if you have any suggestions or find any bugs, <a href="mailto:app@followtheshadow.com">drop me a line</a> &mdash; <em>and don&rsquo;t stare at the sun!</em></p>
         </div>
       </div>
 
       <div class="settings-section">
-        <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem">Build: 2026-05-29u</p>
+        <p style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);padding-bottom:0.5rem" data-build-stamp></p>
       </div>
 
       </details>
@@ -328,12 +329,80 @@
 <script src="js/eclipse.js?v=2026-06-05c"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
-     Single source of truth for BUILD. Must match <meta name="build"> at top.
+     Single source of truth for BUILD. The <meta> and build stamp auto-populate from it.
      Cache-busts all data fetches AND the external JS files below. -->
 <script>
 'use strict';
+/* ── On-screen error catcher ───────────────────────────────────────────────
+   No Mac debugging available, so surface the REAL failure on the phone itself.
+   Any uncaught error, promise rejection, or WebGL context-loss paints a red
+   panel with the message + stack, instead of Safari's opaque "a problem
+   repeatedly occurred". First thing that runs, so it catches everything after. */
+(function () {
+  function panel() {
+    var d = document.getElementById('err-catcher');
+    if (d) return d;
+    d = document.createElement('div');
+    d.id = 'err-catcher';
+    d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;max-height:55%;overflow:auto;'
+      + 'background:rgba(140,0,0,0.96);color:#fff;font:12px/1.45 -apple-system,monospace;padding:10px 12px;'
+      + 'white-space:pre-wrap;-webkit-user-select:text;user-select:text;box-shadow:0 -2px 12px rgba(0,0,0,0.5)';
+    (document.body || document.documentElement).appendChild(d);
+    return d;
+  }
+  function show(tag, msg) {
+    try {
+      var p = panel();
+      p.textContent += '[' + tag + '] ' + msg + '\n\n';
+      p.scrollTop = p.scrollHeight;
+    } catch (e) {}
+  }
+  window.__scShowError = show;
+  addEventListener('error', function (e) {
+    show('error', (e.message || 'error') + '  @' + (e.filename || '?') + ':' + (e.lineno || '?')
+      + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+  }, true);
+  addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    show('promise', (r && (r.stack || r.message)) || String(r));
+  });
+  /* WebGL context loss is the smoking gun for an iOS memory kill — catch it the
+     moment the canvas exists (polls briefly at startup). */
+  var tries = 0;
+  var iv = setInterval(function () {
+    var c = document.querySelector('#map canvas');
+    if (c && !c.__scCtxHooked) {
+      c.__scCtxHooked = true;
+      c.addEventListener('webglcontextlost', function (ev) {
+        show('webgl', 'CONTEXT LOST — the GPU/renderer was killed (almost always iOS memory). '
+          + 'This is the crash, caught. ' + (ev.statusMessage || ''));
+      });
+      c.addEventListener('webglcontextrestored', function () { show('webgl', 'context restored'); });
+      clearInterval(iv);
+    }
+    if (++tries > 100) clearInterval(iv);   /* ~20s */
+  }, 200);
+})();
+
 var DATA_BASE = './data';
-var BUILD     = '2026-07-08e';
+var BUILD     = '2026-07-10l';   /* ← THE single source. Everything below follows it. */
+
+/* Propagate BUILD so it never has to be typed twice. The <meta name="build"> and
+   every element with [data-build-stamp] are filled from this one constant, so a
+   build bump means editing this line alone. (The ?v= on the external script
+   tags still cache-bust independently, but under the service worker the cache
+   name — keyed to BUILD via sw.js?v=BUILD — already busts them on every bump.) */
+(function () {
+  var m = document.querySelector('meta[name="build"]');
+  if (m) m.content = BUILD;
+  addEventListener('DOMContentLoaded', function () {
+    var mismatch = (window.MAP_JS_BUILD && window.MAP_JS_BUILD !== BUILD)
+      ? '  \u26A0 map.js=' + window.MAP_JS_BUILD + ' (stale \u2014 clear cache)' : '';
+    var els = document.querySelectorAll('[data-build-stamp]');
+    for (var i = 0; i < els.length; i++) els[i].textContent = 'build ' + BUILD + mismatch;
+  });
+})();
+
 // Installed-PWA mode → tag <html> so CSS can drop the branding banner (older iOS
 // lacks the display-mode media query, so navigator.standalone is the fallback).
 if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) {
@@ -352,7 +421,7 @@ if ('serviceWorker' in navigator) {
 <script src="js/local.js?v=2026-06-05c"></script>
 <script src="js/details.js?v=2026-06-05c"></script>
 <script src="js/url.js?v=2026-06-05c"></script>
-<script src="js/map.js?v=2026-07-08e"></script>
+<script src="js/map.js?v=2026-07-10l"></script>
 <script src="js/share.js?v=2026-06-05c"></script>
 <script src="js/init.js?v=2026-06-05c"></script>
 </body>

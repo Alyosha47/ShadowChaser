@@ -1,4 +1,7 @@
-/* map.js — build 2026-07-08e (mobile DPR-2 cap: recover sharpness) */
+/* map.js — build 2026-07-10l (mobile basemap = NE2; sun arrow now flat surface geometry) */
+/* Self-reported build. index.html's stamp compares this to BUILD and flags a
+   mismatch — the fast way to catch a stale map.js that a cache didn't evict. */
+window.MAP_JS_BUILD = '2026-07-10l';
 /* ── Map (Cesium renderer) ───────────────────────────────────────────────
    Cesium port of the MapLibre+deck.gl renderer. Public surface is unchanged:
      initMap, forceOfflineMap, isOffline, onMapTabActivated,
@@ -28,9 +31,48 @@ var _landFill     = null;
 var _vectorPrims  = [];     /* borders/rivers/lakes lines — hidden while online */
 var _cityLabels   = null;
 
-/* Viewport class. Consulted in several places, so it lives here rather than being
-   recomputed as a local in each function. */
-function isWide() { return window.matchMedia('(min-width: 900px)').matches; }
+/* ── Platform profile — ONE decision, made once ───────────────────────────
+   Everything that differs between a phone and a desktop is gathered here, so
+   there are no scattered isWide() checks smeared through the file. This is the
+   RENDER + DATA profile, fixed at load. (Layout-only media queries — sidebar,
+   map visibility — stay live below, since those should respond to a resize.)
+   Each field is exactly the value the old scattered branches produced, so the
+   behaviour is unchanged; it's just legible now. */
+var IS_MOBILE = !window.matchMedia('(min-width: 900px)').matches;
+
+var PROFILE = IS_MOBILE ? {
+  useBrowserResolution: false,                                  // render at a manual scale, not native DPR
+  resolutionScale:      Math.min(window.devicePixelRatio || 1, 2),  // DPR-2 cap (native DPR OOM'd iOS)
+  maxScreenSpaceError:  null,                                  // default (2): smooth limb. (Coarse=4 was a needless memory hack that faceted the globe.)
+  msaa:                 1,
+  fxaa:                 false,                                  // full-screen buffer — off
+  skyAtmosphere:        false,                                  // full-screen shader pass — off
+  skyBox:               false,                                  // six 2048² textures — off
+  oit:                  true,                                  // default on (fine). Backgrounding was fixed by the FXAA/atmosphere/skybox cuts, not by OIT.
+  tileCacheSize:        null,                                  // default: no tile churn/pop-in while panning
+  dataSuffix:           '_lo',                                  // 110m vectors
+  cityMaxRank:          3,                                      // ranks 1–2 only
+  raster:               true,                                  // NE2 shaded relief offline (fits now the memory budget is cleared)
+  rasterUrl:            'ne2.jpg',
+  landFill:             false,                                  // no fill primitive — NE2 IS the land surface
+  eagerVectors:         false,                                  // vectors built on the offline switch
+} : {
+  useBrowserResolution: true,                                  // native DPR
+  resolutionScale:      null,                                  // (leave Cesium default)
+  maxScreenSpaceError:  null,                                  // (leave Cesium default: 2)
+  msaa:                 4,
+  fxaa:                 true,
+  skyAtmosphere:        true,
+  skyBox:               true,
+  oit:                  true,                                  // leave Cesium default (untouched)
+  tileCacheSize:        null,                                  // (leave Cesium default)
+  dataSuffix:           '',                                    // full-resolution vectors
+  cityMaxRank:          4,
+  raster:               true,                                  // NE2 satellite offline
+  rasterUrl:            'ne2.jpg',
+  landFill:             true,                                  // filled land (desktop has the headroom)
+  eagerVectors:         true,                                  // vectors built at init
+};
 
 /* Palette — lifted verbatim from the old buildLocalStyle so the look matches. */
 var COL = {
@@ -61,14 +103,21 @@ function loadBasemapData() {
   var base = DATA_BASE + '/basemap/';
   /* With the Natural Earth II raster base we only need overlays now:
      country borders + city labels. (land/lakes/rivers come from the raster.) */
+  /* Mobile gets 110m data; desktop gets full resolution. The full-res whole-globe
+     land triangulation + border polylines were the mobile OOM — the 110m set is a
+     small fraction of the vertices and adequate at the zooms a field user needs.
+     Coastlines, borders, rivers, lakes swap; cities/states are already light and
+     shared (cities are rank-capped harder on mobile at build time). */
+  var lo = PROFILE.dataSuffix;
   basemapLoading = Promise.all([
-    fetchGz(base + 'countries.geojson.gz?v=' + BUILD),
+    fetchGz(base + 'countries' + lo + '.geojson.gz?v=' + BUILD),
     fetchGz(base + 'cities.geojson.gz?v='    + BUILD),
-    fetchGz(base + 'land.geojson.gz?v='      + BUILD),
-    fetchGz(base + 'lakes.geojson.gz?v='     + BUILD),
-    fetchGz(base + 'rivers.geojson.gz?v='    + BUILD),
+    fetchGz(base + 'land'  + lo + '.geojson.gz?v=' + BUILD),
+    fetchGz(base + 'lakes' + lo + '.geojson.gz?v=' + BUILD),
+    fetchGz(base + 'rivers'+ lo + '.geojson.gz?v=' + BUILD),
+    fetchGz(base + 'states.geojson.gz?v='    + BUILD).catch(function(){ return null; }),  /* optional: state/province lines */
   ]).then(function (r) {
-    basemapData = { countries:r[0], cities:r[1], land:r[2], lakes:r[3], rivers:r[4] };
+    basemapData = { countries:r[0], cities:r[1], land:r[2], lakes:r[3], rivers:r[4], states:r[5] };
     return basemapData;
   });
   return basemapLoading;
@@ -165,7 +214,7 @@ function setEsriVisible(v) {
     if (!_esriLayer) _esriLayer = makeEsriLayer();   /* create on demand — never exists while offline */
     _esriLayer.show = true;
   } else if (_esriLayer) {
-    if (isWide()) { _esriLayer.show = false; }        /* desktop: keep textures, just hide */
+    if (!IS_MOBILE) { _esriLayer.show = false; }       /* desktop: keep textures, just hide */
     else { try { map.imageryLayers.remove(_esriLayer, true); } catch (e) {} _esriLayer = null; }  /* mobile: free */
   }
 }
@@ -187,44 +236,30 @@ function setVectorsVisible(v) {
    it anyway) and reloaded from cache when offline — symmetric to setEsriVisible,
    so the two big layers never both sit resident. Desktop keeps NE2 for instant
    switching. */
+/* NE2 is now DESKTOP-ONLY. On mobile the offline map is vector-only (no 33 MB
+   raster) — that removed the last iOS OOM and the whole load/free/fade dance.
+   Desktop keeps the satellite raster offline, faded to vectors at depth. */
 function setNE2Present(v) {
+  if (!PROFILE.raster) return;
   if (!map) return;
-  if (v) { if (window._scLoadNE2) window._scLoadNE2(); }        /* guarded: no-op if present */
-  else if (_offlineLayer && !isWide()) {
-    try { map.imageryLayers.remove(_offlineLayer, true); } catch (e) {}
-    _offlineLayer = null;
-  }
+  if (v) { if (window._scLoadNE2) window._scLoadNE2(); }   /* guarded: no-op if present */
+  /* desktop never frees NE2 (kept resident for instant switching) */
 }
 
 function applyOnlineState() {
   var off = isOffline();
   if (off) {
-    setEsriVisible(false);   /* free Esri first (iOS headroom) */
-    setNE2Present(true);     /* then bring NE2 in             */
-    maybeBuildVectors();     /* only if already zoomed in      */
+    setEsriVisible(false);                               /* free Esri first (iOS headroom)     */
+    setNE2Present(true);                                 /* bring the offline raster in (NE2 desktop / flat map mobile) */
+    if (window._scBuildVectors) window._scBuildVectors(); /* vectors ARE the mobile map — build now */
     setVectorsVisible(true);
   } else {
     setVectorsVisible(false);
-    setNE2Present(false);    /* free NE2 first (mobile) */
-    setEsriVisible(true);    /* then bring Esri in      */
+    setNE2Present(false);
+    setEsriVisible(true);
   }
   pulseRender();          /* drive the raster⇄vector crossfade to completion         */
   redrawIfMapVisible();   /* repaint paths in the palette matching the active base    */
-}
-
-/* The offline vector overlay (whole-globe land fill + every lake/river/border
-   ground-clamped and tessellated) is the single largest allocation the app makes,
-   and on iOS building it WHILE loading NE2 is what killed the renderer. But it's
-   only visible below ~5e5 m — at globe zoom it's invisible yet fully resident. So
-   on mobile we build it lazily, only once the camera is close enough to need it,
-   by which point Esri is freed and NE2 already loaded — no simultaneous spike.
-   Desktop has the headroom and builds eagerly at init for instant depth. */
-var VEC_BUILD_HEIGHT = 8.0e5;   /* above the 5e5 fade-in, so vectors exist before shown */
-function maybeBuildVectors() {
-  if (isWide()) return;                                   /* desktop: eager at init     */
-  if (!isOffline() || !window._scBuildVectors) return;
-  if (!map || !map.camera.positionCartographic) return;
-  if (map.camera.positionCartographic.height < VEC_BUILD_HEIGHT) window._scBuildVectors();  /* idempotent */
 }
 
 /* requestRenderMode saves battery but stalls time-based animation and the first
@@ -309,8 +344,6 @@ function initMap() {
 }
 
 function createMap(data, savedCam) {
-  var wide = isWide();
-
   var container = document.getElementById('map');
   if (container) container.innerHTML = '';   /* drop any orphaned canvas before building */
 
@@ -322,36 +355,42 @@ function createMap(data, savedCam) {
     creditContainer: document.createElement('div'),   /* hide the credit bar */
     requestRenderMode: true,           /* render only on change — not every frame */
     maximumRenderTimeChange: Infinity, /* static sun: don't force time-based redraws */
-    /* Resolution vs. memory. The drawing buffer and every render target scale with
-       the square of the pixel ratio, so native DPR (2–3x) on a retina phone was a
-       big part of the memory pressure. We keep useBrowserRecommendedResolution off
-       on mobile (pixelRatio 1) and instead cap it manually at 2x below — sharp,
-       but 4x the framebuffer rather than 9x. Desktop keeps full native DPR. */
-    useBrowserRecommendedResolution: wide,
+    /* Resolution vs. memory. The drawing buffer scales with the square of the
+       pixel ratio. We keep useBrowserRecommendedResolution off on mobile
+       (pixelRatio 1) and set the scale manually, so this ONE number is the dial:
+       window.devicePixelRatio = full native sharpness; Math.min(dpr, 2) or
+       Math.min(dpr, 1.5) trade sharpness for headroom if a device OOMs. */
+    useBrowserRecommendedResolution: PROFILE.useBrowserResolution,
   });
-  if (!wide) {
-    map.resolutionScale = Math.min(window.devicePixelRatio || 1, 2);   /* DPR-2 cap: sharp, bounded */
-    map.scene.globe.maximumScreenSpaceError = 4;   /* coarser tiles on mobile → fewer resident */
-  }
+  if (PROFILE.resolutionScale != null)     map.resolutionScale = PROFILE.resolutionScale;
+  if (PROFILE.maxScreenSpaceError != null) map.scene.globe.maximumScreenSpaceError = PROFILE.maxScreenSpaceError;
   Cesium.Ion.defaultAccessToken = undefined;
 
   var scene = map.scene, globe = scene.globe;
   globe.baseColor          = col('#a9c9e0');   /* ocean blue — the "water" that shows when the raster fades at extreme zoom */
   globe.showGroundAtmosphere = false;   /* haze washes out imagery — off for contrast */
   globe.enableLighting     = false;          /* day/night shading off for now */
-  scene.skyAtmosphere.show = true;           /* keep the planet limb glow (cheap, pretty) */
+  scene.skyAtmosphere.show = PROFILE.skyAtmosphere;
   /* Cesium's skyBox is six 2048x2048 textures (~100 MB of GPU memory). Desktop
      can afford it; on mobile that budget is the difference between running and
      an iOS renderer kill, and starfield.js already paints stars behind the
      globe. Off on mobile. */
-  scene.skyBox.show        = isWide();
+  scene.skyBox.show        = PROFILE.skyBox;
   scene.sun.show           = false;          /* no sun billboard */
   scene.moon.show          = false;
   scene.backgroundColor    = col('#05070f'); /* clean dark space */
   scene.screenSpaceCameraController.enableTilt = false;  /* axis-style spin   */
-  scene.msaaSamples = isWide() ? 4 : 1;   /* 4x MSAA is a big framebuffer; desktop only */
+  scene.msaaSamples = PROFILE.msaa;
   scene.fog.enabled = false;                              /* real cost, little value on a globe */
-  try { scene.postProcessStages.fxaa.enabled = true; } catch (e) {}
+  try { scene.postProcessStages.fxaa.enabled = PROFILE.fxaa; } catch (e) {}
+  /* THE mobile memory fix we'd been missing: order-independent translucency
+     allocates several full-screen FLOAT framebuffers, which iOS handles badly —
+     it's a leading cause of "fine until backgrounded, then the renderer is
+     killed." This app's map is all translucent geometry, so OIT was pure cost.
+     Plain alpha blending (draw-order) is visually fine here. Also cap the imagery
+     tile cache so fewer tile textures stay resident online. */
+  if (!PROFILE.oit) scene.orderIndependentTranslucency = false;
+  if (PROFILE.tileCacheSize != null) scene.globe.tileCacheSize = PROFILE.tileCacheSize;
 
   /* Data sources */
   dsBasemap  = new Cesium.CustomDataSource('basemap');
@@ -376,7 +415,11 @@ function createMap(data, savedCam) {
   scene.preRender.addEventListener(function () {
     if (!map.camera.positionCartographic) return;
     var h = map.camera.positionCartographic.height;
-    var t = isOffline() ? band(h, 3.0e5, 5.0e5) : 1;
+    /* t is the raster's share. With NE2 present (desktop) it ramps with zoom so
+       the raster fades to vectors at depth. With NO raster (mobile vector-only)
+       there is nothing to fade to, so offline = full vectors (t=0) at every zoom;
+       online = vectors hidden anyway (t=1). */
+    var t = !isOffline() ? 1 : (_offlineLayer ? (IS_MOBILE ? 1 : band(h, 3.0e5, 5.0e5)) : 0);
     if (_offlineLayer) _offlineLayer.alpha = t;
     if (_landFill && _landFill.appearance)
       _landFill.appearance.material.uniforms.color =
@@ -389,7 +432,7 @@ function createMap(data, savedCam) {
       heading: savedCam.heading, pitch: savedCam.pitch, roll: savedCam.roll } });
   } else {
     map.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees(0, 30, wide ? 2.2e7 : 3.6e7),
+      destination: Cesium.Cartesian3.fromDegrees(0, 30, IS_MOBILE ? 3.6e7 : 2.2e7),
     });
   }
 
@@ -405,7 +448,6 @@ function createMap(data, savedCam) {
 
   /* Oval visibility by camera height (replaces the deck zoom toggle). */
   map.camera.changed.addEventListener(updateOvalVisibility);
-  map.camera.changed.addEventListener(maybeBuildVectors);   /* mobile: build vectors when zoomed in */
   scene.canvas.style.cursor = 'crosshair';
 
   var closeBtn = document.getElementById('map-popup-close');
@@ -445,7 +487,6 @@ function makeEsriLayer() {
 
 function buildBasemap(data) {
   var scene = map.scene;
-  var _wide = isWide();
 
   /* NE2 is the base (index 0), UNDER Esri. Desktop preloads it so an online→offline
      switch reveals it with zero latency. Mobile loads it only when actually needed —
@@ -454,11 +495,11 @@ function buildBasemap(data) {
      in immediately, which is what the eager mobile load was compensating for. */
   window._scLoadNE2 = function () {
     if (_offlineLayer) return;
-    Cesium.SingleTileImageryProvider.fromUrl(DATA_BASE + '/basemap/ne2.jpg')
+    Cesium.SingleTileImageryProvider.fromUrl(DATA_BASE + '/basemap/' + PROFILE.rasterUrl)
       .then(function (prov) { _offlineLayer = map.imageryLayers.addImageryProvider(prov, 0); pulseRender(); })
       .catch(function (e) { console.error('Offline NE2 image failed:', e); });
   };
-  if (_wide) window._scLoadNE2();
+  if (PROFILE.raster) window._scLoadNE2();
 
   /* Esri is NOT created here. applyOnlineState() (below) creates it via
      setEsriVisible only when online — so an offline load never briefly allocates
@@ -472,8 +513,12 @@ function buildBasemap(data) {
 
   /* Green land fill (draped on the globe → no z-fighting). Starts fully
      transparent; the preRender crossfade brings it in as the raster fades. */
-  _landFill = buildFill(data.land,  '#bcdca6', 0);   /* green land   */
-  if (_landFill) scene.primitives.add(_landFill);
+  if (PROFILE.landFill) {
+    _landFill = buildFill(data.land, '#bcdca6', 0);   /* desktop: filled green land */
+    if (_landFill) scene.primitives.add(_landFill);
+  }
+  /* mobile: the flat land raster IS the land surface — no coastline primitive
+     (a vector coastline here was coarse and mismatched the raster edge). */
 
   /* Crisp vector lines over the raster — these stay sharp at any zoom (lines are
      sphere-safe on Cesium; only filled polygons caused the earlier artifacts).
@@ -514,6 +559,7 @@ function buildBasemap(data) {
      (that duplicated the country-border coast → two offset lines). */
   addLines(data.lakes,     COL.RIVER,  0.8, 1);     /* lake shores */
   addLines(data.rivers,    COL.RIVER,  0.7, 1);     /* rivers      */
+  addLines(data.states,    COL.BORDER, 0.35, 1);    /* state/province lines — fainter than national */
   addLines(data.countries, COL.BORDER, 0.6, 1);     /* borders     */
 
   /* Cities: dots + English labels, thinned by rank, depth-tested (no see-through). */
@@ -523,10 +569,11 @@ function buildBasemap(data) {
     var cityCol = col(COL.CITY), white = Cesium.Color.WHITE;
     var DOT_FAR   = { 1: 8.0e7, 2: 1.5e7, 3: 7.0e6 };
     var LABEL_FAR = { 1: 1.0e7, 2: 4.0e6, 3: 1.2e6 };   /* rank 3 names only when zoomed in close */
+    var CITY_MAX_RANK = PROFILE.cityMaxRank;
     data.cities.features.forEach(function (f) {
       if (!f.geometry || f.geometry.type !== 'Point') return;
       var rank = (f.properties && f.properties.rank) || 4;
-      if (rank >= 4) return;
+      if (rank >= CITY_MAX_RANK) return;
       var pos = Cesium.Cartesian3.fromDegrees(f.geometry.coordinates[0], f.geometry.coordinates[1]);
       pts.add({
         position: pos, pixelSize: ({1:5, 2:4, 3:3})[rank] || 3,
@@ -541,14 +588,14 @@ function buildBasemap(data) {
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
           pixelOffset: new Cesium.Cartesian2(8, 0),
           distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, LABEL_FAR[rank]),
-        });   /* depth-tested by default → globe occludes far-side labels */
+        });   /* clamped → composited on the surface, so the land fill can't swallow it */
       }
     });
     _cityPoints = pts; _cityLabels = labels;
   }
   render();
   };   /* end _scBuildVectors */
-  if (_wide) window._scBuildVectors();   /* desktop: eager. mobile: built on demand when offline */
+  if (PROFILE.eagerVectors) window._scBuildVectors();   /* desktop: eager. mobile: built on the offline switch */
 
   /* Apply the correct state NOW, at init — so an offline reload hides Esri and
      (on mobile) builds vectors immediately, not only when a later event fires.
@@ -611,7 +658,18 @@ function buildFill(fc, hex, h) {
   return new Cesium.Primitive({
     geometryInstances: instances,
     appearance: new Cesium.MaterialAppearance({ flat: true, translucent: true,
-      material: Cesium.Material.fromType('Color', { color: Cesium.Color.fromCssColorString(hex).withAlpha(0) }) }),
+      material: Cesium.Material.fromType('Color', { color: Cesium.Color.fromCssColorString(hex).withAlpha(0) }),
+      /* Tint only: still depth-TESTED (globe hides it at the limb) but does NOT
+         write depth, so it never occludes the labels, paths, or markers that sit
+         at the same surface height. That coplanar depth-write was "the land
+         swallowing the city names" and thinning the paths over land. */
+      renderState: {
+        cull:      { enabled: false },
+        depthTest: { enabled: true },
+        depthMask: false,
+        blending:  Cesium.BlendingState.ALPHA_BLEND,
+      },
+    }),
     asynchronous: true,
   });
 }
@@ -737,22 +795,46 @@ function sunArrowImage() {
   _sunArrowImg = c; return c;
 }
 
+/* Great-circle destination from a point given azimuth (deg CW from N) + distance (m). Returns [lon,lat]. */
+function destPoint(lat, lon, azDeg, distM) {
+  var R = 6371000, d = distM / R, th = Cesium.Math.toRadians(azDeg);
+  var la1 = Cesium.Math.toRadians(lat), lo1 = Cesium.Math.toRadians(lon);
+  var la2 = Math.asin(Math.sin(la1)*Math.cos(d) + Math.cos(la1)*Math.sin(d)*Math.cos(th));
+  var lo2 = lo1 + Math.atan2(Math.sin(th)*Math.sin(d)*Math.cos(la1), Math.cos(d) - Math.sin(la1)*Math.sin(la2));
+  return [Cesium.Math.toDegrees(lo2), Cesium.Math.toDegrees(la2)];
+}
+
 function addObserverMarker(lat, lon, sunAz) {
   if (!dsObserver) return;
+  /* Markers are depth-tested at the surface (disableDepthTestDistance:0), so the
+     globe occludes them at the far limb without z-fighting — same behaviour as the
+     city dots. Clamp-to-ground was tried instead but crashed iOS on the offline
+     transition (f.globe), so it's out. */
   var pos = Cesium.Cartesian3.fromDegrees(lon, lat);
   if (sunAz != null) {
-    dsObserver.entities.add({ position: pos, billboard: {
-      image: sunArrowImage(),
-      rotation: Cesium.Math.toRadians(-sunAz),   /* canvas arrow points N; rotate to azimuth (CW) */
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      /* Full size up close; shrink as the camera pulls back so it doesn't dwarf
-         the globe or shoot off-planet when zoomed out. */
-      scaleByDistance: new Cesium.NearFarScalar(2.0e6, 1.0, 2.4e7, 0.35),
-    }});
+    /* Sun arrow drawn as flat geometry lying ON the globe (shaft + two barbs),
+       not a screen-space billboard — so it drapes on the surface, is occluded
+       by the limb, and can never poke off into space. Length scales with the
+       current camera height so it reads at whatever zoom you placed it. */
+    var h  = (map.camera.positionCartographic && map.camera.positionCartographic.height) || 1e7;
+    var d  = Math.max(1.2e5, Math.min(1.5e6, h * 0.06));
+    var tip   = destPoint(lat, lon, sunAz, d);
+    var barbL = destPoint(tip[1], tip[0], sunAz + 150, d * 0.30);
+    var barbR = destPoint(tip[1], tip[0], sunAz - 150, d * 0.30);
+    var aCol  = col('#f5a623');   /* sun orange */
+    dsObserver.entities.add({ polyline: {
+      positions: Cesium.Cartesian3.fromDegreesArray([lon, lat, tip[0], tip[1]]),
+      width: 3, material: aCol, arcType: Cesium.ArcType.GEODESIC, clampToGround: false } });
+    dsObserver.entities.add({ polyline: {
+      positions: Cesium.Cartesian3.fromDegreesArray([barbL[0], barbL[1], tip[0], tip[1], barbR[0], barbR[1]]),
+      width: 3, material: aCol, arcType: Cesium.ArcType.GEODESIC, clampToGround: false } });
+    dsObserver.entities.add({ position: pos, point: {
+      pixelSize: 7, color: col('#cc2200'), outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+      disableDepthTestDistance: 0 } });
   } else {
     dsObserver.entities.add({ position: pos, point: {
       pixelSize: 10, color: col('#cc2200'), outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      disableDepthTestDistance: 0,
     }});
   }
   render();
@@ -764,7 +846,7 @@ function addGEMarker(lat, lon) {
     position: Cesium.Cartesian3.fromDegrees(lon, lat),
     point: { pixelSize: 8, color: col('#cc2200'),
              outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
-             disableDepthTestDistance: Number.POSITIVE_INFINITY },
+             disableDepthTestDistance: 0 },
   });
   render();
 }
@@ -874,7 +956,7 @@ function polyline(segs, color, width, idPrefix) {
     dsPaths.entities.add({ polyline: {
       positions: Cesium.Cartesian3.fromDegreesArray(flatten(seg)),
       width: wProp, material: color, arcType: Cesium.ArcType.GEODESIC, clampToGround: false,
-    }});
+    }});   /* plain ellipsoid polyline — clamp-to-ground gapped and crashed iOS */
   });
 }
 
