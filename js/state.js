@@ -12,15 +12,18 @@ function loadChunk(key) {
   if (chunkCache[key])   return Promise.resolve(chunkCache[key]);
   if (chunkLoading[key]) return chunkLoading[key];
   var url = DATA_BASE + '/besselian/' + key + '.json?v=' + BUILD;
+  if (window.scLoading) window.scLoading(1);
   var p = fetch(url).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status + ' \u2014 ' + key + '.json');
     return r.json();
   }).then(function (data) {
     chunkCache[key] = data;
     delete chunkLoading[key];
+    if (window.scLoading) window.scLoading(-1);
     return data;
   }).catch(function (err) {
     delete chunkLoading[key];   /* clear on failure so a later call can retry */
+    if (window.scLoading) window.scLoading(-1);
     throw err;                  /* callers already handle rejection */
   });
   chunkLoading[key] = p;

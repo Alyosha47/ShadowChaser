@@ -23,58 +23,95 @@ and the full-catalog pre-ship audit.
 ---
 
 ## PRIORITY ORDER (suggested re-entry)
-1. **Map cosmetic wins** — the lined-up easy polish now that the map is stable (see MAP COSMETICS).
-2. **Search temporal tokens** — needs a design decision before any code (see below).
-3. **Full-catalog audit — the pre-ship GATE** (see PRE-SHIP GATE). The real blocker to
-   shipping; the 2028/2041 regression proved spot-checks insufficient.
-4. **Remaining small UI items** (date label visibility, clear-location control — see below).
-5. **Mobile UX / layout pass** (interdependent — one sitting).
-6. Open bugs → UX deliberations → Features.
+*(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. The cosmetics
+backlog that used to sit at #1 is closed — see "Shipped this session".)*
+1. **#F4 Topographic shadow overlay** — THE next big feature, and the reason for the Cesium
+   migration. Needs real scoping first: terrain provider, and the large open question of
+   **offline terrain data**. Deserves its own thread.
+2. **Label-free basemaps + our own labels** — one change that fixes the truncated tile labels
+   ("MAD"/"LON"), the patchy per-tile detail, AND placename language. See OPEN — UI / COPY.
+3. **Full-catalog audit — the pre-ship GATE** (see PRE-SHIP GATE). The real blocker to shipping;
+   the 2028/2041 regression proved spot-checks insufficient.
+4. **On-map control strip** (basemap / clouds / shadows) — decide the model before building; it
+   likely makes the desktop Map panel redundant.
+5. **Search temporal tokens** — needs a design decision before any code.
+6. **Mobile UX / layout pass** (interdependent — one sitting).
+7. Open bugs → UX deliberations → Features.
 
 ---
 
-## MAP COSMETICS (Cesium — stable now; these are the easy lined-up wins)
-- **Sun-arrow restyle.** Currently orange with a crude, child-drawing arrowhead. Wanted:
-  all **red**, and a **more elegant arrowhead** (cleaner barb geometry / filled head rather
-  than two straight strokes).
-- **Sun-arrow dynamic sizing with min/max screen bounds.** It must always be visible AND
-  always show a stem — there was a past failure mode where, zoomed out on mobile, only the
-  arrowhead showed. Re-establish a screen-size floor and ceiling. Current length is set once
-  at placement from camera height (`d = clamp(h*0.06, 1.2e5, 1.5e6)`); make it **rescale live
-  as the camera zooms** (camera-change listener → redraw) so it holds its on-screen size,
-  with hard min/max pixel bounds and a guaranteed-visible stem.
-- **Greatest-eclipse marker → diamond** (currently a red dot). Orange or red diamond.
-- **Observer marker → dropped push-pin** (canvas pin, replaces the red dot). NB prior emoji +
-  SVG teardrop attempts failed on anchor/scale/float; needs a proper billboard pin with a
-  correct bottom anchor. (Earlier MapLibre-era note about symbol layers no longer applies —
-  this is a Cesium billboard now.)
-- **Details icon → hamburger.**
-- **Mobile default zoom** — planet starts too small on mobile; raise the initial zoom
-  (currently `IS_MOBILE ? 3.6e7 : 2.2e7` m altitude in `createMap`).
-- **Mobile zoom sensitivity** — pinch/scroll zoom feels too slow on mobile; make it more
-  sensitive.
-- **City dots smaller.**
+## MAP COSMETICS — mostly DONE (2026-07-12/13). What remains:
 - **Limb not perfectly round** — the globe silhouette shows slight facets at grazing angle
-  (ellipsoid tessellation). Only improvable by finer globe geometry (lower
-  `maximumScreenSpaceError` / more tiles) at a memory cost. Low priority; decide if worth it.
-- **Raster basemap sharpness ceiling.** Mobile offline base is NE2 (4096×2048, one stretched
-  image → soft when zoomed, narrowest straits closed). Leeway: 8192×4096 is one more real step
-  (~128 MB GPU texture — modern iPhones OK, older ones risky); true crisp-at-all-zooms needs a
-  **tile pyramid** or **vector fill** (vector fill is crisp + near-zero memory but reintroduces
-  the label-occlusion problem — the reason we're on a raster). Revisit only if the softness
-  bothers in the field.
-- **Biome-blob basemap (optional style).** Proven feasible: posterizing NE2 to a handful of
-  flat colors gives forest/desert/tundra blobs at the same texture cost, matching the
-  "superlight" aesthetic. A style choice, parked in favor of plain NE2 for now.
-- **Silence** the console warning *"Entity geometry outlines are unsupported on terrain"*
-  (harmless; set fill `height: 0` or ignore).
-- **Pole coverage / polar caps.** NE2 pole fill (full ±90° rectangle) and, online only,
-  ocean-blue north / white south caps to fill Esri's Mercator pole holes. Cesium fills the
-  ellipsoid natively, so verify whether this is still needed before doing work.
+  (ellipsoid tessellation). Only improvable with finer globe geometry (lower
+  `maximumScreenSpaceError`) at a memory cost. Low priority; decide if worth it.
+- **Raster sharpness ceiling.** NE2 is 4096x2048 (9.8 km/px) via SingleTileImageryProvider, so it
+  is soft below ~300 km views. 8192x4096 would be ~134 MB of GPU texture — a 4x jump on the very
+  platform we fought an OOM on, so DO NOT just swap the image. The right answer is a **tile
+  pyramid** (only visible tiles resident). Revisit only if the softness actually bothers you in
+  the field.
+- **Biome-blob basemap (optional style).** Posterizing NE2 to a few flat colours gives
+  forest/desert/tundra blobs at the same texture cost. A style choice, parked.
+- **Thunderforest Landscape basemap** — needs an **API key**, which for a static PWA must sit in
+  client-side code where anyone can read it. Same for Stadia/Stamen and Mapbox. Decide whether
+  that's acceptable. Free/no-key providers already ship in the Settings picker (Esri x5,
+  OpenTopoMap, OSM). Menu: https://leaflet-extras.github.io/leaflet-providers/preview/
+- **Preload the three About-link eclipses.** Their chunks load on demand, so the 10th-century
+  Ouagadougou link makes you wait. Preloading whole centuries is overkill; the right fix is to
+  generate three small per-eclipse extract files at build time and special-case their load.
+  A build-step change, not a code tweak — do it deliberately.
+- **A second "travel this way" arrow?** The sun arrow points at the SUN's azimuth at maximum
+  (from the pinned location). A field user might also want the direction to the CENTRELINE —
+  i.e. the shortest hop to gain totality. Different quantity, roughly perpendicular; would need
+  to be visually distinct so the two are never confused. Deliberate before building.
+
+### Shipped this session (do not re-open)
+Sun arrow (red, filled dart, per-frame constant screen size, base locked to the pin) · push-pin
+observer marker with contact dot · orange GE diamond with distance scaling · flat city dots (no
+outline rings) · dark warm-charcoal borders that fade with zoom-out · 50m borders on BOTH
+platforms (Andorra has borders again) · umbra ovals fade instead of blinking · city labels drawn
+whole + per-city EllipsoidalOccluder horizon test (no more half-eaten "TY", no hemisphere blink) ·
+hamburger Details icon (SVG, gold) · tab order Search/Map/Details/Settings on both layouts ·
+settings sub-tab order + scroll-to-top + app-standard text size · online basemap picker (7
+providers, live swap) · polar hole filler (sub-tile imagery layer, colour SAMPLED from each
+provider's own z=0 tile) · load crawlbar · Details-tab throb on new location · date label to the
+corner · About-text deep links (select + recentre) · placename kept beside coords · clear-location
+actually clears · landscape space reclaim · mobile install note · banner slimmed.
 
 ---
 
 ## OPEN — UI / COPY
+
+- **Truncated basemap labels ("MAD" for Madrid, "LON" for London) + patchy detail (western US
+  loses its states).** DIAGNOSED, not fixed. These labels are **baked into the raster tiles**. On a
+  globe, Cesium requests a different LOD per tile depending on distance from the camera, so a word
+  spanning a tile boundary can straddle two DIFFERENT zoom levels and get cut; and areas further
+  round the curve are served coarser tiles, losing their detail. **Inherent to any raster basemap
+  with pre-rendered labels on a 3D globe — no tuning fixes it.**
+  **The proper fix:** switch to **label-free base tiles** (Esri publishes Light Gray *Base* and
+  Imagery without labels — that's what its separate "Reference" overlays are for) and render the
+  labels OURSELVES. Our vector city labels are already LOD-independent and correctly
+  horizon-culled; they're merely hidden while online. This would also make labels consistent
+  across every basemap and give us control over language (see below). Worth doing properly.
+
+- **OpenStreetMap shows local-language placenames** (Москва, 北京). There is **no free English-only
+  OSM raster** — the standard tiles are baked with local names, and that's a property of the tile
+  images, not something a client can override. Options: (a) accept it; (b) use Esri's tiles, which
+  are largely English; (c) the real answer — go label-free + draw our own labels (above), where we
+  control the language entirely. Keyed vector providers (MapTiler etc.) can do English-only, but
+  need an API key.
+
+- **Where do map options belong?** Currently in Settings; the desktop **Map panel does nothing**.
+  Guy's thought: put a discreet **street / topo / satellite toggle on the map itself** (a real win
+  on mobile), and later small toggles for **clouds** and **shadows** — which would make the Map
+  panel redundant on desktop. Decide the model before building: an on-map control strip is the
+  natural home for layer toggles, and it scales to the coming overlays.
+
+- **Should HYBRID eclipses match a search for "total"?** They ARE total along part of their path
+  (569 of 11,898). Arguments: a chaser searching "total" near a location would want a hybrid that
+  is total *there*; against: it muddies a precise term, and hybrids are already their own type.
+  Middle path: include hybrids in "total" results but label them clearly as hybrid, OR make
+  totality-at-the-chosen-location the criterion when a location is set. **Needs a decision, not a
+  guess — it changes what the app claims.**
 
 - **Search temporal tokens — open-ended *backward* ranges are useless (the "1999-" / "now-"
   problem). NEEDS A DESIGN DECISION — do not code yet.** Today a trailing-dash range like
@@ -93,21 +130,6 @@ and the full-catalog pre-ship audit.
   Decide the model first, then align the example text. The underlying asymmetry Guy noticed
   (`today+` exists; `now-` semantics are murky) gets resolved by whichever model wins.
 
-- **Date label hard to see on map (esp. mobile)** — placement/contrast; previously
-  intersected the (now-removed) brightness slider. Reposition.
-
-- **Instructions note: online/offline.** *(Partly outdated: the live switch now works
-  seamlessly without reload on both desktop and mobile. Reword any "reload to switch" copy to
-  match, or drop it.)*
-
-- **index.html copy / attribution pass** — byline "by followtheshadow" removed; "metadelta"
-  wording; add CesiumJS (Apache-2.0) + Esri + Natural Earth + NASA Blue Marble attribution in
-  the sources pane; confirm the build-stamp label is wired to `BUILD` (it is).
-
-- **Umbra ovals: blink-off vs fade (revisit after living with it).** They blink off at a zoom
-  threshold rather than fading. Switching to a gradual alpha fade is the same machinery, just
-  more steps through a fade band. Live with the blink; switch only if the cutoff feels abrupt.
-
 ---
 
 ## VERIFY (logic — handle with care; not pure copy)
@@ -123,16 +145,51 @@ and the full-catalog pre-ship audit.
 - (a) Banner + tabs permanent, immobile, unscalable on mobile/PWA (pairs with #R5 pinch-zoom
   — don't scroll away or zoom); (b) move tabs to screen BOTTOM on mobile/PWA for thumb reach;
   (c) single-line date/duration bar pinned at the bottom on mobile (overlaps "date label hard
-  to see" + the map-click microsheet); (d) map-tab mobile-vs-desktop disambiguation —
-  desktop: map is ever-present, the tab is a placeholder for future features; mobile: the tab
-  IS the map → different look/behaviour.
-- **Banner wastes too much vertical space on mobile** — tighten it for mobile (distinguish web
-  vs app/PWA mode). Reclaim the space for the map.
-- Make map date more visible on mobile; move eclipse date to an overlay in desktop mode (and
-  hide the redundant desktop map-status/date overlays now that the sidebar shows them).
+  to see" + the map-click microsheet); (d) map-tab mobile-vs-desktop disambiguation — SEE the
+  "Where do map options belong?" item under OPEN — UI / COPY: the likely answer is an on-map
+  control strip (basemap / clouds / shadows), which would make the desktop Map panel redundant.
 - **Mobile map-click microsheet** — with no sidebar on mobile, a map click gives no inline
   "this is what changed." Add a small dismissable bottom-of-map sheet showing at least umbral
   duration for the clicked point.
+
+---
+
+## 🧭 STANDING RULE — USE CESIUM'S API BEFORE HAND-ROLLING
+Most of the churn in this project came from treating Cesium as a dumb renderer to outsmart,
+rather than an engine with a considered API. Two costly examples:
+- The land fill was floated as a **primitive over** the globe, whose occlusion of labels then led
+  to clamp-to-ground and the iOS crash. The answer was to make it **imagery** — i.e. part of the
+  globe surface. Days lost.
+- Eclipse paths were **lifted** off the ground to win a depth fight against border lines, which
+  parallaxed them across the surface. `depthFailMaterial` does exactly this, at zero geometric cost.
+
+**Rule: before writing per-frame code or geometry tricks to fake a visual effect, name the Cesium
+API that should do it. If you can't name one, say so out loud rather than hacking silently.**
+
+**Corollary — beware "safety rails".** Several bugs this session were constants added as harmless
+guards that quietly became the DOMINANT term: a 2 km arrow floor (at street zoom the whole view is
+2 km, so the arrow filled the screen); a 16 px screen floor applied AFTER a 300 km ground cap (at
+globe zoom the floor was larger than the cap, so `Math.max` threw the cap away and the arrow
+spanned Africa). If two limits can fight, write down which one must win — and check the arithmetic
+at BOTH extremes, not just the one you were looking at.
+The tell is any code running every frame to simulate something the engine likely does natively.
+
+### Audit: hand-rolled effects vs the native API
+DONE — and the rule paid for itself immediately:
+- ~~NE2↔vector crossfade~~ — **deleted outright**. The hand-rolled `band()` alpha ramp existed to
+  hand over to a vector land fill that was itself the mobile OOM. Removing both was the fix.
+- ~~Marker/label occlusion at the limb~~ — now `EllipsoidalOccluder`, the native horizon test.
+  Fixed the half-eaten labels ("Mexico City" → "TY") and the hemisphere blink in one move.
+- ~~Sun-arrow sizing~~ — now `camera.getPixelSize()`, the engine's own metres-per-pixel. My
+  hand-rolled frustum trig was simply wrong and produced arrows many times the requested size.
+
+STILL HAND-ROLLED (audit when convenient):
+- **Border fade with zoom** — we poke `material.uniforms.color.alpha` every frame. Primitives
+  support distance-based appearance natively.
+- **Arrow geometry rebuild** — the arrow is still surface geometry recomputed per frame via
+  `CallbackProperty`. A `Billboard` with `scaleByDistance` would be GPU-side and free — IF the
+  limb/occlusion problem is solved properly rather than by hand. The sizing is now correct, so
+  this is an optimisation, not a bug fix.
 
 ---
 
@@ -149,6 +206,16 @@ and the full-catalog pre-ship audit.
   geometry). NOTE the distinction: plain height-0 geometry we DO use — `clampToGround: false`
   polylines (arrow, paths) and depth-tested billboards/points (markers, dots) — is fine; only
   the classification clamp is banned.
+- **Do NOT lift the eclipse paths off the ground.** They are drawn at EXACTLY height 0. Any lift
+  parallaxes them across the surface by `height × tan(view angle)`: a 2.5 km lift (tried) displaces
+  the path by **4.3 km** at 60°; even a 50 m lift is 29 m at 30° — meaningless noise on a centreline
+  computed to ~15 m. **This corrupts the measurement the app exists to make.** If something occludes
+  a path, use `depthFailMaterial` (already in place), which costs zero geometric offset.
+- **Do NOT re-add a screen-size FLOOR to the sun arrow.** A `Math.max(L, MIN_PX × mpp)` applied
+  after the ground CAP is LARGER than the cap at globe zoom, so it throws the cap away and the
+  arrow spans a continent. The CAP must be the last word. (Likewise a 2 km absolute floor became
+  the dominant term at street zoom, where the whole view is ~2 km, and the arrow filled the
+  screen.) **Beware any constant added as a "safety rail": check the arithmetic at BOTH extremes.**
 - **Don't bother disabling order-independent translucency on mobile.** We tried it chasing the
   backgrounding crash; it did NOT help (the framebuffer cuts — skybox/atmosphere/FXAA/MSAA off
   — did). No evidence it broke anything either — it's simply pointless. Left at default.
@@ -196,17 +263,28 @@ generalizes that into a saved, catalog-wide report.
   the Map tab. Needs map-context feedback.
 - **Safari geolocation fails; installed PWA works.** Check secure-context / permissions / Brave
   default block vs the code path. Related to the locate-pin note.
-- **Slow first load from local-disk server** — minutes vs seconds. Profile the chunk-fetch
+- **Slow first load from local-disk server** — minutes vs seconds. *(Partly explained: every asset
+  downloads TWICE on a build change — see PERFORMANCE / DATA. That is pre-existing and mostly
+  served from disk cache in production (~11 s load, DOMContentLoaded ~950 ms), so profile the
+  LOCAL-server case specifically before assuming it's the same cause.)* Profile the chunk-fetch
   pattern.
 - **Scan ignores non-location filters** — always scans all 5 centuries regardless of other
+  *(This is the REAL scan win. Measured alternative — splitting partials into separate files —
+  saves only ~1% of payload and was rejected. Filtering by date/type BEFORE loading chunks would
+  cut far more, cost nothing in user confusion, and needs no data restructuring. First scan after a
+  map click walks ~30 chunks; subsequent scans are in-memory and free.)*
+  Original note:
   active filters. Pre-existing; harmless offline (SW precaches all besselian centuries) but
   inefficient.
 
 ---
 
 ## OPEN UX QUESTIONS (deliberation; decide before coding)
-- Reserved for future deliberations — the home for "decide before coding" questions so they
-  don't get lost in the feature pool.
+- **Probe backoff (agreed, not yet built).** The connectivity probe fires every 5 s forever — a
+  radio wake-up on mobile (battery, more than bytes). Negatives are already DEBOUNCED (2 consecutive
+  failures) so a single timeout can't flip the app. The agreed improvement: poll at 5 s for ~30 s
+  after any state change, then relax to 20–30 s while the state is stable. Fast detection when it
+  matters, near-zero cost otherwise. Contained: one timer, no change to the detection logic.
 
 ---
 
@@ -216,6 +294,8 @@ generalizes that into a saved, catalog-wide report.
 - KMZ download.
 
 ## FEATURES — MEDIUM
+- **Compass built into the sky tracker.** Guy has ideas for how it should function and look —
+  discuss the design before coding.
 - Server-side share page (`followtheshadow.com/share?e=XXXXX`) — static HTML reading the
   existing JSON, rendering a formatted summary + map image. The only way past the plain-text
   ceiling of `navigator.share`/`mailto`. Also the home for "prettier share" visual polish.
@@ -250,6 +330,27 @@ generalizes that into a saved, catalog-wide report.
 ---
 
 ## PERFORMANCE / DATA
+- **Splitting partial eclipses into separate on-request files: MEASURED, NOT WORTH IT.**
+  Partials are 4,200 of 11,898 (35.3%) — but only ~3.5 MB of the 10.1 MB besselian cache, and they
+  have NO central path, so they add ~nothing to the 274 MB of path data that dominates storage.
+  Net saving ≈ 1% of total payload, in exchange for a new loading mode, a UI affordance, and
+  "why can't I find my eclipse?" confusion (partials are exactly what a birthday/location search
+  expects to return). The real scan win is the item below — filter BEFORE loading chunks.
+- **Every asset downloads TWICE on a build change (real, measured, PRE-EXISTING).** The page
+  requests `js/map.js?v=BUILD`; `sw.js`'s precache lists say `js/map.js`. Different URLs → two
+  network fetches, for scripts, basemap layers, and every besselian/path chunk. Confirmed in the
+  network panel (~317 requests, 22 MB). It has ALWAYS been there — it was present throughout the
+  successful offline milestone — so it is wasteful, not breaking.
+  **Two failed attempts (do not repeat):** (a) deferring the DATA precache to a post-load "warm"
+  pass — fixed nothing for the shell/scripts; (b) a single-flight `fetchOnce()` in the SW keyed on
+  the tag-free URL — CANNOT work, because on a build change the page is controlled by the OLD
+  service worker while the NEW one installs and precaches in a separate scope: the two never share
+  an in-flight map.
+  **The actual fix (for a dedicated session):** stop precaching anything the PAGE fetches for
+  itself. The fetch handler already caches on demand, so the shell scripts/CSS don't need to be in
+  the install list at all; precache only what the page never requests (Cesium Workers/Assets,
+  out-of-range besselian/paths). Then measure the network panel again. Do this calmly, on a
+  branch, with an offline test after — `sw.js` is the most fragile file in the project.
 - **Path JSON size — curve thinning (RDP).** Full-loop traces + pole tips added points. Reduce
   size WITHOUT losing accuracy via Douglas–Peucker decimation per curve at ~200–500 m (far
   below visible-at-max-zoom). Apply to centreline + umbra limits; penumbra + terminators are
@@ -295,9 +396,10 @@ generalizes that into a saved, catalog-wide report.
     Also `sunArrowImage()` is now unused (billboard arrow replaced by surface geometry) —
     remove in the next map.js cleanup pass.
   - `AppState.on()` exists but has no subscribers — wire only when a feature demands it.
-  - **Connectivity state** — `isOffline()` is an active probe (3 s timeout, cache-busted) plus
-    `_forceOffline`/`navigator.onLine`. Fine for one probe. A *second* connectivity-dependent
-    feature (e.g. cloud-cover #F2) is the trigger to promote it to a small connectivity module
+  - **Connectivity state** — now a real subsystem: active probe (3 s timeout, cache-busted, 5 s
+    interval), debounced negatives, `_forceOffline`, and `applyOnlineState()` driving imagery,
+    vectors and the pole filler. It has outgrown being scattered in `map.js`. A *second*
+    connectivity-dependent feature (cloud-cover #F2) is the trigger to promote it to a module
     with periodic re-probe + subscribers.
   - **Comment cleanup pass on map.js** — several build-to-build war-story comments could be
     condensed now that the approach is settled.

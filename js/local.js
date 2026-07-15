@@ -127,8 +127,11 @@ function clearLocationFilter() {
   /* Strip coords from the search field so the filter matches that state */
   var search = document.getElementById('search');
   var f = parseSearch(search.value);
-  if (f.coords) {
-    search.value = filterToString(Object.assign({}, f, { coords: null }));
+  if (f.coords || f.city) {
+    /* Strip the CITY too. Clearing only `coords` left the placename in the search
+       string, which simply re-parsed straight back into coordinates — so the location
+       never actually cleared. */
+    search.value = filterToString(Object.assign({}, f, { coords: null, city: null }));
     currentFilter = parseSearch(search.value);
   }
   document.getElementById('pill-loc').style.display = 'none';

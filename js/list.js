@@ -93,9 +93,10 @@ function selectEclipse(y, m, d) {
   updateHeaderSelection();
   renderList();
   computeLocal();
-  /* Mobile: switch to Details panel. Desktop: stay where the user is —
-     selecting from the list while on Search is part of the exploration flow. */
-  if (!window.matchMedia('(min-width: 900px)').matches) switchTab('eclipse');
+  /* Mobile: jump to the MAP, which recentres on the chosen location (or the eclipse's
+     greatest-eclipse point) — seeing the path land on the globe is the point of picking.
+     Desktop: stay where the user is; the map is always visible beside the list anyway. */
+  if (!window.matchMedia('(min-width: 900px)').matches) switchTab('map');
 }
 
 /* Pick the next upcoming total or annular eclipse from today's date.

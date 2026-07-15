@@ -1,134 +1,102 @@
-# ShadowChaser — Session Handoff — 2026-06-26 (standalone, authoritative)
+# ShadowChaser — Session Handoff — 2026-07-13 (standalone, authoritative)
 
 > ## ▶ START HERE (next session) — this block is self-sufficient; you need nothing else to begin
 >
 > ### What this project is
-> ShadowChaser (followtheshadow.com) — an **offline-capable eclipse-path web app**. A Python
+> ShadowChaser (followtheshadow.com/app) — an **offline-capable eclipse-path PWA**. A Python
 > generator computes shadow-path JSON from Besselian elements for ~11,898 eclipses; a vanilla-JS
-> frontend renders them on a MapLibre globe with a deck.gl overlay. Standard, non-negotiable:
-> **ships only when every case is correct vs Xavier Jubier's KMZ ground truth.**
+> frontend renders them on a **CesiumJS globe**. Standard, non-negotiable: **ships only when every
+> case is correct vs Xavier Jubier's KMZ ground truth.**
 >
-> ### Where things are (don't ask the user — it's here)
-> - **Repo:** github.com/Alyosha47/ShadowChaser (branch `main`).
-> - **The user (Guy) runs locally from his repo root** — the directory containing `index.html`,
->   `sw.js`, `js/`, `data/`, and `data build tools/`. In pasteable commands use `cd <repo root>`
->   (Guy fills it; he runs from that dir).
+> **The v2 Cesium migration is DONE.** Anything below (or in older sections) describing MapLibre +
+> deck.gl as the renderer is HISTORICAL — `js/map_maplibre.js` is a vestigial file, not in use.
+> Cesium was chosen because it renders on the true WGS84 ellipsoid (retiring a whole class of
+> seam/pole bugs) and because it natively supports the **terrain/shadow work that is the next big
+> feature**.
+>
+> ### Where things are (don't ask Guy — it's here)
+> - **Repo:** github.com/Alyosha47/ShadowChaser — **working branch `cesium`** (NOT `main`).
+> - **Cesium is vendored** at `vendor/cesium-1.121/` and is **gitignored** (not in your clone).
 > - **You (assistant) get a FRESH throwaway clone each session.** It does NOT reflect Guy's local
->   git state, BUILD, or uncommitted work. **Never trust your clone for `git log`/BUILD/commit
->   state** — ask or infer from what Guy pastes.
+>   state or BUILD. Never trust your clone for `git log`/BUILD/commit state.
 >
-> ### How to run (exact commands)
-> - **Serve the site:** from repo root → `python3 -m http.server 8000` → open http://localhost:8000
-> - **Rebuild one eclipse's path (fast check):** `python3 "data build tools/gen_eclipse_paths.py" --year 1994`
-> - **Rebuild all paths:** `python3 "data build tools/gen_eclipse_paths.py" --jobs 6`
->   (defaults: `--data-dir ./data/besselian --out-dir ./data/paths`; `--test` runs self-tests)
-> - **Full dataset rebuild (only when changing ΔT/catalog, rare):** from `data build tools/` →
->   `python3 verify_dt.py` → `python3 split_eclipse_data.py espenak_5000.csv ./data` →
->   `python3 update_dt.py` → then bump BUILD.
+> ### HOW TO DELIVER WORK — read this, it is not what older sections say
+> **Do NOT hand Guy git commands. He does not use them and has said so.** He works from files.
+> - Deliver the **changed files themselves**, ready to drop into their folders
+>   (`js/*.js` → `js/`, `css/app.css` → `css/`, `index.html` + `sw.js` → repo root).
+> - **Deploying is a MANUAL file upload** to followtheshadow.com/app (Bluehost/Apache). Git commits
+>   do NOT deploy. Guy has a one-click sync, but must first save each file into its local folder —
+>   **that is the tedious part, so keep the number of changed files down and say plainly which
+>   files changed and where each one goes.**
+> - He **declined** a zip bundle (feared it would overwrite whole folders). Don't push it again.
+> - **After every upload the server files must be `chmod 644`** — new uploads land 600 and 403,
+>   which shows up as a mysteriously blank/broken map. This has bitten twice.
 >
-> ### How to give the user commit code (he asked for this explicitly)
-> Always a **single pasteable blob from repo root**, and **stage explicitly — never `git add -A`
-> without a `git status` review** (stray scratch files lurk). Pattern:
-> ```bash
-> cd <repo root>
-> git add <the specific files changed>      # NOT -A blind
-> git status                                 # eyeball it
-> git commit -m "…"
-> git push
-> ```
-> Path data (`data/paths/*.json.gz`) is **gitignored** and rebuilt on deploy — do not stage it.
+> ### BUILD + the service worker (this cost a whole night — internalize it)
+> `index.html` holds `var BUILD = 'YYYY-MM-DD'+letter` — **the single source of truth** — and
+> `?v=BUILD` is appended to `js/*`, `css/*` and `data/*` fetches. **Bump BUILD on every deploy.**
+> `sw.js` serves cache-first with `ignoreSearch`, so an unbumped BUILD masks your change behind the
+> old cached copy. **First move when "it broke again" with no console error:** Application →
+> Service Workers → Unregister / Clear site data → hard reload. (Guy already does this between
+> builds as a matter of course.)
+> - **Caveat:** the `?v=` on the `<script>` tags is hardcoded per-tag and has DRIFTED before — some
+>   were pinned at an old date and would have served stale copies of edited files. When you bump
+>   BUILD, bump **every** `?v=` in `index.html` with it.
 >
-> ### BUILD + the service-worker cache (this cost a whole night — internalize it)
-> `index.html` holds `var BUILD = 'YYYY-MM-DD'+letter` (the single source of truth) AND a
-> `<meta name="build">`; `?v=BUILD` is appended to every `js/*` and `data/*` fetch. **Bump BUILD
-> on every deploy AND every path rebuild.** The service worker (`sw.js`) serves `js/*`/`data/*`
-> **cache-first with `ignoreSearch`**, so a changed file is masked by the old cached copy until
-> BUILD bumps. **Habit after ANY deploy/regen, and the FIRST move when "it broke again" with no
-> console error:** DevTools → Application → Service Workers → **Unregister** (or **Clear site
-> data**) → hard reload once. A poisoned cache resurfaces on *soft* reload while *hard* reload
-> bypasses it — that asymmetry is the tell.
+> ### Cardinal rules (full list in §CRITICAL USER PREFERENCES — these are load-bearing)
+> - **BE EXTREMELY CONCISE.** Reference docs like this are the exception; chat is not. Do NOT
+>   repeat long sections across replies — it wastes his time and your context.
+> - **ONE step at a time.** Don't pile up instructions or interleave threads of work.
+> - **NEVER break working code.** `node -c` proves syntax, not behaviour.
+> - **NEVER GUESS.** Measure. Read the code. If you can't verify, say so.
+> - **Don't make UI/default decisions unilaterally.** Recommend one option; don't stall with menus.
+> - **Don't solve problems by throwing away solutions.** Never quit; root-cause it.
+> - **Never assume he's tired.** Never do Mac-side debugging of the iPhone (settled; don't re-raise).
 >
-> ### Cardinal rules (full list in §CRITICAL USER PREFERENCES — these are the load-bearing ones)
-> - **BE EXTREMELY CONCISE** in replies. (Reference docs like this one are the exception; chat is not.)
-> - **NEVER break working code.** Verify by **RUNNING the real thing**, not by `node -c`/syntax —
->   a deleted variable passes syntax and dies at runtime (that was the night-killer). Diff pre/post
->   any cleanup so ONLY intended lines moved.
-> - **Root-cause, not patches.** No guards stacked on guards; replace structures whole. If a path
->   needs three special-cases, the structure is wrong.
-> - **NEVER GUESS.** All time is honest diagnosis time — verify against ground truth (Jubier KMZs),
->   admit uncertainty, don't assert in a confident voice.
-> - **Don't make precision/default/UI decisions without consulting Guy.** Recommend ONE solution,
->   don't stall with option-menus — but if he pushes back, re-examine honestly rather than fold or dig in.
-> - **Don't bulk-"tidy" working code.** Dead-code removal is low value and high risk; only do it
->   verified (diff + run), and prefer leaving harmless dead code over risking a regression.
+> ### 🧭 THE STANDING RULE (earned expensively — see TODO)
+> **Before writing per-frame code or geometry tricks to fake a visual effect, NAME the Cesium API
+> that should do it. If you can't name one, say so out loud rather than hacking silently.**
+> Two proofs: the land fill was floated as a *primitive over* the globe (→ clamp-to-ground → the
+> iOS crash) when the answer was **imagery**, i.e. part of the surface; and the eclipse paths were
+> *lifted* to win a depth fight when the answer was **`depthFailMaterial`**, at zero geometric cost.
+> **Corollary — beware "safety rails":** constants added as harmless guards became the DOMINANT
+> term twice (a 2 km arrow floor at street zoom; a screen floor that overrode a ground cap). If two
+> limits can fight, decide which must win and check the arithmetic at BOTH extremes.
 >
-> ### Current state (committed & pushed on `main`, 2026-06-26)
-> **Math + mapping are DONE and banked.** Umbral-limit topology fully handled (loops, grazers,
-> one-limit, dropped-limb, pole-transit, exact green-line termini); the `_terminate_on_green`
-> antimeridian regression (2028/2041) fixed with a spherical (great-circle) metric. Pole-encircling
-> umbra ovals are **skipped** (not drawn) rather than rendered inside-out. Arrow-key list nav added.
-> Jubier ground-truth KMZs committed under `reference kmz/`. **GEN_VERSION 2026-06-24h; BUILD
-> 2026-06-24i** (bump on next deploy).
+> ### Current state (2026-07-13, branch `cesium`, BUILD 2026-07-13g)
+> - **OFFLINE WORKS on iOS** — the multi-week crisis is CLOSED and banked. See §CESIUM ERA below
+>   for the five root causes; do not re-derive them.
+> - **The map is cosmetically finished.** Sun arrow, push-pin marker, borders, city labels, umbra
+>   ovals, polar holes, tabs, basemap picker, load bar — all landed and user-verified.
+> - **The code got SMALLER.** The land fill and the raster→vector crossfade were **deleted**; both
+>   platforms now run identical data and identical vector code. Two axes of platform divergence gone.
+> - **Math + path generation remain DONE and banked** (umbral-limit topology, V-angle, spherical
+>   metric). Untouched by the Cesium work.
 >
 > ### What's next (priority)
-> 1. **UI / copy pass** — the active focus; see TODO **"CURRENT FOCUS"** (build-number fix, About
->    text swap, ΔT vintage/wording, Centerline label, search-token design, mobile pass). Well-suited
->    to **Sonnet**.
-> 2. **Full-catalog audit — the pre-ship GATE.** Build all ~11,898, flag stub/asymmetric/wild-turn
->    umbra limbs, fold the check INTO the regen (per-eclipse flags to a report, zero extra runtime).
->    The 2028/2041 regression proved spot-checks insufficient. **Do this before declaring ship-ready.**
-> 3. **v2 — map paradigm → Cesium** (true-ellipsoid rendering; retires the whole seam/pole bug class,
->    fixes the polar ovals and the online Antarctica wedge). Scoped to the map layer only. See TODO "V2".
->
-> ### Hardest-won lessons of this arc (do not relearn the hard way)
-> - **On a sphere, use a spherical metric** — a planar (lon,lat) nearest-neighbour silently fails at
->   the antimeridian (it gutted 2028/2041; 14 km on the globe read as ~360° on the plane).
-> - **Never ship a terminus/umbral-limit change without a broad multi-eclipse no-gut / worst-turn check.**
-> - **The SW stale-cache trap** (above) masquerades as "you re-broke it" with zero errors. Clear the
->   cache before debugging further.
-> - **`node -c` proves syntax, not behaviour.** Run map.js; a runtime `ReferenceError` is invisible
->   to a syntax check.
+> 1. **Topographic shadow overlay (#F4)** — THE next big feature, and the reason for Cesium.
+>    Needs real scoping: terrain provider, and the big question of **offline terrain data**.
+> 2. **Full-catalog audit — the pre-ship GATE** (~11,898 eclipses). Spot-checks proved insufficient.
+> 3. Smaller: preload the three About-link eclipses; border-fade via native API; HANDOFF/TODO upkeep.
 >
 > ### The two task docs
-> - **TODO.md** — the single task list (current UI items, bugs, features, the audit, v2). Start there.
-> - **THIS file (HANDOFF.md)** — knowledge & current status: how things work, what's closed, the
->   derivations and lessons. Use the Table of Contents below to navigate.
+> - **TODO.md** — the task list (has a "Shipped this session — do not re-open" block; trust it).
+> - **THIS file** — knowledge & status: how things work, what's closed, derivations, lessons.
 
-**Last updated:** 2026-06-24 (Opus 4.8) — see §SESSION 2026-06-24: umbral-limit topology
-closed (loops/grazers/one-limit/dropped-limb/pole-split/exact green termini); the
-`_terminate_on_green` antimeridian regression (2028/2041) fixed with a spherical metric +
-end-correspondence guard; mapping diagnosed (online-only Antarctica wedge, pole-oval outline,
-Cesium chosen for v2); arrow-key nav; run timers; dead-code cleanup byte-identical-verified.
-GEN_VERSION 2026-06-24h, BUILD 2026-06-24i. Prior 2026-06-16 (Opus 4.8) — see §SESSION 2026-06-16: green line now a
-sub-km implicit-contour trace; bisector removed; all path types validated vs Jubier;
-cone–spheroid umbral-limit fix proven (splitter remaining); BUILD cache-buster lesson
-captured. Prior 2026-06-07 (Opus 4.8) — adopted the corrected path generator (`data build
-tools/gen_eclipse_paths.py`: umbra `search_m` now scales with path width, fixing the
-truncated north umbral limit at high gamma; oval bisect stops at the terminator, fixing
-below-horizon oval points); de-bloated the repo (stopped git-tracking `data/paths`, added
-`.gitignore`); characterized the corridor sampling-artifact bug (BACKLOG). Prior 2026-06-02:
-search-list scroll anchoring + geolocation map feedback (commit 9bf843a); navigator.onLine
-basemap pick, SW fallback page, minimal banner (9be31ca, BUILD 2026-06-02i).
-**Earlier:** 2026-06-02 — service worker / PWA built & verified offline on
-iOS (CSP MapLibre build, network-first nav); fixed `isOffline()` to
-honor the connectivity probe; root-caused the iOS black map to production file permissions
-(403 on new folders). Prior 2026-05-31 sessions: offline-globe fixes, V-angle math,
-far-side markers, oval blink-off, vendoring.
-**Repo:** github.com/Alyosha47/ShadowChaser
-**This document is complete and self-contained.** It supersedes all prior `HANDOFF*.md`
-files (the dated ones in repo root — `HANDOFF-2026_05_18b.md`, `HANDOFF-2026_05_19.md` —
-are stale and can be archived/deleted).
-**BUILD cache-buster:** lives in `index.html` as `var BUILD = '...'` AND the
-`<meta name="build">` tag (see START-HERE for the current value) and is appended as
-`?v=BUILD` to every `js/*` and `data/*` fetch. **Bump it
-on every deploy AND every path rebuild** (convention: `YYYY-MM-DD` + letter). If a fix or a
-rebuilt path "doesn't appear," 90% of the time BUILD wasn't bumped or the browser wasn't
-hard-refreshed. NB vendored libs in `vendor/` deliberately carry NO `?v=` — their version is
-in the filename.
+**Last updated:** 2026-07-13 — Cesium era: offline crisis closed; full cosmetics pass; land
+fill + crossfade deleted. BUILD 2026-07-13g. Prior 2026-06-24: umbral-limit topology closed,
+antimeridian regression fixed with a spherical metric, Cesium chosen for v2 (GEN_VERSION
+2026-06-24h). Earlier sessions (path generator, V-angle, PWA/service worker, vendoring) are
+below and remain valid EXCEPT where they describe MapLibre rendering.
+**Repo:** github.com/Alyosha47/ShadowChaser (branch `cesium`)
 
 ---
 
 ## TABLE OF CONTENTS
+
+- **§SESSION 2026-07-10 → 07-13 — THE CESIUM ERA** ← START HERE for anything map-related.
+  Offline closed (5 root causes), verified traps, what was deleted, the duplicate-download
+  situation, and the map's current state. **Supersedes every MapLibre-era rendering section below.**
 - **▶ START HERE** (top) — operating manual: repo, run/commit commands, BUILD+SW cache, cardinal
   rules, current state, what's next, hardest-won lessons.
 - **Session logs** (most recent first): §SESSION 2026-06-24 (umbral-limit topology closed; mapping
@@ -155,6 +123,90 @@ candidate fixes, UX-question deliberations, the feature idea-pool, perf/data not
 the refactor ledger; it accretes and is pruned, never restates status. When this handoff
 says "candidates in TODO.md," the detail is there. When an item is fixed, it is deleted
 from TODO.md (the handoff records the closure) — no "DONE" tombstones in the TODO.
+
+---
+
+## SESSION 2026-07-10 → 07-13 — THE CESIUM ERA (offline closed; map finished)
+
+### 1. THE OFFLINE CRISIS — CLOSED. Five root causes (do not re-derive)
+The multi-week iOS offline failure was **five separate bugs**, not one:
+
+1. **iOS never reports offline.** `navigator.onLine` lies, and the `offline` event does not fire.
+   Replaced with an **active probe** (`PROBE_URL` = an Esri z0 tile) every 5 s, with a 3 s
+   `AbortController` timeout — iOS *hangs* rather than failing an offline fetch — and cache-busted
+   (iOS ignores `no-store`). One `_online` boolean drives `applyOnlineState()`.
+   **Negatives are DEBOUNCED** (`NEG_PROBES_TO_GO_OFFLINE = 2`): a single timed-out probe must not
+   flip the app, or a slow load oscillates offline↔online and rebuilds everything repeatedly.
+   Positives are trusted instantly; `navigator.onLine === false` is trusted instantly.
+2. **Offline reload hung** — Cesium's geometry **Workers** weren't precached. `sw.js` now precaches
+   ~107 Cesium worker/asset files.
+3. **iOS killed the renderer on tab-backgrounding** — the cause was Cesium's default render-pipeline
+   **framebuffers**, not our data. Mobile now disables skyBox, skyAtmosphere, FXAA, and MSAA=1.
+4. **`f.globe` render crash + gappy paths** — caused by **CLAMP-TO-GROUND** on iOS. Removed entirely.
+5. **Land fill swallowed the labels** — a floating primitive coplanar with the surface fights
+   everything. Solved by making land part of the **globe surface** (NE2 imagery). *(This whole
+   layer has since been deleted — see §4.)*
+
+Also: in-flight fetch dedup (`chunkLoading`, `pathLoading`) killed a network storm; and a "missing
+land" bug was **server file permissions** (uploads land 600 → 403). `chmod 644` after every upload.
+
+### 2. ARCHITECTURE — `map.js`
+All platform branching lives in **ONE** `IS_MOBILE` const feeding a declarative **`PROFILE`**
+object (resolution, MSAA, FXAA, sky, tile cache, raster, dataSuffix, cityMaxRank…). Do not scatter
+`isWide()`-style checks back through the file — collapsing them was a hard-won win.
+As of this session **desktop and mobile load identical vector data (50 m) and run identical vector
+code**; the `landFill`, `eagerVectors` and `_lo`-dataset divergences are all GONE.
+
+### 3. ⛔ VERIFIED TRAPS (each cost real time — do not re-attempt)
+- **Do NOT re-add clamp-to-ground on iOS.** (`f.globe` crash + path gaps.) Plain height-0 geometry
+  and depth-tested billboards are fine; only the *classification clamp* is banned.
+- **Do NOT lift the eclipse paths off the ground.** They sit at EXACTLY height 0. Lift parallaxes
+  them by `height × tan(view angle)` — a 50 m lift is 29 m of displacement at 30°, which is
+  meaningless noise on a centreline computed to ~15 m. If something occludes them, use
+  **`depthFailMaterial`** (already in place). *This is the science; it is not negotiable.*
+- **Do NOT bother disabling OIT on mobile** — tried, didn't help. The framebuffer cuts did.
+- **Do NOT "fix" the duplicate downloads inside `sw.js` without care.** See §5.
+- **Do NOT make NE2 lazy.** Tried; it made the offline raster depend on the probe, and a probe
+  timeout under load oscillated offline↔online → a 45-second double load. NE2 is eager and resident.
+
+### 4. WHAT WAS DELETED (the codebase got smaller)
+- **The vector land fill** — it was the mobile OOM, and mobile had already abandoned it.
+- **The raster→vector crossfade** — the per-frame `band()` alpha ramp. It only engaged at zooms
+  where the view was undifferentiated green anyway, and it was the most bug-prone machinery in the
+  file. NE2 is now simply *the* offline surface, always opaque, at every zoom. Crisp detail at depth
+  comes from the vector **lines** (borders/rivers/lakes/cities), which are always on.
+- `buildFill()`, the `land.geojson` fetch and precache, and the 110 m `_lo` vector set.
+
+### 5. KNOWN, MEASURED, NOT-YET-FIXED: duplicate downloads
+Every asset downloads **twice** on a build change (~317 requests, 22 MB). Cause: the page requests
+`js/map.js?v=BUILD` while `sw.js`'s precache lists say bare `js/map.js` — two URLs, two downloads.
+**It is PRE-EXISTING** (present throughout the successful offline milestone) and **harmless**: the
+network panel shows the SW-initiated fetches served from `(disk cache)` in 2–9 ms; load is ~11 s,
+DOMContentLoaded ~950 ms.
+**Two failed fixes — do not repeat:**
+- A single-flight `fetchOnce()` inside `sw.js`: **structurally impossible.** Guy clears site data
+  between builds, so no SW controls the page at load — the page's fetches never reach the handler.
+- Making the SW precache the versioned URLs + `'reload'`→`'default'`: **broke the eclipse paths.**
+  Reverted (branch `sw-dedupe`, unmerged).
+**The real fix, for a calm dedicated session:** stop precaching what the page fetches for itself
+(the fetch handler already caches on demand); precache only what the page never requests (Cesium
+Workers/Assets, out-of-range data). `sw.js` is the most fragile file in the project — treat it so.
+
+### 6. THE MAP AS IT NOW STANDS
+Sun arrow (red surface geometry, filled dart, **constant 44 px** via `camera.getPixelSize()`, ground
+cap 300 km, base pinned at height 0 so it can't parallax off the marker — it points at the **Sun's
+azimuth at maximum**, not at the centreline) · **push-pin** observer marker (canvas billboard,
+bottom-anchored so the *tip* is the coordinate, contact dot; a drop-shadow was tried and rejected as
+a smudge) · orange GE diamond · flat city dots · warm-charcoal borders that fade with zoom-out ·
+city labels drawn **whole** (`disableDepthTestDistance: Infinity`) with a per-city
+**`EllipsoidalOccluder`** horizon test — this fixed both the half-eaten labels ("Mexico City" → "TY",
+caused by depth-testing the label quad at the limb) and the whole-hemisphere blink (caused by a hard
+distance cutoff firing on thousands of labels at once) · umbra ovals fade · **polar holes**: every
+Web-Mercator source truncates at ±85.0511°, so NE2 showed through underneath as a mismatched patch;
+fixed with a filler **imagery layer** slotted at the tile layer's index (never on top, never under
+NE2), its colour **SAMPLED at runtime from each provider's own z=0 tile** — correct for any basemap,
+now and future · basemap picker (7 free providers, live swap) · 1 px load crawlbar · Details-tab
+throb on new location.
 
 ---
 
@@ -491,6 +543,9 @@ not shipped.) This is the prerequisite that makes a service worker able to cache
 ---
 
 ## OFFLINE GLOBE — DATA & RENDERING (consolidated; the 2026-05-31 work)
+> ⚠️ **HISTORICAL — MapLibre + deck.gl era.** The renderer is now CesiumJS and the offline
+> architecture was rebuilt from scratch (see §CESIUM ERA). Read this for the *data* decisions
+> (Natural Earth tiers, NE2 raster) and the reasoning, NOT for the rendering approach.
 
 The offline path uses local gzipped GeoJSON as a MapLibre **globe**-projection basemap,
 with an active connectivity probe that upgrades to the online style when reachable.
@@ -676,6 +731,8 @@ the values above.
 ---
 
 ## CURRENT STATE OF FEATURES (what's working)
+> ⚠️ Written pre-Cesium. The MATH and PATH-GENERATION entries remain accurate and banked. Any
+> entry describing the MAP/rendering is superseded by §CESIUM ERA.
 
 ### Search
 - Tokenized filters: year ranges, months, days, type, magnitude/obscuration, saros,

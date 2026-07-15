@@ -123,3 +123,86 @@ function getAutoTzOffset() {
   return 0;
 }
 
+
+/* ── Settings sub-sections: scroll the opened one to the top ────────────────
+   The groups are native <details>. Opening one lower down collapses nothing, but
+   the sections above it keep their height, so the newly-opened panel opens BELOW
+   the fold and you land mid-way through it. On open, bring its header to the top
+   of the scrolling panel so you start reading at the beginning. */
+document.querySelectorAll('#tab-settings details.settings-group').forEach(function (d) {
+  d.addEventListener('toggle', function () {
+    if (!d.open) return;
+    var panel = document.getElementById('tab-settings');
+    if (!panel) return;
+    /* Wait a frame so the expanded height is laid out before we scroll. scrollIntoView
+       on the <summary> is robust regardless of which ancestor actually scrolls — the
+       earlier panel.scrollTo() jumped (blinked) because it targeted the wrong box. */
+    requestAnimationFrame(function () {
+      var hdr = d.querySelector('summary') || d;
+      if (hdr.scrollIntoView) hdr.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+});
+
+/* ── Online basemap picker ─────────────────────────────────────────────────
+   Swaps the online tile source live (no reload). Offline basemap is untouched. */
+(function () {
+  var sel = document.getElementById('basemap');
+  if (!sel) return;
+  try {
+    var saved = localStorage.getItem('sc_basemap');
+    if (saved) sel.value = saved;
+  } catch (e) {}
+  sel.addEventListener('change', function () {
+    if (window._scSetBasemap) window._scSetBasemap(sel.value);
+  });
+})();
+
+/* ── About-text deep links ─────────────────────────────────────────────────
+   Links like #e=9408&q=… already apply via the hashchange handler, but the user is
+   sitting in Settings/About and sees nothing happen. Jump them to Search (where the
+   query and its results are) so the link visibly does something. */
+document.addEventListener('click', function (ev) {
+  var a = ev.target.closest && ev.target.closest('a[href*="#e="]');
+  if (!a) return;
+  /* Move the user to the results. Desktop has its OWN sidebar tab system — driving only
+     switchTab() left desktop users staring at the About text. */
+  setTimeout(function () {
+    if (typeof switchTab === 'function') switchTab('search');
+    if (typeof switchSidebarTab === 'function') switchSidebarTab('search');
+  }, 0);
+
+  /* Recentre the globe only ONCE THE HASH HAS ACTUALLY BEEN APPLIED.
+     A setTimeout(0) fires BEFORE the browser's hashchange event, so recentring there ran
+     while `selectedEntry` was still the PREVIOUS eclipse — the camera flew to the last
+     eclipse while the new path was drawn. That is the "always one step behind" bug.
+     Listening for hashchange guarantees the new selection exists first. Our listener is
+     registered here, after url.js's, so it runs after restoreFromHash(). */
+  window.addEventListener('hashchange', function once() {
+    window.removeEventListener('hashchange', once);
+    setTimeout(function () { if (window._scRecenter) window._scRecenter(); }, 0);
+  });
+});
+
+/* ── Install prompt ────────────────────────────────────────────────────────
+   Android/Chrome fire `beforeinstallprompt` and can be installed programmatically.
+   iOS Safari CANNOT — installation is only possible via the Share sheet, so there we
+   show the manual steps rather than a button that would do nothing. */
+(function () {
+  var deferred = null;
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    deferred = e;
+  });
+  var link = document.getElementById('install-link');
+  if (!link) return;
+  link.addEventListener('click', function (ev) {
+    ev.preventDefault();
+    if (deferred) { deferred.prompt(); deferred = null; return; }
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    link.insertAdjacentHTML('afterend', isIOS
+      ? '<span class="install-steps"> Tap the Share button, then <em>Add to Home Screen</em>.</span>'
+      : '<span class="install-steps"> Open your browser menu and choose <em>Install app</em> / <em>Add to Home screen</em>.</span>');
+    link.style.display = 'none';
+  });
+})();

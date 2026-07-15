@@ -10,7 +10,7 @@ Outputs per eclipse:
   - terminator_first, last        (sunrise/sunset line at P1 and P4 times)
   - ge                            (greatest eclipse point)
 
-All features verified against baseline truth (reference KMZ / NASA data).
+All features verified against Jubier / NASA reference data.
 
 Usage:
     python3 gen_eclipse_paths.py --data-dir ./data/besselian --out-dir ./data/paths
@@ -26,7 +26,7 @@ E2            = 2.0/298.257223563 - (1.0/298.257223563)**2
 R_EARTH_M     = 6378137.0  # WGS84 equatorial radius (metres)
 R             = 6371.0    # km
 STEP_MIN      = 1         # minutes between path samples
-GEN_VERSION   = '2026-07-13j'  # generator code version; stamped into each chunk's __meta
+GEN_VERSION   = '2026-07-13f'  # generator code version; stamped into each chunk's __meta
                               # (bump when the generation math changes)
 TERM_STEP_MIN = 0.1       # finer step for terminator curves (was 0.5; gave ~80 km median vertex spacing → 6 km cross-track error)
 PEN_N         = 720       # L1-circle sample points (penumbra sweep)
@@ -88,7 +88,7 @@ def f2g(xi, eta, d_r, mu, dt_s):
     Without this correction the projected positions are off by
     100–500 m near the equator and up to a few km at high latitudes —
     the systematic 0.2–0.5° offset visible in side-by-side comparisons
-    against baseline truth.
+    against Jubier.
 
     Returns (lat_geodetic_deg, lon_deg) or None if (xi, eta) is outside
     the (corrected) Earth disk.
@@ -274,7 +274,7 @@ def _snap_to_edge(rec, lat, lon, b_out, level, R=22000.0):
         # runs ALONG the wedge-shaped region rather than across its edge.
         # The analytic envelope seed is sub-km accurate there; returning the
         # clamped far end fabricated a point displaced by the full R (~22 km
-        # error on the 2014-04-29 A- tip vs baseline truth). Keep the seed instead —
+        # error on the 2014-04-29 A- tip vs Jubier). Keep the seed instead —
         # symmetric with the fval(-R) < 0 branch below.
         if fval(R) >= 0.0: return (lat, lon)
         a, b = 0.0, R
@@ -300,7 +300,7 @@ def umbral_pts(rec, t):
     snapped the last few km onto the exact max_magnitude==1 contour.
 
     This is smooth by construction (analytic, per-time, no ray-casting and no
-    point-to-point chaining) and matches baseline truth to sub-km, including polar
+    point-to-point chaining) and matches Jubier to sub-km, including polar
     grazers where the previous perpendicular-bisection finder under-shot by
     up to ~300 km and introduced kinks.
     """
@@ -337,7 +337,7 @@ def umbral_pts(rec, t):
             zz = 1.0 - u*u - w*w
             if zz <= 0: offdisk = True; break
             zeta = math.sqrt(zz)
-        # Pure magnitude=1 envelope. No disk-edge-clip splice: the baseline's limit
+        # Pure magnitude=1 envelope. No disk-edge-clip splice: Jubier's limit
         # IS the envelope, terminated later on the Maximum-on-Horizon (green)
         # curve by _visible_trim. Splicing the disk-edge arc folded the curve;
         # the envelope alone is smooth. cl may be None over the polar cap (axis
@@ -1026,7 +1026,7 @@ def _term_tangency_time(rec, t_out, t_in, tol=1e-7):
     return 0.5*(lo + hi)
 
 
-def _term_tangent_point(rec, t, polish=True):
+def _term_tangent_point(rec, t):
     """At |kd|=1 both crossings collapse to one point on the unit circle."""
     X, _Xp, Y, _Yp, d_r, mu, dt_s, L1, _L2 = bstate(rec, t)
     D = math.sqrt(X*X + Y*Y)
@@ -1034,217 +1034,7 @@ def _term_tangent_point(rec, t, polish=True):
     kd = (D*D + 1.0 - L1*L1) / (2.0*D)
     kd = max(-1.0, min(1.0, kd))
     cx, cy = X/D, Y/D
-    ll = _f2g_term(cx*kd, cy*kd, d_r, mu, dt_s)
-    return _rs_exact(rec, t, ll) if polish else ll
-
-
-def _rs_exact(rec, t, ll, keep_seed=False, cap_km=None):
-    """Polish a rise/set-lemniscate vertex onto the EXACT ground solution of
-    the two conditions that define it at its own instant t:
-
-        zeta(lat, lon, t) = 0   (point on the true sunrise/sunset line)
-        g(lat, lon, t)    = 0   (point on the penumbral shadow edge)
-
-    Damped 2-D Newton in ground coordinates with a geodesic finite-
-    difference Jacobian. The seed comes from the fundamental-plane
-    two-circle solve, which intersects the L1 circle with a CIRCULAR limb;
-    the true-frame limb of the ellipsoid is the ellipse
-    xi^2 + (eta/rho1)^2 = 1, and that ~0.3% flattening displaced vertices —
-    mostly ALONG the curve, growing to ~150 km near the tangency tips.
-    Because the displacement is tangential, the polish must succeed for
-    EVERY vertex or none in a stretch: a mix of polished (slid) and
-    unpolished neighbours zigzags the sequence (the "gap 355 km" audit).
-    Hence the generous iteration budget and residual-backtracking damping;
-    the polished sequence stays ordered because the curve is parameterized
-    by t and each vertex lands on its own exact solution.
-
-    When no solution exists at this t, behaviour depends on keep_seed —
-    see the comment at the return: tips drop (the circular tangency time
-    overshoots the true one, and phantom seeds there zigzagged the curve),
-    mid-run keeps the seed (the parameterization can degenerate at the
-    terminator ring's apex while the true curve still exists)."""
-    if ll is None: return None
-    lat, lon = ll
-    def _accept(la2, lo2):
-        # cap_km rejects solutions far from the seed. Near the terminator
-        # ring's apex latitude (90-decl) the exact crossing at a given t can
-        # sit hundreds of km along the ring from the circular seed; those
-        # solutions are individually exact but destroy the sequence order
-        # (t-parameterization degenerates there), so main-run callers cap
-        # and fall back to the seed. Normal polish displacement measured
-        # <= ~50 km everywhere else; densified tip callers pass no cap.
-        if cap_km is None: return (la2, lo2)
-        dla = (la2 - ll[0]) * DEG; dlo = (lo2 - ll[1]) * DEG
-        h = (math.sin(dla / 2) ** 2
-             + math.cos(ll[0] * DEG) * math.cos(la2 * DEG) * math.sin(dlo / 2) ** 2)
-        moved = 6371.0 * 2.0 * math.asin(min(1.0, math.sqrt(abs(h))))
-        if moved <= cap_km: return (la2, lo2)
-        return ll if keep_seed else None
-    H = 800.0                                    # probe, metres
-    g0, z0 = _pen_g(rec, lat, lon, t)
-    res = math.hypot(g0, z0)
-    for _ in range(30):
-        if abs(z0) < 1e-8 and abs(g0) < 1e-8:
-            return _accept(lat, lon)
-        gN, zN = _pen_g(rec, *_gc_step(lat, lon, 0.0, H), t)
-        gS, zS = _pen_g(rec, *_gc_step(lat, lon, math.pi, H), t)
-        gE, zE = _pen_g(rec, *_gc_step(lat, lon, math.pi / 2, H), t)
-        gW, zW = _pen_g(rec, *_gc_step(lat, lon, -math.pi / 2, H), t)
-        a11 = (gN - gS) / (2 * H); a12 = (gE - gW) / (2 * H)
-        a21 = (zN - zS) / (2 * H); a22 = (zE - zW) / (2 * H)
-        det = a11 * a22 - a12 * a21
-        if abs(det) < 1e-30: break
-        dn = (-g0 * a22 + z0 * a12) / det        # metres north
-        de = (-z0 * a11 + g0 * a21) / det        # metres east
-        stepm = math.hypot(dn, de); brg = math.atan2(de, dn)
-        # backtracking: halve the step while the residual grows
-        for _bt in range(6):
-            la2, lo2 = _gc_step(lat, lon, brg, stepm)
-            g2, z2 = _pen_g(rec, la2, lo2, t)
-            r2 = math.hypot(g2, z2)
-            if r2 < res: break
-            stepm *= 0.5
-        else:
-            break
-        lat, lon, g0, z0, res = la2, lo2, g2, z2, r2
-    if abs(z0) < 1e-6 and abs(g0) < 1e-6:
-        return _accept(lat, lon)
-    q = _rs_ring_solve(rec, t, ll)
-    if q is not None:
-        return _accept(q[0], q[1])
-    # No exact solution at this vertex's own t. In the TIP regions that
-    # means the sample lies past the true tangency and must be dropped
-    # (keeping it drew the phantom spur behind the "gap 355 km" audits).
-    # MID-RUN it usually means the time-parameterization has degenerated —
-    # near the terminator ring's apex latitude (90-decl) the exact crossing
-    # slides hundreds of km along the ring per time step, or briefly
-    # vanishes, while the true curve still exists nearby (verified on
-    # 2017-08-21: exact residuals at the incumbent's vertices there
-    # straddle zero). Dropping mid-run vertices tore 400-1100 km holes in
-    # arcs the incumbent drew ~50 km accurately, so mid-run callers keep
-    # the seed: never worse than the incumbent, exact everywhere else.
-    return ll if keep_seed else None
-
-
-def _rs_ring_solve(rec, t, ll):
-    """Near-tangency fallback for _rs_exact. As the a and b roots merge at a
-    lemniscate tip, the 2-D Newton Jacobian degenerates well before the true
-    tangency — but the problem stays well-posed in ONE dimension: constrain
-    the point to the zeta = 0 ring (always well-conditioned), then bisect
-    g = 0 along the ring toward the root nearest the seed. Succeeds right up
-    to the tangency; returns None only when no root exists at this t (the
-    circular-limb construction's samples past the TRUE tangency, which
-    describe curve points that do not exist and must be dropped)."""
-    H = 800.0
-    def zg(la, lo): return _pen_g(rec, la, lo, t)
-    def zgrad_brg(la, lo):
-        zN = zg(*_gc_step(la, lo, 0.0, H))[1]; zS = zg(*_gc_step(la, lo, math.pi, H))[1]
-        zE = zg(*_gc_step(la, lo, math.pi / 2, H))[1]; zW = zg(*_gc_step(la, lo, -math.pi / 2, H))[1]
-        gN = (zN - zS) / (2 * H); gE = (zE - zW) / (2 * H)
-        m = math.hypot(gN, gE)
-        return (math.atan2(gE, gN), m) if m > 1e-15 else (None, 0.0)
-    def on_ring(la, lo):
-        for _ in range(10):
-            g, z = zg(la, lo)
-            if abs(z) < 1e-9: return la, lo, True
-            b, m = zgrad_brg(la, lo)
-            if b is None: return la, lo, False
-            la, lo = _gc_step(la, lo, b, -z / m)
-        return la, lo, abs(zg(la, lo)[1]) < 1e-7
-    la0, lo0, ok = on_ring(ll[0], ll[1])
-    if not ok: return None
-    def ring_step(la, lo, brg, d_m):
-        la2, lo2 = _gc_step(la, lo, brg, d_m)
-        la2, lo2, ok2 = on_ring(la2, lo2)
-        return (la2, lo2) if ok2 else None
-    b0, _ = zgrad_brg(la0, lo0)
-    if b0 is None: return None
-    tang = b0 + math.pi / 2
-    g0 = zg(la0, lo0)[0]
-    # March the ring in fixed 8 km steps up to 320 km each way. Near a pinch
-    # the two roots sit close together with the seed OUTSIDE them, so a
-    # doubling stride can step across both and miss the sign change; fixed
-    # steps plus a hump check (refine the max of g where it rises then
-    # falls; if it pokes above zero, bracket the near-side root) recover
-    # roots right up to the pinch, matching the baseline's own resolution.
-    best = None
-    STEPK = 8e3
-    for sgn in (1.0, -1.0):
-        prev = (la0, lo0); pg = g0
-        samples = [((la0, lo0), g0)]
-        for k in range(40):
-            q = ring_step(prev[0], prev[1], tang if sgn > 0 else tang + math.pi, STEPK)
-            if q is None: break
-            qg = zg(*q)[0]
-            samples.append((q, qg))
-            if (qg < 0.0) != (pg < 0.0):
-                best = (prev, q, pg); break
-            prev, pg = q, qg
-        if best: break
-        # hump check: local max of g along the marched samples
-        if len(samples) >= 3:
-            mi = max(range(1, len(samples) - 1), key=lambda i: samples[i][1])
-            if samples[mi][1] > samples[0][1]:
-                A2, B2 = samples[mi - 1][0], samples[mi + 1][0]
-                for _ in range(18):
-                    brg_ab = _gc_bearing(A2, B2)
-                    dla = (B2[0] - A2[0]) * DEG; dlo = (B2[1] - A2[1]) * DEG
-                    h = (math.sin(dla / 2) ** 2 + math.cos(A2[0] * DEG)
-                         * math.cos(B2[0] * DEG) * math.sin(dlo / 2) ** 2)
-                    d_ab = 2.0 * R_EARTH_M * math.asin(min(1.0, math.sqrt(abs(h))))
-                    m1 = ring_step(A2[0], A2[1], brg_ab, d_ab / 3.0)
-                    m2 = ring_step(A2[0], A2[1], brg_ab, 2.0 * d_ab / 3.0)
-                    if m1 is None or m2 is None: break
-                    if zg(*m1)[0] < zg(*m2)[0]: A2 = m1
-                    else: B2 = m2
-                gm = zg(*A2)[0]
-                if gm > 0.0:
-                    # near-side root lies between the seed-side sample and A2
-                    best = (samples[max(0, mi - 1)][0], A2, samples[max(0, mi - 1)][1])
-                    if best[2] > 0.0:
-                        best = (samples[0][0], A2, samples[0][1])
-                    break
-    if best is None: return None
-    (A, B, ga) = best
-    for _ in range(24):
-        brg_ab = _gc_bearing(A, B)
-        dla = (B[0] - A[0]) * DEG; dlo = (B[1] - A[1]) * DEG
-        h = (math.sin(dla / 2) ** 2
-             + math.cos(A[0] * DEG) * math.cos(B[0] * DEG) * math.sin(dlo / 2) ** 2)
-        d_ab = 2.0 * R_EARTH_M * math.asin(min(1.0, math.sqrt(abs(h))))
-        if d_ab < 2.0: break
-        M = ring_step(A[0], A[1], brg_ab, d_ab / 2.0)
-        if M is None: break
-        if (zg(*M)[0] < 0.0) == (ga < 0.0): A, ga = M, zg(*M)[0]
-        else: B = M
-    la, lo = A
-    g, z = zg(la, lo)
-    return (la, lo) if (abs(z) < 1e-6 and abs(g) < 1e-5) else None
-
-
-def _insert_rs_junctions(rec, term_first, term_last, junctions):
-    """Insert each true penumbral-limit terminus as a vertex into the
-    rise/set loop it lies on, making the two curves join vertex-exactly.
-    A terminus qualifies only if the sun altitude at its own maximum is
-    ~0 (open penumbral arcs end on the terminator; a closed penumbral
-    loop's arbitrary first/last vertex does not qualify)."""
-    def gc_km(a, b):
-        h = (math.sin((b[1] - a[1]) * DEG / 2) ** 2
-             + math.cos(a[1] * DEG) * math.cos(b[1] * DEG)
-             * math.sin((b[0] - a[0]) * DEG / 2) ** 2)
-        return 6371.0 * 2.0 * math.asin(min(1.0, math.sqrt(abs(h))))
-    loops = [c for c in (term_first or []) + (term_last or []) if len(c) >= 4]
-    for J in junctions or []:
-        if abs(_pen_depth(rec, J[1], J[0])[2]) > 5e-4: continue
-        best = None
-        for c in loops:
-            for i in range(len(c)):
-                d = gc_km(J, c[i])
-                if best is None or d < best[0]: best = (d, c, i)
-        if best and 0.005 < best[0] < 40.0:
-            _d, c, i = best
-            j = (i + 1) % len(c) if gc_km(J, c[(i + 1) % len(c)]) <= gc_km(J, c[i - 1]) else i
-            c.insert(j, [round(J[0], 4), round(J[1], 4)])
+    return _f2g_term(cx*kd, cy*kd, d_r, mu, dt_s)
 
 
 def _terminator_curves(rec, t_first, t_last, step_min=STEP_MIN, NLAT=None):
@@ -1304,7 +1094,7 @@ def _terminator_curves(rec, t_first, t_last, step_min=STEP_MIN, NLAT=None):
     def _ab_at(t):
         return _term_crossings_at(rec, t)
 
-    def _tip_densify(t_far, t_tan, n=24, polish=True):
+    def _tip_densify(t_far, t_tan, n=24):
         """Square-root-spaced samples between t_far (regular cadence works)
         and t_tan (the actual tangency). Branches converge as
         sqrt(|t_tan-t|), so the bias  biased = 1 - (1-frac)^2  puts ~half
@@ -1320,9 +1110,6 @@ def _terminator_curves(rec, t_first, t_last, step_min=STEP_MIN, NLAT=None):
             xi_a, eta_a, xi_b, eta_b, X, Y, d_r, mu, dt_s, L1 = r
             pa = _f2g_term(xi_a, eta_a, d_r, mu, dt_s)
             pb = _f2g_term(xi_b, eta_b, d_r, mu, dt_s)
-            if polish:
-                pa = _rs_exact(rec, t_s, pa)
-                pb = _rs_exact(rec, t_s, pb)
             out.append(([pa[1], pa[0]] if pa else None,
                         [pb[1], pb[0]] if pb else None))
         return out
@@ -1368,52 +1155,13 @@ def _terminator_curves(rec, t_first, t_last, step_min=STEP_MIN, NLAT=None):
         else:
             t_end_tan, tip_end = None, None
 
-        # curve_a / curve_b from the trimmed run. Results are kept aligned
-        # with their sample times so interior PINCHES can be refined: the
-        # exact (elliptical-limb) geometry can briefly lose its terminator
-        # crossings mid-run where the circular model still grazes — a real
-        # break in the rise/set curve, confirmed by the baseline's own
-        # curve having a hole in the same places. Near a pinch tangency the
-        # root position moves as sqrt(t), so the regular cadence leaves the
-        # last ~70+ km of arc before each pinch endpoint unsampled; bisect
-        # the solvability boundary in t and append the boundary points.
-        def _branch_pt(ti, branch):
-            r = _ab_at(ti)
-            if r is None: return None
-            xi_a, eta_a, xi_b, eta_b, _X2, _Y2, d_r2, mu2, dt_s2, _L12 = r
-            xi, eta = (xi_a, eta_a) if branch == 'a' else (xi_b, eta_b)
-            return _rs_exact(rec, ti, _f2g_term(xi, eta, d_r2, mu2, dt_s2))
-        def _pinch_edge(t_good, t_bad, branch):
-            best = None
-            for _ in range(14):
-                tm = 0.5 * (t_good + t_bad)
-                p = _branch_pt(tm, branch)
-                if p: t_good, best = tm, p
-                else: t_bad = tm
-            return best, t_good
-        def _pinch_ladder(t_far, t_bad, branch):
-            """Single exact point at the solvability boundary (the true
-            tangency). A graded sub-sample ladder was tried and reverted:
-            near the tangency the 2-D Newton degenerates and the ring
-            fallback can lock onto the far-side root, throwing 800+ km
-            outliers. One exact boundary point leaves the final stretch of
-            arc sampled at the same ~130-170 km resolution the baseline's
-            own curve shows at these seams — honest parity, no phantoms."""
-            tip, _t_tan = _pinch_edge(t_far, t_bad, branch)
-            return [[tip[1], tip[0]]] if tip else []
-        res_a, res_b = [], []
-        for (_ti, xi_a, eta_a, xi_b, eta_b, _X, _Y, d_r, mu, dt_s, _L1) in run:
-            res_a.append((_ti, _rs_exact(rec, _ti, _f2g_term(xi_a, eta_a, d_r, mu, dt_s), keep_seed=True, cap_km=60.0)))
-            res_b.append((_ti, _rs_exact(rec, _ti, _f2g_term(xi_b, eta_b, d_r, mu, dt_s), keep_seed=True, cap_km=60.0)))
+        # curve_a / curve_b from the trimmed run.
         curve_a, curve_b = [], []
-        for res, curve, branch in ((res_a, curve_a, 'a'), (res_b, curve_b, 'b')):
-            for k, (ti, p) in enumerate(res):
-                if p is not None:
-                    if k > 0 and res[k - 1][1] is None and curve:
-                        curve.extend(reversed(_pinch_ladder(ti, res[k - 1][0], branch)))
-                    curve.append([p[1], p[0]])
-                elif k > 0 and res[k - 1][1] is not None:
-                    curve.extend(_pinch_ladder(res[k - 1][0], ti, branch))
+        for (_ti, xi_a, eta_a, xi_b, eta_b, _X, _Y, d_r, mu, dt_s, _L1) in run:
+            pa = _f2g_term(xi_a, eta_a, d_r, mu, dt_s)
+            pb = _f2g_term(xi_b, eta_b, d_r, mu, dt_s)
+            if pa: curve_a.append([pa[1], pa[0]])
+            if pb: curve_b.append([pb[1], pb[0]])
 
         # Densified samples spanning the trim region into the tangency.
         start_dens_a, start_dens_b = [], []
@@ -1428,60 +1176,6 @@ def _terminator_curves(rec, t_first, t_last, step_min=STEP_MIN, NLAT=None):
             dens = _tip_densify(t_last_samp, t_end_tan)
             end_dens_a = [pa for (pa, pb) in dens if pa is not None]
             end_dens_b = [pb for (pa, pb) in dens if pb is not None]
-
-        # Tip completion. The circular-limb tangency time overshoots the
-        # TRUE tangency, so the tangent point and the last densified samples
-        # have no exact solution and are dropped — leaving the a and b
-        # branch ends standing off the true tip (267 km for 2033; the
-        # baseline's own curve leaves a 166 km hole at the same seam).
-        # Bisect t to the true tangency per branch: both branches' exact
-        # roots converge to the same tip point, closing the loop there.
-        if t_end_tan is not None:
-            end_dens_a.extend(_pinch_ladder(t_last_samp, t_end_tan, 'a'))
-            end_dens_b.extend(_pinch_ladder(t_last_samp, t_end_tan, 'b'))
-        if t_start_tan is not None:
-            start_dens_a[:0] = list(reversed(_pinch_ladder(t_first_samp, t_start_tan, 'a')))
-            start_dens_b[:0] = list(reversed(_pinch_ladder(t_first_samp, t_start_tan, 'b')))
-
-        # Adaptive tip fallback. Near the terminator ring's apex latitude
-        # (90 - declination) the t-parameterization degenerates: exact
-        # solutions at a given t sit hundreds of km along the ring from the
-        # circular seed, so polished tip blocks can zigzag or leave the a/b
-        # branch ends ~1000 km apart at the seam (2017-08-21). The
-        # incumbent's unpolished tips bridge those seams at <200 km with
-        # ~50 km vertex accuracy — so per tip, walk the assembled seam
-        # CHAIN (curve tail, densified block, tangent point, opposite
-        # densified block, opposite curve tail, in loop order) and if any
-        # consecutive gap exceeds the incumbent's envelope, rebuild that
-        # whole tip block unpolished. Exact tips are kept wherever the
-        # machinery works (the common case); never worse anywhere.
-        def _chain_gap(chain):
-            pts = [q for q in chain if q is not None]
-            worst = 0.0
-            for i in range(len(pts) - 1):
-                h = (math.sin((pts[i + 1][1] - pts[i][1]) * DEG / 2) ** 2
-                     + math.cos(pts[i][1] * DEG) * math.cos(pts[i + 1][1] * DEG)
-                     * math.sin((pts[i + 1][0] - pts[i][0]) * DEG / 2) ** 2)
-                worst = max(worst, 6371.0 * 2.0 * math.asin(min(1.0, math.sqrt(abs(h)))))
-            return worst
-        def _ll(tp): return [tp[1], tp[0]] if tp else None
-        SEAM_MAX = 220.0
-        if t_end_tan is not None:
-            chain = (curve_a[-1:] + end_dens_a + [_ll(tip_end)]
-                     + end_dens_b[::-1] + curve_b[-1:])
-            if _chain_gap(chain) > SEAM_MAX:
-                dens = _tip_densify(t_last_samp, t_end_tan, polish=False)
-                end_dens_a = [pa for (pa, pb) in dens if pa is not None]
-                end_dens_b = [pb for (pa, pb) in dens if pb is not None]
-                tip_end = _term_tangent_point(rec, t_end_tan, polish=False)
-        if t_start_tan is not None:
-            chain = (curve_b[:1] + start_dens_b[::-1] + [_ll(tip_start)]
-                     + start_dens_a + curve_a[:1])
-            if _chain_gap(chain) > SEAM_MAX:
-                dens = list(reversed(_tip_densify(t_first_samp, t_start_tan, polish=False)))
-                start_dens_a = [pa for (pa, pb) in dens if pa is not None]
-                start_dens_b = [pb for (pa, pb) in dens if pb is not None]
-                tip_start = _term_tangent_point(rec, t_start_tan, polish=False)
 
         full_a = start_dens_a + curve_a + end_dens_a
         full_b = start_dens_b + curve_b + end_dens_b
@@ -1512,7 +1206,7 @@ def _terminator_curves(rec, t_first, t_last, step_min=STEP_MIN, NLAT=None):
 
 
 def green_curve(rec):
-    """Maximum-on-Horizon curve (the baseline's green line): the locus of ground
+    """Maximum-on-Horizon curve (Jubier's green line): the locus of ground
     points whose own greatest eclipse occurs with the sun exactly on the
     horizon (altitude 0). It is the shared termination boundary for the umbral
     limits and the centreline (visible-totality convention).
@@ -1528,7 +1222,7 @@ def green_curve(rec):
     F = 0) until it closes or leaves the penumbral region (the blob tip). This
     is topology-agnostic: a figure-8 (connected sunrise+sunset limits) and a
     two-blob eclipse (separate limits) are simply one component or two, traced
-    by the same code, each reaching its true tips. Verified against the baseline's
+    by the same code, each reaching its true tips. Verified against Jubier's
     published curve to ~0.3 km median.
 
     Returns a flat list of [lon, lat]; separate components are delimited by a
@@ -1683,6 +1377,106 @@ def _cone_correct(rec, lat, lon):
     return lat, lon, abs(f) < 2e-5
 
 
+def _cone_gc(a, b):
+    DEG = math.pi / 180.0
+    la1, lo1 = a[1] * DEG, a[0] * DEG; la2, lo2 = b[1] * DEG, b[0] * DEG
+    c = math.sin(la1) * math.sin(la2) + math.cos(la1) * math.cos(la2) * math.cos(lo2 - lo1)
+    return 6371.0 * math.acos(max(-1.0, min(1.0, c)))
+
+
+def _cone_trace(rec, seed, step_km=25.0, maxpts=6000, min_km=3.0, max_turn=12.0):
+    """Adaptive predictor-corrector tracing the depth=0 contour from a seed on it.
+    Shrinks the step where the contour turns sharply (pointed corridor tips).
+    Bounded: a clean corridor closes well within maxpts; a non-converging trace
+    (degenerate polar/annular geometry) hits the cap and the caller falls back."""
+    DEG = math.pi / 180.0
+    def one(sign):
+        la, lo = seed; prevb = None; out = []; step = step_km; closed = False; acc_turn = 0.0
+        for _ in range(maxpts):
+            gla, glo = _cone_grad(rec, la, lo); gn = math.hypot(gla, glo)
+            if gn < 1e-9: break
+            klon = math.cos(la * DEG) or 1e-9
+            tla, tlo = -glo, gla; tn = math.hypot(tla, tlo * klon); tla /= tn; tlo /= tn
+            b = math.atan2(tlo * klon, tla)
+            if prevb is not None and abs(((b - prevb + math.pi) % (2 * math.pi)) - math.pi) > math.pi / 2:
+                tla, tlo, b = -tla, -tlo, b + math.pi
+            if prevb is not None:
+                dsigned = math.degrees(((b - prevb + math.pi) % (2 * math.pi)) - math.pi)
+                acc_turn += dsigned
+                turn = abs(dsigned)
+                if turn > max_turn and step > min_km: step = max(min_km, step * 0.5)
+                elif turn < max_turn * 0.4 and step < step_km: step = min(step_km, step * 1.5)
+            la2 = la + sign * step / 111.0 * tla; lo2 = lo + sign * step / 111.0 * tlo
+            la2, lo2, ok = _cone_correct(rec, la2, lo2)
+            if not ok: break
+            # Closure: when the walk returns to the seed the contour is closed.
+            # Stop WITHOUT appending the overshoot point (a near-duplicate of the
+            # seed) and flag the closure.
+            if (len(out) > 6 and abs(acc_turn) > 270.0
+                    and abs(la2 - seed[0]) < 0.3
+                    and abs(((lo2 - seed[1] + 180) % 360) - 180) < 0.3):
+                closed = True; break
+            out.append((lo2, la2)); prevb = b; la, lo = la2, lo2
+        return out, closed
+    f, fc = one(+1)
+    # A CLOSED contour is fully captured by a single forward traverse: seed all
+    # the way around back to the seed. Tracing the other direction as well would
+    # double-cover the loop (each tip and each limb appears twice), which makes a
+    # "two longest segments" split pick two copies of the SAME limb. So when the
+    # forward walk closed, return the single traverse. Only OPEN contours (that
+    # terminate at a boundary instead of closing) need both directions.
+    if fc:
+        return [(seed[1], seed[0])] + f
+    bk, _ = one(-1)
+    return list(reversed(bk)) + [(seed[1], seed[0])] + f
+
+
+def _cone_seed(rec):
+    """A point on the depth=0 contour: start at the greatest-eclipse location
+    (inside totality) and step north until depth crosses zero, then correct."""
+    lat0 = rec.get('lat_dd_ge'); lon0 = rec.get('lng_dd_ge')
+    if lat0 is None or lon0 is None:
+        return None
+    # The catalog's greatest-eclipse coordinates can sit hundreds of km off the
+    # generator's OWN shadow axis on high-ΔT ancient eclipses (the catalog GE
+    # solution and the besselian-element recomputation diverge — e.g. -1213 has
+    # ΔT ~ 7.8 h, GE ~ 255 km off-axis). Trusting GE as an inside-totality start
+    # then fails the d0>0 gate, the cone declines, and the legacy envelope zigzag
+    # shows through. So hill-climb the ever-total depth field to the generator's
+    # own deepest point (inside totality by construction) and seed the north march
+    # from there. For modern eclipses GE is already on-axis, so the climb moves a
+    # few km at most and the seed is unchanged.
+    lat, lon = lat0, lon0
+    d0, _ = _cone_depth(rec, lat, lon)
+    for _ in range(120):
+        gla, glo = _cone_grad(rec, lat, lon); gn = math.hypot(gla, glo)
+        if gn < 1e-9:
+            break
+        la2 = lat + 0.15 * gla / gn; lo2 = lon + 0.15 * glo / gn
+        d1, _ = _cone_depth(rec, la2, lo2)
+        if d1 <= d0:
+            break                      # reached / passed the crest
+        lat, lon, d0 = la2, lo2, d1
+    if d0 <= 0:
+        return None
+    if d0 > 0:
+        ln = lon; la = lat
+        for _ in range(400):
+            la += 0.25
+            d, _ = _cone_depth(rec, la, ln)
+            if d <= 0:
+                cla, clo, ok = _cone_correct(rec, la - 0.125, ln)
+                if ok:
+                    return (cla, clo)
+                break
+    # Robust fallback (reached only when the fast march above declines): grazing
+    # slivers where the deepest point is off the GE meridian or the fixed-longitude
+    # march misses the thin contour. Grid-scan the depth field for the true inside
+    # point, then bisect outward to depth=0. Returns None only if no point is inside
+    # (no central path exists), in which case declining is correct.
+    return _cone_seed_robust(rec, lat0, lon0)
+
+
 def _cone_seed_robust(rec, lat0, lon0):
     best = -1e9; bla = lat0; blo = lon0
     for dla in range(-60, 61, 3):
@@ -1737,16 +1531,6 @@ def _cone_seed_robust(rec, lat0, lon0):
 # here penumbra = {ever-partial depth = 0}. The traced contour is then
 # trimmed to the sunlit side and split into the N and S arcs.
 
-def _pen_g(rec, lat, lon, t):
-    """Instantaneous true-frame penumbral depth at ground point (lat, lon) and
-    time t: (penumbra radius - axis distance, zeta). Shared by the penumbral
-    field (_pen_depth: max over t) and the terminator field (_horizon_depth:
-    value at the point's own sunrise/sunset)."""
-    X, _, Y, _, d_r, mu, dt_s, L1, _ = bstate(rec, t)
-    xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
-    return (L1 - zeta * rec['tan_f1']) - math.hypot(xi - X, eta - Y), zeta
-
-
 def _pen_depth(rec, lat, lon):
     """Ever-partial depth field: max over time of (penumbra radius - axis
     distance) in fundamental-plane units. >0 for points the penumbra ever
@@ -1761,11 +1545,15 @@ def _pen_depth(rec, lat, lon):
     The eta/rho1 scaling used by _cone_depth turns the shadow circle into an
     ellipse; that approximation is ~0.3% of the radius — invisible for the
     umbra (L2 ~ 0.009 -> ~0.2 km) but ~10 km for the penumbra (L1 ~ 0.54).
-    Verified: the baseline's penumbral limit sits at median -0.07 km in this
+    Verified: Jubier's penumbral limit sits at median -0.07 km in this
     field, vs -9.5 km in the scaled one."""
     tmin, tmax = rec['tmin'], rec['tmax']
+    tf1 = rec['tan_f1']
     def g(t):
-        return _pen_g(rec, lat, lon, t)
+        X, _, Y, _, d_r, mu, dt_s, L1, _ = bstate(rec, t)
+        xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
+        L1p = L1 - zeta * tf1
+        return L1p - math.hypot(xi - X, eta - Y), zeta
     N = 48; bt = tmin; bg = -1e9
     for i in range(N + 1):
         t = tmin + (tmax - tmin) * i / N
@@ -1799,8 +1587,6 @@ def _pen_correct(rec, lat, lon):
     return lat, lon, abs(f) < 2e-5
 
 
-
-
 def _trace_zero(field, seed, step_km=30.0, maxpts=3000,
                 min_km=4.0, max_turn=12.0):
     """Shared predictor-corrector: trace the zero contour of scalar
@@ -1817,8 +1603,8 @@ def _trace_zero(field, seed, step_km=30.0, maxpts=3000,
     (contours cannot self-intersect; degree-box and accumulated-turn tests
     both fail near poles). Returns ([(lon, lat), ...] starting at the seed,
     closed_flag).
-    (Same discipline as the green_curve tracer, which stays untouched as a
-    validated incumbent.)"""
+    (Same discipline as _cone_trace / green_curve; those stay untouched as
+    validated incumbents — future consolidation point.)"""
     PROBE = 2000.0                               # gradient probe, metres
     def _gc_km(la1, lo1, la2, lo2):
         h = (math.sin((la2 - la1) * DEG / 2) ** 2
@@ -1826,29 +1612,26 @@ def _trace_zero(field, seed, step_km=30.0, maxpts=3000,
              * math.sin((lo2 - lo1) * DEG / 2) ** 2)
         return 6371.0 * 2.0 * math.asin(min(1.0, math.sqrt(abs(h))))
     def gradb(la, lo):
-        # field gradient as (bearing rad, magnitude per metre); None if any
-        # probe leaves the field's domain (fields may return None outside it)
-        fN = field(*_gc_step(la, lo, 0.0, PROBE)); fS = field(*_gc_step(la, lo, math.pi, PROBE))
-        fE = field(*_gc_step(la, lo, math.pi / 2, PROBE)); fW = field(*_gc_step(la, lo, -math.pi / 2, PROBE))
-        if None in (fN, fS, fE, fW): return None, 0.0
-        gN = (fN - fS) / (2 * PROBE); gE = (fE - fW) / (2 * PROBE)
+        # field gradient as (bearing rad, magnitude per metre)
+        gN = (field(*_gc_step(la, lo, 0.0, PROBE))
+              - field(*_gc_step(la, lo, math.pi, PROBE))) / (2 * PROBE)
+        gE = (field(*_gc_step(la, lo, math.pi / 2, PROBE))
+              - field(*_gc_step(la, lo, -math.pi / 2, PROBE))) / (2 * PROBE)
         return math.atan2(gE, gN), math.hypot(gN, gE)
     def correct(la, lo):
         for _ in range(14):
             f = field(la, lo)
-            if f is None: return la, lo, False
             if abs(f) < 1e-6: return la, lo, True
             b, g = gradb(la, lo)
-            if b is None or g < 1e-15: return la, lo, False
+            if g < 1e-15: return la, lo, False
             la, lo = _gc_step(la, lo, b, -f / g)
-        f = field(la, lo)
-        return la, lo, f is not None and abs(f) < 2e-5
+        return la, lo, abs(field(la, lo)) < 2e-5
     def one(sign):
         la, lo = seed; prevb = None; out = []; step = step_km
         closed = False; walked = 0.0
         for _ in range(maxpts):
             b, g = gradb(la, lo)
-            if b is None or g < 1e-15: break
+            if g < 1e-15: break
             tb = b + sign * math.pi / 2          # contour tangent bearing
             if prevb is not None:
                 turn = abs(math.degrees(((tb - prevb + math.pi) % (2 * math.pi)) - math.pi))
@@ -1879,7 +1662,7 @@ def penumbral_limits_field(rec, pn_old, ps_old):
     _pen_perp_pt). Falls back to the incumbent walker's curve per side on
     any sanity failure, so this can never produce something worse.
 
-    Validated against baseline truth: incumbent ~9 km -> sub-km (see session log)."""
+    Validated against Jubier: incumbent ~9 km -> sub-km (see session log)."""
     ge_lat = rec.get('lat_dd_ge'); ge_lon = rec.get('lng_dd_ge')
     if ge_lat is None or ge_lon is None: return pn_old, ps_old
 
@@ -1996,6 +1779,21 @@ def penumbral_limits_field(rec, pn_old, ps_old):
     return pn, ps
 
 
+def _cone_worst_turn(seg, end_margin=0):
+    # Worst interior great-circle turn, optionally ignoring a margin of vertices
+    # at each end. A limb runs tip-to-tip; its termini are legitimate cusps (a
+    # grazing annular ends in a point), so their sharpness must not be read as a
+    # body kink. Mirrors the audit's CUSP_MARGIN philosophy.
+    wv = 0.0
+    for i in range(1 + end_margin, len(seg) - 1 - end_margin):
+        if abs(seg[i][1]) > 85: continue
+        b1 = _gc_bearing((seg[i - 1][1], seg[i - 1][0]), (seg[i][1], seg[i][0]))
+        b2 = _gc_bearing((seg[i][1], seg[i][0]), (seg[i + 1][1], seg[i + 1][0]))
+        dd = abs(math.degrees(b2 - b1)) % 360
+        wv = max(wv, min(dd, 360 - dd))
+    return wv
+
+
 def _cone_sun_alt(rec, lat, lon):
     """Sun altitude (deg) at the ground point (lat, lon) at the instant of ITS
     OWN maximum eclipse. >= 0 means the eclipse is visible (sun up) there; the
@@ -2023,6 +1821,35 @@ def _cone_sun_alt(rec, lat, lon):
     return math.degrees(math.asin(max(-1.0, min(1.0, bz))))
 
 
+def _cone_clip_horizon(rec, limb):
+    """Terminate a cone limb on the green line by keeping its LONGEST contiguous
+    above-horizon (sun_alt >= 0) run. The umbral limit exists only where the
+    eclipse is visible; at a terminator tip the contour rounds the corner from
+    one limb into the other by dipping below the horizon, and that arc is not part
+    of either limit. Keeping the longest visible run drops it cleanly EVEN when the
+    dip is bracketed by near-zero green-line touches at both ends (a high-ΔT case
+    where the apex itself sits at alt ~ 0, so a from-the-ends trim would stop short
+    and leave the dip — the original -1213 zigzag). A no-op for limbs entirely
+    above the horizon (open daytime ends)."""
+    if len(limb) < 6:
+        return limb
+    vis = [_cone_sun_alt(rec, p[1], p[0]) >= 0.0 for p in limb]
+    best_lo = 0; best_hi = len(limb); best = 0
+    i = 0; n = len(limb)
+    while i < n:
+        if not vis[i]:
+            i += 1; continue
+        j = i
+        while j < n and vis[j]:
+            j += 1
+        if j - i > best:
+            best = j - i; best_lo, best_hi = i, j
+        i = j
+    if best == 0:
+        return limb
+    return limb[best_lo:best_hi]
+
+
 def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     tmin=rec['tmin']; tmax=rec['tmax']; step=step_min/60.0
     # Central eclipses include all T (total), A (annular), H (hybrid)
@@ -2039,7 +1866,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     # distance per step. Slow-moving graze regions near the tips automatically
     # get fine sampling; fast straight midsegments get coarse sampling. No
     # special tip-region logic is required and there is no kink at any join.
-    MAX_KM   = 30.0    # match the baseline's sampling density (~30 km/sample)
+    MAX_KM   = 30.0    # match Jubier's sampling density (~30 km/sample)
     MIN_KM   = 10.0    # ≥ a third of MAX_KM, to avoid wasted points
     DT_MIN   = 1.0/3600.0       # 1 second
     DT_MAX   = step             # 1 minute (existing STEP_MIN)
@@ -2240,7 +2067,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         def _max_sun_alt(lat, lon):
             # Sun altitude (deg) at this ground point at the instant of ITS OWN
             # maximum eclipse. >=0 => eclipse visible (sun up) at max. The locus
-            # where ==0 is the baseline's "Maximum on Horizon" curve; he terminates
+            # where ==0 is Jubier's "Maximum on Horizon" curve; he terminates
             # every limit and the centreline there (visible-totality).
             def adz(t):
                 X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
@@ -2264,7 +2091,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         def _visible_trim(walk):
             # Keep the longest contiguous run of points whose own maximum
             # eclipse is sunlit (sun alt >= 0): terminate each curve on the
-            # Maximum-on-Horizon (green) curve, the baseline's universal rule. No-op
+            # Maximum-on-Horizon (green) curve, Jubier's universal rule. No-op
             # when the whole curve is sunlit (ordinary eclipses).
             if not walk: return walk
             vis = [_max_sun_alt(la, lo) >= 0.0 for (_, la, lo) in walk]
@@ -2283,7 +2110,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         # lands exactly ON the magnitude=1 contour (it solves mag=1 along the
         # chord) but where the green curve bends hard the crossing point is
         # displaced ALONG that contour: 2028-07-22's south tip sat 43.8 km
-        # from the baseline's, at alt-at-max = -0.149 deg with |mag-1| ~ 1e-6.
+        # from Jubier's, at alt-at-max = -0.149 deg with |mag-1| ~ 1e-6.
         # Polish: predictor-corrector walk ALONG the exact mag=1 contour
         # (step on the local tangent, bisect back onto mag=1 along the
         # normal), moving in the direction of increasing alt-at-own-max,
@@ -2398,7 +2225,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         # envelope is never harmed.
         # Tips are OPEN: each umbral limit ends at its true terminus on the
         # green (Maximum-on-Horizon) line via _terminate_on_green; no cap bridges
-        # the north and south limits. This matches the baseline's universal model
+        # the north and south limits. This matches Jubier's universal model
         # (verified across all test KMZs).
     else:
         # Partial / non-central eclipse: only the centreline is meaningful,
@@ -2430,57 +2257,6 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
             _n_segs, _s_segs = perpendicular_limits(rec, cl, _cl_times)
         except Exception:
             _n_segs, _s_segs = [], []
-        # Narrow-band densification. On near-grazing eclipses the umbral
-        # band can be narrower than the chord sagitta of the standard
-        # 1-minute sampling (~15 km spacing): 1986-10-03's band thins to
-        # 2.4 km and the drawn centreline chords exited the drawn band by
-        # up to 152 m — the "centreline outside the umbral path" effect.
-        # Where the local band width drops below NARROW_KM, resample the
-        # centreline walk so vertex spacing tracks the width, and rerun the
-        # perpendicular march on the refined times. Pure resampling of the
-        # same exact curves; costs nothing except on grazers.
-        NARROW_KM = 12.0
-        if (_n_segs or _s_segs) and len(walk) >= 3:
-            _unf = [q for s in _n_segs for q in s]
-            _usf = [q for s in _s_segs for q in s]
-            def _gckm(a, b):
-                h = (math.sin((b[1] - a[1]) * DEG / 2) ** 2
-                     + math.cos(a[1] * DEG) * math.cos(b[1] * DEG)
-                     * math.sin((b[0] - a[0]) * DEG / 2) ** 2)
-                return 6371.0 * 2.0 * math.asin(min(1.0, math.sqrt(abs(h))))
-            def _width_at(lon, lat):
-                if not _unf or not _usf: return 1e9
-                dn = min(_gckm((lon, lat), q) for q in _unf)
-                ds = min(_gckm((lon, lat), q) for q in _usf)
-                return dn + ds
-            wds = [_width_at(lon, lat) for (_t, lat, lon) in walk]
-            # Only INTERIOR narrowness qualifies: every eclipse's band
-            # tapers to zero at its grazing tips, which the tip caps
-            # already handle — densifying there merely perturbs validated
-            # tip geometry (2033's umbra_s max drifted 1.9 -> 3.7 km).
-            _in0, _in1 = 3, len(walk) - 5
-            _interior = [w for w in wds[_in0:_in1 + 1]]
-            if _interior and min(_interior) < NARROW_KM:
-                walk2 = [walk[0]]
-                for i in range(len(walk) - 1):
-                    (t0, la0, lo0), (t1, la1, lo1) = walk[i], walk[i + 1]
-                    w = min(wds[i], wds[i + 1])
-                    if w < NARROW_KM and _in0 <= i <= _in1:
-                        span = _gckm((lo0, la0), (lo1, la1))
-                        target = max(0.8, w / 1.5)
-                        nsub = min(40, max(1, int(math.ceil(span / target))))
-                        for k in range(1, nsub):
-                            tk = t0 + (t1 - t0) * k / nsub
-                            pk = centreline_pt(rec, tk)
-                            if pk: walk2.append((tk, pk[0], pk[1]))
-                    walk2.append(walk[i + 1])
-                walk = walk2
-                cl = [[round(lon, 5), round(lat, 5)] for (_t, lat, lon) in walk]
-                cl_segs = [cl]
-                try:
-                    _n_segs, _s_segs = perpendicular_limits(rec, cl, [w[0] for w in walk])
-                except Exception:
-                    pass
         if _n_segs or _s_segs:
             un_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _n_segs]
             us_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _s_segs]
@@ -2504,7 +2280,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         # a garbled stub (the 1523 "zigzag"). The catalog's own type code flags the
         # case — a 2nd character in n/s/-/+ means one limit. Trace that single edge
         # analytically with umbral_pts (per-time envelope, needs no centreline,
-        # smooth by construction). Validated vs baseline truth on the 1598 annular grazer
+        # smooth by construction). Validated vs Jubier on the 1598 annular grazer
         # (6/115); resolves 1523 Tn to a clean single south limit.
         try:
             _ts = [tmin + (tmax - tmin) * i / 1200.0 for i in range(1201)]
@@ -2606,15 +2382,6 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         result[fld] = [simplify_dp(seg, tol=DP_TIGHT) for seg in result[fld]]
     for fld in ('penumbra_n', 'penumbra_s', 'terminator_first', 'terminator_last'):
         result[fld] = [simplify_dp(seg, tol=DP_LOOSE) for seg in result[fld]]
-
-    # Join the lemniscates to the penumbral limits vertex-exactly: each true
-    # penumbral terminus (magnitude-0 graze exactly at sunrise/sunset) lies
-    # ON the rise/set curve, so insert it as a vertex. Done AFTER polyline
-    # simplification, which would otherwise drop the inserted vertex where
-    # the loop is locally straight (within the 200 m DP tolerance).
-    _juncs = ([s[0][0] for s in (result['penumbra_n'], result['penumbra_s']) if s and s[0]]
-              + [s[0][-1] for s in (result['penumbra_n'], result['penumbra_s']) if s and s[0]])
-    _insert_rs_junctions(rec, result['terminator_first'], result['terminator_last'], _juncs)
     # ── Junction indices: where penumbra endpoints meet terminator loops ──
     # Computed after DP so indices reference the final simplified curves.
     def _junction_idx(term_segs, penumbra_endpoint):
@@ -2889,7 +2656,7 @@ def main():
 def run_tests():
     cases=[
         ('2017 Aug 21 Total',{
-            # NOTE: x0,y0,mu0 derived from reference KMZ GE coordinates.
+            # NOTE: x0,y0,mu0 derived from Jubier KMZ GE coordinates.
             # The Five Millennium Canon has mu0≈163.8° which is wrong;
             # correct values below were back-solved from ge=(−87.664°,36.966°).
             "year":2017,"month":8,"day":21,"cat_no":9681,"eclipse_type":"T",
@@ -3069,7 +2836,7 @@ def _terminate_on_green(segs, termini):
     resolution) — no absolute constant. Fires wherever the march stops more than
     one sample short of the exact corner: this corrects the previously-known ~1%
     terminus shortfall on EVERY central eclipse (verified to bring non-loop limb
-    ends from 18-25 km short to 0-1 km of baseline truth), and removes the inward curl on
+    ends from 18-25 km short to 0-1 km of Jubier), and removes the inward curl on
     near-pole loops, in one rule.
 
     All distances are great-circle: a limb that crosses the antimeridian has its

@@ -60,7 +60,10 @@ function updateCoordsStatus() {
   var lonS   = c.lon >= 0 ? c.lon.toFixed(5)+'\u00b0E' : Math.abs(c.lon).toFixed(5)+'\u00b0W';
   var effAlt = _lookedUpAlt;
   var alt    = effAlt ? ' \u00b7 ' + effAlt + '\u2009m' : '';
-  el.textContent = latS + '\u2002' + lonS + alt;
+  /* If the location came from a place NAME, lead with it — the parser already keeps
+     filter.city; we were just throwing it away on display. */
+  var place = currentFilter.city ? currentFilter.city + '\u2002\u00b7\u2002' : '';
+  el.textContent = place + latS + '\u2002' + lonS + alt;
   el.style.color = 'var(--text-dim)';
 }
 

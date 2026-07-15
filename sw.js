@@ -27,14 +27,9 @@ const CORE = [
   'data/basemap/ne2.jpg',
   'data/basemap/countries.geojson.gz',
   'data/basemap/cities.geojson.gz',
-  'data/basemap/land.geojson.gz',
   'data/basemap/lakes.geojson.gz',
   'data/basemap/rivers.geojson.gz',
   'data/basemap/states.geojson.gz',
-  'data/basemap/land_lo.geojson.gz',       // 110m mobile set
-  'data/basemap/countries_lo.geojson.gz',
-  'data/basemap/rivers_lo.geojson.gz',
-  'data/basemap/lakes_lo.geojson.gz',
   'data/index.json',
 ];
 

@@ -21,7 +21,7 @@
       --serif:       'Cormorant Garamond', Georgia, serif;
       --radius:      4px;
       --tab-h:       3rem;
-      --header-h:    5.5rem;
+      --header-h:    3.4rem;   /* slimmed: subtitle removed, so no two-line stack */
     }
 
 
@@ -93,13 +93,6 @@
       text-transform: uppercase;
     }
 
-    .app-subtitle {
-      font-family:    var(--mono);
-      font-size:      0.68rem;
-      color:          var(--text-dim);
-      letter-spacing: 0.08em;
-    }
-
 
 
     /* ── Tab bar ─────────────────────────────────────────────────────── */
@@ -126,6 +119,19 @@
       transition:     all 0.15s;
       padding:        0 0.5rem;
     }
+    /* Hamburger as an inline SVG, not the ☰ glyph: the glyph renders hairline-thin on
+       iOS and fuses into a block when stroked. Solid rounded bars read cleanly at any
+       size and match the visual weight of the colour-emoji tab icons. */
+    .tab-icon-svg {
+      width: 1.15em;
+      height: 1.15em;
+      vertical-align: -0.2em;
+      fill: var(--gold);                 /* the app's accent — holds its own beside the emoji */
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35));
+    }
+    .tab-btn.active .tab-icon-svg,
+    .sidebar-tab-btn.active .tab-icon-svg { fill: var(--gold2); }
+
     .tab-btn:hover    { color: var(--text); }
     .tab-btn.active   {
       color:        var(--gold2);
@@ -1175,11 +1181,17 @@
 
 /* Floating map status overlay (eclipse label / "tap to set location") */
 .map-status {
-  position: absolute; bottom: 2.5rem; left: 50%;
-  transform: translateX(-50%);
-  font-family: var(--mono); font-size: 0.7rem; color: var(--text-dim);
+  /* Bottom-LEFT, not centred: centred, it sat right where the paths and the pin are,
+     and fought the terrain for legibility. Cornered, it's always findable and never
+     covers the thing you're looking at. */
+  position: absolute; bottom: 0.85rem; left: 0.85rem;
+  font-family: var(--mono); font-size: 0.78rem; color: var(--text);
+  font-weight: 600; letter-spacing: 0.02em;
   pointer-events: none; background: var(--bg2);
-  padding: 0.25rem 0.75rem; border-radius: 99px; opacity: 0.85;
+  padding: 0.3rem 0.85rem; border-radius: 99px; opacity: 1;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.35);
+  white-space: nowrap;          /* it was wrapping mid-date */
+  max-width: calc(100% - 1.5rem);
   display: none;
 }
 
@@ -1191,3 +1203,93 @@
 
 .ct-row { cursor: pointer; }
 .ct-row:hover td { background: rgba(200,169,110,0.12); }
+
+
+/* ── Settings / About body text ────────────────────────────────────────────
+   These panels were inheriting a larger base size than the rest of the app, so on
+   mobile the prose read noticeably bigger than everything else. Pin them to the
+   standard body size. */
+#tab-settings p,
+#tab-settings li,
+#tab-settings .settings-group > div,
+#tab-settings .top-section-header + p {
+  font-size: 0.75rem;      /* matches the app's standard body size (was ~1rem → read as huge) */
+  line-height: 1.55;
+}
+
+
+/* ── Asset loading crawlbar ────────────────────────────────────────────────
+   A 1px white bar riding the banner's bottom hairline. Indeterminate: it crawls
+   while any tracked fetch is in flight, so "the page is up but still loading" is
+   visible rather than guessed at. */
+.load-bar {
+  position: relative;
+  height: 1px;
+  width: 100%;
+  overflow: hidden;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  z-index: 50;
+}
+.load-bar.active { opacity: 1; }
+.load-bar-run {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  width: 22%;
+  /* Solid segment with only slightly softened ends — a steady crawl. The old
+     transparent→white→transparent gradient pulsed like a lightning zap. */
+  background: rgba(255,255,255,0.85);
+  border-radius: 1px;
+  animation: load-crawl 2.4s linear infinite;   /* slower, calmer */
+}
+@keyframes load-crawl {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(555%); }
+}
+
+/* ── Hamburger throb: fresh local circumstances are waiting in Details ──────── */
+@keyframes tab-throb {
+  0%, 100% { transform: scale(1);    filter: brightness(1); }
+  50%      { transform: scale(1.18); filter: brightness(1.75) drop-shadow(0 0 4px var(--gold)); }
+}
+@media (max-width: 899px) {
+  .tab-btn.has-fresh .tab-icon-svg {
+    animation: tab-throb 1.1s ease-in-out 1;    /* a single pulse is enough */
+    transform-origin: center;
+  }
+}
+
+/* ── Phone in LANDSCAPE: reclaim vertical space ────────────────────────────
+   Browser chrome + our banner + tab bar left almost nothing for the map. In a short
+   landscape viewport, drop the banner entirely (the tab bar already identifies the
+   app) and tighten the tabs. */
+@media (max-width: 950px) and (orientation: landscape) and (max-height: 500px) {
+  :root { --header-h: 0rem; }
+  .app-header { display: none; }
+
+  .tab-btn {
+    padding: 0.3rem 0.55rem;
+    font-size: 0.66rem;
+  }
+  .tab-label { display: none; }        /* icons only — the labels are the fat here */
+  .tab-icon-svg { width: 1em; height: 1em; }
+
+  .map-status { bottom: 1.2rem; font-size: 0.7rem; padding: 0.2rem 0.6rem; }
+}
+
+/* ── Install prompt ────────────────────────────────────────────────────────
+   Mobile BROWSERS only. Hidden on desktop (irrelevant) and in the installed
+   standalone app (<html class="is-standalone">, where it would be absurd). */
+.install-note { display: none; }
+@media (max-width: 899px) {
+  html:not(.is-standalone) .install-note {
+    display: block;
+    margin-top: 0.6rem;
+    padding: 0.5rem 0.7rem;
+    border-left: 2px solid var(--gold);
+    background: rgba(200,169,110,0.08);
+  }
+}
