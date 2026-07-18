@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>probe</title>
+<div id="log" style="font:15px/1.6 monospace;white-space:pre-wrap;padding:14px;color:#111">probe starting…
+</div>
+<script>
+  var log = document.getElementById('log');
+  function L(m){ log.textContent += m + "\n"; }
+  L('1. INLINE JS RUNS  ✓  (if you never see this line, CSP is blocking inline scripts)');
+  window.onerror = function(m){ L('window.onerror: ' + m); };
+  var s = document.createElement('script');
+  s.src = 'https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js';
+  s.onload  = function(){ L('2. CESIUM CDN LOADED  ✓  typeof Cesium = ' + (typeof Cesium)); };
+  s.onerror = function(){ L('2. CESIUM CDN BLOCKED  ✗  (CSP script-src or network)'); };
+  document.head.appendChild(s);
+  setTimeout(function(){ L('— end of probe (if only line 1 shows, the CDN is blocked) —'); }, 6000);
+</script>

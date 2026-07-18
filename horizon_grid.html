@@ -1,0 +1,125 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>horizon grid — 2026-08-12 Spain</title>
+<link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Widgets/widgets.css">
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js"></script>
+<style>
+  #c{position:fixed;inset:0}
+  #log{position:fixed;top:0;left:0;right:0;z-index:99;font:13px/1.45 monospace;white-space:pre-wrap;
+       padding:9px 11px;color:#8f8;background:rgba(0,0,0,.72)}
+  #log b{color:#ffd27a}
+</style>
+<div id="c"></div>
+<div id="log">horizon grid tracing…
+</div>
+<script>
+  var log=document.getElementById('log');
+  function L(m){ log.textContent += m+"\n"; }
+  window.onerror=function(m,s,ln){ L('✗ onerror: '+m+' @'+ln); };
+  window.addEventListener('unhandledrejection',function(e){ L('✗ rejection: '+(e.reason&&(e.reason.message||e.reason))); });
+
+  var TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIyNmQyYmQwMC03Nzk3LTQwYjUtODVjNC04Y2U3ZDVjMTNjODAiLCJpZCI6NDU2OTAzLCJpc3MiOiJodHRwczovL2FwaS5jZXNpdW0uY29tIiwiYXVkIjoidW5kZWZpbmVkX2RlZmF1bHQiLCJpYXQiOjE3ODQxNTg5ODR9.ax7uLUdH61cKXQuE1GYSRtYnC2pLQI4YIPXpEev-6Xw';
+  var LAT=41.9851, LON=-3.4186, MAX_UTC='2026-08-12T18:28:41Z';
+  var R=6371000, RAD=Math.PI/180;
+  var N=80, HALF=0.11;                 // 80x80 grid over ~±12 km
+  var MARCH=20000, MSTEP=300;          // horizon march: 20 km in 300 m steps
+  var cosLat=Math.cos(LAT*RAD), HALFLON=HALF/cosLat;
+  var lat0=LAT-HALF, lon0=LON-HALFLON, dLat=2*HALF/(N-1), dLon=2*HALFLON/(N-1);
+  var M_PER_DEG=111320;
+
+  function sunAltAz(ms){
+    var n=ms/86400000+2440587.5-2451545.0;
+    var Lo=(((280.460+0.9856474*n)%360)+360)%360, g=((((357.528+0.9856003*n)%360)+360)%360)*RAD;
+    var lam=(Lo+1.915*Math.sin(g)+0.020*Math.sin(2*g))*RAD, eps=(23.439-0.0000004*n)*RAD;
+    var al=Math.atan2(Math.cos(eps)*Math.sin(lam),Math.cos(lam)), de=Math.asin(Math.sin(eps)*Math.sin(lam));
+    var gmst=((((280.46061837+360.98564736629*n)%360))+360)%360, ha=(gmst+LON)*RAD-al, la=LAT*RAD;
+    var alt=Math.asin(Math.sin(la)*Math.sin(de)+Math.cos(la)*Math.cos(de)*Math.cos(ha));
+    var az=Math.atan2(-Math.sin(ha),Math.tan(de)*Math.cos(la)-Math.sin(la)*Math.cos(ha));
+    return { alt:alt/RAD, az:((az/RAD)+360)%360 };
+  }
+  function nowMs(){ return Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime(); }
+
+  var viewer, H=null, pts=null, lastCompute=0;
+  try {
+    L('A. token'); Cesium.Ion.defaultAccessToken=TOKEN;
+    L('B. viewer…');
+    viewer=new Cesium.Viewer('c',{ baseLayerPicker:false, geocoder:false, homeButton:false,
+      sceneModePicker:false, navigationHelpButton:false, infoBox:false, selectionIndicator:false,
+      timeline:true, animation:true });
+    L('C. viewer ✓'); viewer.scene.globe.enableLighting=false;
+    var t=Cesium.JulianDate.fromIso8601(MAX_UTC);
+    viewer.clock.currentTime=t.clone(); viewer.clock.shouldAnimate=false; viewer.clock.multiplier=120;
+    viewer.timeline.zoomTo(Cesium.JulianDate.addMinutes(t,-120,new Cesium.JulianDate()),
+                           Cesium.JulianDate.addMinutes(t,120,new Cesium.JulianDate()));
+    L('D. terrain…');
+    var terr=Cesium.Terrain.fromWorldTerrain();
+    terr.errorEvent.addEventListener(function(e){ L('✗ terrain error: '+(e&&(e.message||e))); });
+    terr.readyEvent.addEventListener(function(p){ L('E. terrain ready ✓'); sampleGrid(p); });
+    viewer.scene.setTerrain(terr);
+    L('D2. waiting…');
+  } catch(e){ L('✗ setup threw: '+(e.message||e)); }
+
+  function sampleGrid(provider){
+    try {
+      var carts=[];
+      for(var r=0;r<N;r++) for(var c=0;c<N;c++)
+        carts.push(Cesium.Cartographic.fromDegrees(lon0+c*dLon, lat0+r*dLat));
+      L('F. sampling '+carts.length+' grid points…');
+      Cesium.sampleTerrain(provider,12,carts).then(function(res){
+        L('G. grid sampled ✓');
+        H=new Float32Array(N*N);
+        for(var i=0;i<res.length;i++) H[i]=(res[i].height==null?0:res[i].height);
+        buildPoints();
+        L('H. '+ (N*N) +' points built ✓');
+        viewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(LON, LAT-0.12, H[Math.floor(N*N/2)]+17000),
+          orientation:{ heading:0, pitch:-45*RAD, roll:0 } });
+        viewer.clock.onTick.addEventListener(tick); recolor();
+        L('I. running — scrub the timeline'); 
+      }).catch(function(e){ L('✗ sampleTerrain: '+(e.message||e)); });
+    } catch(e){ L('✗ sampleGrid: '+(e.message||e)); }
+  }
+
+  function buildPoints(){
+    pts=viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+    for(var r=0;r<N;r++) for(var c=0;c<N;c++){
+      pts.add({ position:Cesium.Cartesian3.fromDegrees(lon0+c*dLon, lat0+r*dLat, H[r*N+c]),
+        pixelSize:7, color:Cesium.Color.GRAY });
+    }
+  }
+
+  // is grid cell (r,c) sunlit for sun alt/az? march through H toward the sun.
+  function sunlitAt(r,c,alt,az){
+    var h0=H[r*N+c]+1.7;
+    var sinA=Math.sin(az*RAD), cosA=Math.cos(az*RAD), maxAng=-90;
+    for(var d=MSTEP; d<=MARCH; d+=MSTEP){
+      var dlat=(cosA*d)/M_PER_DEG, dlon=(sinA*d)/(M_PER_DEG*cosLat);
+      var rr=Math.round((dlat)/dLat)+r, cc=Math.round((dlon)/dLon)+c;
+      var h;
+      if(rr<0||rr>=N||cc<0||cc>=N) h=0;      // outside grid: assume flat (conservative)
+      else h=H[rr*N+cc];
+      var dz=h-h0-(d*d)/(2*R), a=Math.atan2(dz,d)/RAD;
+      if(a>maxAng) maxAng=a;
+      if(maxAng>=alt) return false;          // already blocked
+    }
+    return alt>maxAng;
+  }
+
+  function recolor(){
+    if(!H||!pts) return;
+    var s=sunAltAz(nowMs());
+    var night=s.alt<=0;
+    for(var r=0;r<N;r++) for(var c=0;c<N;c++){
+      var p=pts.get(r*N+c);
+      if(night){ p.color=Cesium.Color.fromBytes(40,40,60); continue; }
+      p.color = sunlitAt(r,c,s.alt,s.az) ? Cesium.Color.fromBytes(120,240,90)
+                                         : Cesium.Color.fromBytes(230,70,70);
+    }
+    log.innerHTML='<b>Sunlit-map grid · 2026-08-12 · Spain</b>\n'+
+      'sun alt '+s.alt.toFixed(1)+'° az '+s.az.toFixed(1)+'° '+(night?'(night)':'')+'\n'+
+      N+'×'+N+' points over ±12 km · green=sunlit red=shadowed\n'+
+      'scrub the timeline — watch shadows sweep across the terrain';
+  }
+
+  function tick(){ var now=Date.now(); if(now-lastCompute<160) return; lastCompute=now; recolor(); }
+</script>

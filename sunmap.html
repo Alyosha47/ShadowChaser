@@ -1,0 +1,164 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>sunmap v14 — 2026-08-12 Spain</title>
+<link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Widgets/widgets.css">
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js"></script>
+<style>
+  #c{position:fixed;inset:0}
+  #log{position:fixed;top:0;left:0;right:0;z-index:99;font:13px/1.45 monospace;white-space:pre-wrap;
+       padding:9px 11px;color:#8f8;background:rgba(0,0,0,.72)}
+  #log b{color:#ffd27a}
+</style>
+<div id="c"></div>
+<div id="log">sunmap v14 tracing…
+</div>
+<script>
+  var VERSION='sunmap v14 (in-place recolor)';
+  var log=document.getElementById('log');
+  function L(m){ log.textContent += m+"\n"; }
+  window.onerror=function(m,s,ln){ L('✗ onerror: '+m+' @'+ln); };
+  window.addEventListener('unhandledrejection',function(e){ L('✗ rejection: '+(e.reason&&(e.reason.message||e.reason))); });
+
+  var TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIyNmQyYmQwMC03Nzk3LTQwYjUtODVjNC04Y2U3ZDVjMTNjODAiLCJpZCI6NDU2OTAzLCJpc3MiOiJodHRwczovL2FwaS5jZXNpdW0uY29tIiwiYXVkIjoidW5kZWZpbmVkX2RlZmF1bHQiLCJpYXQiOjE3ODQxNTg5ODR9.ax7uLUdH61cKXQuE1GYSRtYnC2pLQI4YIPXpEev-6Xw';
+  var LAT=41.9851, LON=-3.4186, MAX_UTC='2026-08-12T18:28:41Z';
+  var R=6371000, RAD=Math.PI/180, M_PER_DEG=111320;
+  var N=90, PAD=0.14, MAXSPAN=0.9, MARCH=20000, MSTEP=300;
+
+  function sunAltAz(ms){
+    var n=ms/86400000+2440587.5-2451545.0;
+    var Lo=(((280.460+0.9856474*n)%360)+360)%360, g=((((357.528+0.9856003*n)%360)+360)%360)*RAD;
+    var lam=(Lo+1.915*Math.sin(g)+0.020*Math.sin(2*g))*RAD, eps=(23.439-0.0000004*n)*RAD;
+    var al=Math.atan2(Math.cos(eps)*Math.sin(lam),Math.cos(lam)), de=Math.asin(Math.sin(eps)*Math.sin(lam));
+    var gmst=((((280.46061837+360.98564736629*n)%360))+360)%360, ha=(gmst+LON)*RAD-al, la=LAT*RAD;
+    var alt=Math.asin(Math.sin(la)*Math.sin(de)+Math.cos(la)*Math.cos(de)*Math.cos(ha));
+    var az=Math.atan2(-Math.sin(ha),Math.tan(de)*Math.cos(la)-Math.sin(la)*Math.cos(ha));
+    return { alt:alt/RAD, az:((az/RAD)+360)%360 };
+  }
+  function nowMs(){ return Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime(); }
+
+  var viewer, H=null, HA=null, AZMAX=null, grid=null, pts=null, busy=false, lastMs=-1, lastPaint=0;
+  var MODE=2, MODES=['off','shade','answer'];
+
+  try {
+    L('A. token'); Cesium.Ion.defaultAccessToken=TOKEN;
+    L('B. viewer…');
+    viewer=new Cesium.Viewer('c',{ baseLayerPicker:false, geocoder:false, homeButton:false,
+      sceneModePicker:false, navigationHelpButton:false, infoBox:false, selectionIndicator:false,
+      timeline:true, animation:true });
+    L('C. viewer ✓'); viewer.scene.globe.enableLighting=false;
+    var t=Cesium.JulianDate.fromIso8601(MAX_UTC);
+    viewer.clock.currentTime=t.clone(); viewer.clock.shouldAnimate=false; viewer.clock.multiplier=120;
+    viewer.timeline.zoomTo(Cesium.JulianDate.addMinutes(t,-120,new Cesium.JulianDate()),
+                           Cesium.JulianDate.addMinutes(t,120,new Cesium.JulianDate()));
+    L('D. terrain…');
+    var terr=Cesium.Terrain.fromWorldTerrain();
+    terr.errorEvent.addEventListener(function(e){ L('✗ terrain error: '+(e&&(e.message||e))); });
+    terr.readyEvent.addEventListener(function(p){ L('E. terrain ready ✓'); onReady(p); });
+    viewer.scene.setTerrain(terr);
+    L('D2. waiting…');
+  } catch(e){ L('✗ setup threw: '+(e.message||e)); }
+
+  var provider=null;
+  function onReady(p){
+    provider=p;
+    var ctl=viewer.scene.screenSpaceCameraController;
+    ctl.enableTilt=false; ctl.enableLook=false;                 // overhead-only, like the app
+    viewer.camera.setView({ destination:Cesium.Cartesian3.fromDegrees(LON, LAT, 22000),
+      orientation:{ heading:0, pitch:-Cesium.Math.PI_OVER_TWO, roll:0 } });
+    pts=viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+    rebuild();
+    viewer.camera.moveEnd.addEventListener(function(){ rebuild(); });
+    viewer.clock.onTick.addEventListener(tick);
+  }
+
+  function rebuild(){
+    if(busy||!provider) return; busy=true;
+    try {
+      var vr=viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid), w,s,e,nn;
+      if(vr){ w=vr.west/RAD; s=vr.south/RAD; e=vr.east/RAD; nn=vr.north/RAD; }
+      else { w=LON-0.1; e=LON+0.1; s=LAT-0.1; nn=LAT+0.1; }
+      w-=PAD; e+=PAD; s-=PAD; nn+=PAD;
+      var midLat=(s+nn)/2, midLon=(w+e)/2;
+      if(e-w>MAXSPAN){ w=midLon-MAXSPAN/2; e=midLon+MAXSPAN/2; }
+      if(nn-s>MAXSPAN){ s=midLat-MAXSPAN/2; nn=midLat+MAXSPAN/2; }
+      var g={ latS:s, lonW:w, dLat:(nn-s)/(N-1), dLon:(e-w)/(N-1), cosLat:Math.cos(midLat*RAD) };
+      var carts=[];
+      for(var r=0;r<N;r++) for(var c=0;c<N;c++)
+        carts.push(Cesium.Cartographic.fromDegrees(g.lonW+c*g.dLon, g.latS+r*g.dLat));
+      L('F. resampling '+carts.length+' pts…');
+      Cesium.sampleTerrain(provider,12,carts).then(function(res){
+        var h=new Float32Array(N*N);
+        for(var i=0;i<res.length;i++) h[i]=(res[i].height==null?0:res[i].height);
+        H=h; grid=g;
+        AZMAX=sunAltAz(Date.parse(MAX_UTC)).az;
+        var ha=new Float32Array(N*N);
+        for(var r=0;r<N;r++) for(var c=0;c<N;c++) ha[r*N+c]=horizonAngleAt(r,c,AZMAX,g);
+        HA=ha;
+        pts.removeAll();                                        // rebuild point field for new area
+        for(var r2=0;r2<N;r2++) for(var c2=0;c2<N;c2++)
+          pts.add({ position:Cesium.Cartesian3.fromDegrees(g.lonW+c2*g.dLon, g.latS+r2*g.dLat, H[r2*N+c2]),
+            pixelSize:16, color:Cesium.Color.TRANSPARENT,
+            disableDepthTestDistance:Number.POSITIVE_INFINITY });
+        L('G. '+(N*N)+' points built ✓');
+        busy=false; lastMs=-1; recompute();
+      }).catch(function(e){ busy=false; L('✗ sampleTerrain: '+(e.message||e)); });
+    } catch(e){ busy=false; L('✗ rebuild: '+(e.message||e)); }
+  }
+
+  function horizonAngleAt(r,c,az,g){
+    var h0=H[r*N+c]+1.7, sinA=Math.sin(az*RAD), cosA=Math.cos(az*RAD), maxAng=-90;
+    for(var d=MSTEP; d<=MARCH; d+=MSTEP){
+      var rr=r+Math.round((cosA*d)/M_PER_DEG/g.dLat);
+      var cc=c+Math.round((sinA*d)/(M_PER_DEG*g.cosLat)/g.dLon);
+      var h=(rr<0||rr>=N||cc<0||cc>=N)?0:H[rr*N+cc];
+      var dz=h-h0-(d*d)/(2*R), a=Math.atan2(dz,d)/RAD;
+      if(a>maxAng) maxAng=a;
+    }
+    return maxAng;
+  }
+
+  // margin(deg) + mode -> Cesium.Color (in-place recolor, no texture reload => smooth)
+  function cellColor(margin, night){
+    if(MODE===1){ // shade
+      if(night) return Cesium.Color.fromBytes(20,26,44,150);
+      if(margin>0) return Cesium.Color.TRANSPARENT;
+      return Cesium.Color.fromBytes(28,38,66,150);
+    }
+    // answer colormap
+    if(night) return Cesium.Color.fromBytes(18,22,40,180);
+    var m=Math.max(-6,Math.min(6,margin));
+    if(m>=0){ var f=m/6;
+      return Cesium.Color.fromBytes(Math.round(80+175*f),Math.round(200+40*f),Math.round(120-100*f),200); }
+    var f2=-m/6;
+    return Cesium.Color.fromBytes(Math.round(40-20*f2),Math.round(90-50*f2),Math.round(150+80*f2),210);
+  }
+
+  function recompute(){
+    if(!H||!HA||!grid||!pts) return;
+    if(MODE===0){ pts.show=false; viewer.scene.requestRender(); banner('off'); return; }
+    pts.show=true;
+    var s=sunAltAz(nowMs()), night=s.alt<=0;
+    for(var r=0;r<N;r++) for(var c=0;c<N;c++){
+      var idx=r*N+c;
+      pts.get(idx).color = cellColor(s.alt-HA[idx], night);
+    }
+    viewer.scene.requestRender();
+    banner(MODES[MODE]+(night?' (night)':''), s);
+  }
+
+  function banner(mode, s){
+    log.innerHTML='<b>'+VERSION+' · 2026-08-12 Spain</b>\n'+
+      (s?('sun alt '+s.alt.toFixed(1)+'° az '+s.az.toFixed(1)+'°  '):'')+'\n'+
+      'mode: '+mode+'  ·  M cycle (off/shade/answer)  ·  pan/zoom · scrub';
+  }
+
+  function tick(){
+    var m=nowMs(); if(m===lastMs) return;
+    var now=Date.now(); if(now-lastPaint<70) return;
+    lastPaint=now; lastMs=m; recompute();
+  }
+  window.addEventListener('keydown',function(e){
+    if(e.key.toLowerCase()==='m'){ MODE=(MODE+1)%3; lastMs=-1; recompute(); }
+  });
+</script>

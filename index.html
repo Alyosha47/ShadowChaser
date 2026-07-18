@@ -11,14 +11,28 @@
     @font-face { font-family:'JetBrains Mono'; font-weight:400; font-style:normal;
       src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2'); }
   </style>
-  <link href="vendor/cesium-1.121/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#0b0e14">
-  <script>window.CESIUM_BASE_URL='vendor/cesium-1.121/Build/Cesium/';</script>
-  <script src="vendor/cesium-1.121/Build/Cesium/Cesium.js"></script>
+  <script src="vendor/maplibre-gl-csp-5.5.0.js"></script>
+  <!-- deck.gl renders ALL eclipse geometry (PathLayer / SolidPolygonLayer) as a
+       MapboxOverlay on top of MapLibre. Without it the map draws but no paths appear. -->
+  <script src="vendor/deck.min.js"></script>
+  <!-- The bundle exposes the global as `deck`; the map renderer calls `DeckGL`
+       (DeckGL.MapboxOverlay / .PathLayer / .SolidPolygonLayer). Alias the two. -->
+  <script>window.DeckGL = window.DeckGL || window.deck;</script>
+  <!-- CSP build ships its worker separately; MapLibre must be told where it lives
+       BEFORE any map is constructed, or worker creation fails at runtime. -->
+  <script>
+    if (window.maplibregl && maplibregl.setWorkerUrl) {
+      maplibregl.setWorkerUrl('vendor/maplibre-gl-csp-worker-5.5.0.js');
+    } else if (window.maplibregl) {
+      maplibregl.workerUrl = 'vendor/maplibre-gl-csp-worker-5.5.0.js';
+    }
+  </script>
     <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-07-14a">
+  <link rel="stylesheet" href="css/app.css?v=2026-07-18d">
 </head>
 <body>
 
@@ -249,7 +263,7 @@
             April 2026 to late 2033 &mdash; USNO quarterly forecast (<em>deltat.preds</em>);
             &minus;720 to 2050 (outside the USNO range) &mdash; Espenak&ndash;Meeus piecewise polynomial;
             before &minus;720 and after 2050 &mdash; Stephenson, Morrison &amp; Hohenkerk (2016) LOD integral extrapolation.</p>
-          <p><strong>Basemaps.</strong> Online imagery is Esri World Street Map (<em>esri.com</em>). Offline the globe uses NASA/NGDC Natural Earth II shaded relief, with vector coastlines, borders, rivers, lakes and cities from Natural Earth public-domain geodata (<em>naturalearthdata.com</em>). The globe itself is rendered with CesiumJS (Apache-2.0, <em>cesium.com</em>).</p>
+          <p><strong>Basemaps.</strong> Online imagery is Esri World Street Map (<em>esri.com</em>). Offline the globe uses NASA/NGDC Natural Earth II shaded relief, with vector coastlines, borders, rivers, lakes and cities from Natural Earth public-domain geodata (<em>naturalearthdata.com</em>). The map itself is rendered with MapLibre GL JS (BSD-3-Clause, <em>maplibre.org</em>).</p>
           <p><strong>Timezones</strong> are resolved offline via the <em>tz-lookup</em> polygon database. Elevation is auto-filled by the Open-Elevation API when online.</p>
         </div>
       </div>
@@ -426,7 +440,7 @@ window.scFlagFreshDetails = function () {
 };
 
 var DATA_BASE = './data';
-var BUILD     = '2026-07-14a';   /* ← THE single source. Everything below follows it. */
+var BUILD     = '2026-07-18d';   /* ← THE single source. Everything below follows it. */
 
 /* Propagate BUILD so it never has to be typed twice. The <meta name="build"> and
    every element with [data-build-stamp] are filled from this one constant, so a
@@ -462,7 +476,7 @@ if ('serviceWorker' in navigator) {
 <script src="js/local.js?v=2026-06-05c"></script>
 <script src="js/details.js?v=2026-06-05c"></script>
 <script src="js/url.js?v=2026-06-05c"></script>
-<script src="js/map.js?v=2026-07-14a"></script>
+<script src="js/map.js?v=2026-07-18d"></script>
 <script src="js/share.js?v=2026-06-05c"></script>
 <script src="js/init.js?v=2026-06-05c"></script>
 </body>
