@@ -1,0 +1,185 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>DEM spike — stage 1</title>
+<link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
+<script src="vendor/maplibre-gl-csp-5.5.0.js"></script>
+<script>
+  if (window.maplibregl && maplibregl.setWorkerUrl)
+    maplibregl.setWorkerUrl('vendor/maplibre-gl-csp-worker-5.5.0.js');
+</script>
+<style>
+  html,body{margin:0;height:100%}
+  #map{position:absolute;inset:0}
+  #log{position:absolute;top:0;left:0;right:0;z-index:9;font:13px/1.45 monospace;
+       white-space:pre-wrap;padding:9px 11px;color:#8f8;background:rgba(0,0,0,.75)}
+  #log b{color:#ffd27a}
+</style>
+<div id="map"></div>
+<div id="log">dem spike v2 — starting…
+</div>
+<script>
+var log=document.getElementById('log');
+function L(m){ log.textContent += m+"\n"; }
+window.onerror=function(m,s,ln){ L('✗ '+m+' @'+ln); };
+
+/* ── Stage 1 goal ─────────────────────────────────────────────────────────
+   Prove we can: fetch terrarium DEM tiles → upload to GPU → decode elevation
+   IN THE FRAGMENT SHADER → draw. Decoding on the GPU is the thing stage 2
+   (the raymarch) depends on, so this is the real foundation, not a mock.     */
+
+var TERRARIUM = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/';
+var DEM_Z_MAX = 12;          /* cap tile zoom: fewer tiles while we prove it out */
+var MIN_H = 0, MAX_H = 2600; /* grayscale range in metres */
+
+var map = new maplibregl.Map({
+  container:'map',
+  style:{ version:8, sources:{}, layers:[
+    { id:'bg', type:'background', paint:{ 'background-color':'#101418' } } ] },
+  center:[-3.4186,41.9851], zoom:9
+});
+L('A. map created');
+
+/* ── the custom layer ─────────────────────────────────────────────────── */
+var demLayer = {
+  id:'dem', type:'custom', renderingMode:'2d',
+  tiles:{},        /* key -> {tex, ready} */
+  program:null, aPos:null, uMatrix:null, uTex:null, uMin:null, uMax:null, buf:null,
+
+  onAdd: function(m, gl){
+    var vs =
+      'attribute vec2 a_pos;' +
+      'varying vec2 v_uv;' +
+      'uniform mat4 u_matrix;' +
+      'uniform vec4 u_rect;' +            /* x0,y0,dx,dy in mercator */
+      'void main(){' +
+      '  v_uv = a_pos;' +
+      '  vec2 merc = u_rect.xy + a_pos * u_rect.zw;' +
+      '  gl_Position = u_matrix * vec4(merc, 0.0, 1.0);' +
+      '}';
+    var fs =
+      'precision highp float;' +
+      'varying vec2 v_uv;' +
+      'uniform sampler2D u_tex;' +
+      'uniform float u_min; uniform float u_max;' +
+      'void main(){' +
+      '  vec4 c = texture2D(u_tex, v_uv);' +
+      /* terrarium: h = (R*256 + G + B/256) - 32768, channels are 0..1 here */
+      '  float h = (c.r*255.0*256.0 + c.g*255.0 + c.b*255.0/256.0) - 32768.0;' +
+      '  float t = clamp((h - u_min)/(u_max - u_min), 0.0, 1.0);' +
+      '  gl_FragColor = vec4(t, t, t, 0.85);' +
+      '}';
+    function sh(type, src){
+      var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) L('✗ shader: '+gl.getShaderInfoLog(s));
+      return s;
+    }
+    var p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p, gl.LINK_STATUS)) L('✗ link: '+gl.getProgramInfoLog(p));
+    this.program = p;
+    this.aPos    = gl.getAttribLocation(p,'a_pos');
+    this.uMatrix = gl.getUniformLocation(p,'u_matrix');
+    this.uRect   = gl.getUniformLocation(p,'u_rect');
+    this.uTex    = gl.getUniformLocation(p,'u_tex');
+    this.uMin    = gl.getUniformLocation(p,'u_min');
+    this.uMax    = gl.getUniformLocation(p,'u_max');
+    this.buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0, 1,0, 0,1, 1,1]), gl.STATIC_DRAW);
+    L('B. shader compiled + linked ✓');
+  },
+
+  /* which tiles cover the current view? */
+  wanted: function(){
+    var z = Math.min(DEM_Z_MAX, Math.max(0, Math.floor(map.getZoom())));
+    var b = map.getBounds(), n = Math.pow(2,z);
+    function xt(lon){ return Math.floor((lon+180)/360*n); }
+    function yt(lat){ var r=lat*Math.PI/180;
+      return Math.floor((1 - Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n); }
+    var x0=xt(b.getWest()), x1=xt(b.getEast());
+    var y0=yt(b.getNorth()), y1=yt(b.getSouth());
+    var out=[];
+    for(var x=x0;x<=x1;x++) for(var y=y0;y<=y1;y++){
+      if(x<0||y<0||x>=n||y>=n) continue;
+      out.push({z:z,x:x,y:y});
+      if(out.length>64) return out;         /* safety cap */
+    }
+    return out;
+  },
+
+  load: function(gl, t){
+    var key = t.z+'/'+t.x+'/'+t.y;
+    if(this.tiles[key]) return this.tiles[key];
+    var rec = { tex:null, ready:false };
+    this.tiles[key] = rec;
+    var img = new Image();
+    img.crossOrigin = 'anonymous';          /* needed to use it as a texture */
+    img.onload = function(){
+      var tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      /* NEAREST: never blend neighbouring DEM pixels — blending encoded
+         RGB would produce nonsense elevations. */
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      rec.tex = tex; rec.ready = true;
+      if(!demLayer._first){ demLayer._first=true; L('D. first DEM tile decoded on GPU ✓'); }
+      map.triggerRepaint();
+    };
+    img.onerror = function(){ L('✗ tile failed: '+key+'  (CORS or network)'); };
+    img.src = TERRARIUM + key + '.png';
+    return rec;
+  },
+
+  render: function(gl, args){
+    /* MapLibre v5 passes an options object (args.defaultProjectionData.mainMatrix);
+       older versions passed the matrix array directly. Accept both. */
+    var matrix = args;
+    if (args && !args.length) {
+      matrix = (args.defaultProjectionData && args.defaultProjectionData.mainMatrix) ||
+               args.mainMatrix || args.matrix;
+    }
+    if (!matrix || !matrix.length) {
+      if(!this._matErr){ this._matErr=true; L('✗ no usable matrix from MapLibre'); }
+      return;
+    }
+    var list = this.wanted(), n = Math.pow(2, list.length ? list[0].z : 0);
+    gl.useProgram(this.program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
+    gl.enableVertexAttribArray(this.aPos);
+    gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, 0, 0);
+    gl.uniformMatrix4fv(this.uMatrix, false, matrix);
+    gl.uniform1f(this.uMin, MIN_H);
+    gl.uniform1f(this.uMax, MAX_H);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    var drawn=0;
+    for(var i=0;i<list.length;i++){
+      var t=list[i], rec=this.load(gl,t);
+      if(!rec.ready) continue;
+      /* tile's mercator rect (0..1 across the world) */
+      gl.uniform4f(this.uRect, t.x/n, t.y/n, 1/n, 1/n);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, rec.tex);
+      gl.uniform1i(this.uTex, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      drawn++;
+    }
+    if(drawn && !this._reported){ this._reported=true;
+      L('E. rendering '+drawn+' DEM tiles — you should see grayscale terrain'); }
+  }
+};
+
+map.on('load', function(){
+  L('C. style loaded — adding DEM layer');
+  map.addLayer(demLayer);
+  setTimeout(function(){
+    if(!demLayer._first) L('… no tiles yet: check network / CORS on s3 terrarium');
+  }, 8000);
+});
+</script>
