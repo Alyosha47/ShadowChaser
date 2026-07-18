@@ -1,3 +1,76 @@
+# ⚠ STATUS UPDATE — 2026-07-18 — READ BEFORE ANYTHING BELOW
+
+**Everything below this block predates 2026-07-18 and is WRONG on the two biggest points.
+Where this block and the old text disagree, THIS BLOCK WINS.**
+
+> ### 📋 FIRST TASK FOR THE NEXT SESSION: CONSOLIDATE THIS DOCUMENT
+> This file is currently ~1,119 lines: a correction block on top of an older handoff that
+> contradicts it. That is safe but ugly. Read the whole thing with fresh attention and
+> rewrite it as ONE coherent document — preserving all still-valid detail (Besselian
+> pipeline, Jubier correctness standard, data layout, module map) while removing the
+> stale Cesium-renderer framing. Do this BEFORE starting feature work.
+
+## ⚠ LOOSE ENDS not recorded anywhere else (from the 2026-07-18 session)
+
+1. **`js/map.js` still contains shademap.app integration code with a live API key baked in.**
+   It was wired up before the decision to build our own raymarch. It is inert (off by
+   default, fails soft if the library is absent) but it is **dead code carrying a key**.
+   The key is **localhost-only** and shademap quoted **$25/month** for custom domains, which
+   is why we built our own. **Recommend deleting that block** (`SHADEMAP_KEY`, `initShadeMap`,
+   `setShadeDate`, `setShadeVisible`, `toggleShade`, `isPositionInSun`) and the
+   `vendor/shademap.umd.min.js` script tag in `index.html`.
+2. **`addPin` gap — UNRESOLVED.** The Cesium renderer exposed `addPin`; the MapLibre renderer
+   does not, and ~3 call sites elsewhere in the app call it. Verify whether this is actually
+   breaking anything and reconcile.
+3. **Standard test case** for any shadow/sun work: eclipse **2026-08-12**, observer
+   **41.9851°N, 3.4186°W**, greatest eclipse there **18:28:41 UTC**, **sun altitude 7.8°,
+   azimuth 282.9°**, totality ~1m45s. Deliberately a very low sun — the case that broke
+   Cesium's native shadows, so it is the right regression test.
+4. **Cesium ion token is committed** in the spike files. Restrict it to `followtheshadow.com`
+   in the ion console before any public release, or rotate it.
+
+## Corrections to the old handoff
+
+| Old handoff says | Reality as of 2026-07-18 |
+|---|---|
+| "The v2 Cesium migration is DONE"; working branch `cesium` | **Active branch is `maplibre`.** The app was reverted to MapLibre GL 5.5.0 + deck.gl. |
+| "`js/map_maplibre.js` is a vestigial file, not in use" | **It IS the live renderer**, now `js/map.js`. The Cesium renderer is preserved on branch `cesium`. |
+| "Cesium natively supports the terrain/shadow work" | **FALSE, and this claim cost months.** Tested and disproven — see below. |
+| "Do NOT hand Guy git commands. He does not use them" | **He now uses git.** Branches, commits and pushes are done from the command line. He still prefers receiving finished files for editing. |
+
+## The Cesium shadow claim — tested and disproven
+- Cesium's native shadow map (`viewer.shadows` + `ShadowMode.ENABLED`) **breaks at low sun
+  angles** — precisely the eclipse case. Large black square artifacts.
+- Even tuned, it works **only** close-in and top-down, and shadows **disappear above
+  ~24.3 km camera altitude**.
+- The technique that actually works (per-pixel GPU raymarch) was **never Cesium-native**.
+  It is how shademap.app works, and shademap ships as a **MapLibre/Mapbox plugin** — i.e.
+  it was always available on the stack the migration abandoned.
+- Cesium's one genuine benefit was real: a true sphere retires antimeridian/pole seam bugs.
+  That is why branch `cesium` is preserved rather than deleted.
+
+**Do not re-recommend Cesium for shadows. Do not repeat the pattern of asserting a library
+does something "natively" without verifying it first.**
+
+## Where the project actually is
+- Branch **`maplibre`** — active, pushed. Branch **`cesium`** — preserved, functional, heavier.
+- **`PARITY.md`** (repo root) — rules for keeping the two branches in sync. Follow it.
+- **`DESIGN_SPEC_cesium_map.md`** — pin/arrow/palette values, ported and preserved.
+- **`HANDOFF_shadows.md`** — full detail on the shadow feature: architecture, gotchas, next steps.
+- **`spikes/raymarch.html`** — **a WORKING GPU terrain-shadow raymarch, owned outright**
+  (no API key, no dependency, no $25/mo). Verified rendering correctly with a time slider.
+- Renderer wiring note: all eclipse geometry is **deck.gl**, not MapLibre. `index.html` must load
+  `deck.min.js` and alias `window.DeckGL = window.deck`, and must set the MapLibre CSP
+  **worker URL before any map is constructed**.
+
+## Still true from the old handoff
+The project description, the Besselian/path-generation pipeline, the correctness standard
+(match Xavier Jubier's KMZ ground truth), the data layout, and the eclipse-math modules
+(`eclipse.js`, `details.js`, `list.js`, …) are all unchanged and still authoritative below.
+**Only the renderer and the shadow story have changed.**
+
+---
+
 # ShadowChaser — Session Handoff — 2026-07-13 (standalone, authoritative)
 
 > ## ▶ START HERE (next session) — this block is self-sufficient; you need nothing else to begin
