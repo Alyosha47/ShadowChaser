@@ -1,0 +1,704 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>v34 — ShadowChaser terrain shadows</title>
+<link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
+<script src="vendor/maplibre-gl-csp-5.5.0.js"></script>
+<script>
+  if (window.maplibregl && maplibregl.setWorkerUrl)
+    maplibregl.setWorkerUrl('vendor/maplibre-gl-csp-worker-5.5.0.js');
+</script>
+<style>
+  html,body{margin:0;height:100%}
+  #map{position:absolute;inset:0}
+  /* Hidden by default but kept: there is no console on a phone. Opens on any error,
+     and the status line toggles it. */
+  #log{display:none;position:absolute;top:0;left:0;right:0;z-index:9;font:13px/1.4 monospace;
+       white-space:pre-wrap;padding:8px 10px;color:#8f8;background:rgba(0,0,0,.8)}
+  #log.on{display:block}
+  #ui{position:absolute;bottom:0;left:0;right:0;z-index:9;padding:10px;
+      background:rgba(0,0,0,.72);color:#eee;font:13px monospace}
+  #t{width:100%}
+  #tl{cursor:pointer}
+</style>
+<div id="map"></div>
+<div id="log">v34 — starting…
+</div>
+<div id="ui">
+  <input id="t" type="range" min="-720" max="720" value="0" step="2">
+  <div id="tl">…</div>
+  <label><input id="test" type="checkbox"> self-test</label>
+</div>
+<script>
+/* ============================================================================
+   TERRAIN SHADOWS — GPU, no API key, no dependency.
+
+   Every ray in the scene shares one sun vector. Writing g = h - s*tan(alt), where
+   s is distance along the sun direction, pixel i is shadowed iff some j upstream
+   has h_j > h_i + (s_j - s_i)*tan(alt) — which rearranges to simply g_j > g_i.
+
+   So the whole problem is "is there a larger g ahead of me along this line?" — a
+   running maximum. A running maximum over a texture is a doubling scan: shift by
+   1 texel and take the max, then 2, then 4 ... log2(N) passes cover the width.
+   The shadow test then costs ONE lookup: no loop, no step size, and no sampling
+   artefacts at any sun angle. Cost does not rise as the sun drops.
+
+   The shifts must be a WHOLE number of texels, or each pixel snaps its own way and
+   the maximum propagates along slightly different staircases (visible as blocks).
+   So the field is built ROTATED, with the sun along +x, and every shift is (2^k, 0).
+
+     PASS 1  DEM tiles          -> atlas          (bilinear on DECODED metres)
+     PASS 2  atlas              -> max height     (reduction, sizes the next frame)
+     PASS 3  atlas              -> g, sun-aligned
+     PASS 4  doubling scan along +x, ping-pong
+     PASS 5  shade: rotate the pixel, one lookup
+
+   VERIFIED: against closed-form geometry (self-test checkbox), and against an
+   independent per-pixel march over the same atlas. Both agree to one texel.
+   ========================================================================== */
+
+var VERSION='v34';
+
+var TERRARIUM='https://s3.amazonaws.com/elevation-tiles-prod/terrarium/';
+var TILE_PX=256;                 /* nominal; the real size is read from each image */
+var DEM_Z_MAX=13;
+var TILE_BUDGET=window.matchMedia('(min-width: 900px)').matches ? 160 : 30;
+var TILE_CACHE_MAX=150;
+var ATLAS_MIN=1024;
+var ATLAS_MAX=window.matchMedia('(min-width: 900px)').matches ? 2048 : 1024;
+var MARGIN_FRAC=0.12;            /* atlas overhang beyond the viewport, each side */
+var DEM_RATIO=1.0;               /* DEM sample size / atlas texel; 1 = matched */
+var MAX_TERRAIN_H=9000;          /* ceiling only; the real max is measured each frame */
+var H_STEP=250;                  /* quantise it, or the atlas chases its own contents */
+var SUN_LEN_TOL=0.25;            /* tolerated shadow-length error from one sun vector */
+var SHADOW_RGBA=[0.02,0.05,0.16,0.55];
+
+var TEST_H=500.0;                /* self-test cylinders: height in metres */
+var TEST_R_FRAC=1/64;            /* radius as a fraction of the VIEWPORT */
+var TEST_OFF=[[-0.25,-0.25],[0.25,-0.25],[-0.25,0.25],[0.25,0.25]];
+
+var LAT0=57.9200, LON0=-5.2000;
+var BASE=Date.parse('2026-08-12T18:28:41Z');
+var offsetMin=0;
+
+var log=document.getElementById('log');
+function L(m){
+  log.textContent += m+"\n";
+  if(m.indexOf('\u2717')>=0) log.classList.add('on');   /* surface failures unasked */
+}
+window.onerror=function(m,s,ln){ L('\u2717 '+m+' @'+ln); };
+
+var RAD=Math.PI/180;
+
+/* Mercator is undefined past ~85.05 deg, and getBounds reports 90 when zoomed out.
+   Unclamped, the projection explodes and every quantity derived from it goes with it. */
+var MERC_MAX=85.05112878;
+function mx(lon){ return (lon+180)/360; }
+function my(lat){
+  var r=Math.max(-MERC_MAX,Math.min(MERC_MAX,lat))*RAD;
+  return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2;
+}
+function latFromMercY(y){ return Math.atan(Math.sinh(Math.PI*(1-2*y)))/RAD; }
+
+/* verified solar position (matches the app's computeEclipse to ~0.2 deg, and
+   shademap's published altitude/azimuth to 0.1 deg) */
+function sunAltAz(ms,lat,lon){
+  var n=ms/86400000+2440587.5-2451545.0;
+  var Lo=(((280.460+0.9856474*n)%360)+360)%360, g=((((357.528+0.9856003*n)%360)+360)%360)*RAD;
+  var lam=(Lo+1.915*Math.sin(g)+0.020*Math.sin(2*g))*RAD, eps=(23.439-0.0000004*n)*RAD;
+  var al=Math.atan2(Math.cos(eps)*Math.sin(lam),Math.cos(lam)), de=Math.asin(Math.sin(eps)*Math.sin(lam));
+  var gmst=((((280.46061837+360.98564736629*n)%360))+360)%360, ha=(gmst+lon)*RAD-al, la=lat*RAD;
+  var alt=Math.asin(Math.sin(la)*Math.sin(de)+Math.cos(la)*Math.cos(de)*Math.cos(ha));
+  var az=Math.atan2(-Math.sin(ha),Math.tan(de)*Math.cos(la)-Math.sin(la)*Math.cos(ha));
+  return { alt:alt/RAD, az:((az/RAD)+360)%360 };
+}
+
+var map=new maplibregl.Map({
+  container:'map',
+  style:{version:8,
+    sources:{ osm:{ type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                    tileSize:256, attribution:'\u00a9 OpenStreetMap' } },
+    layers:[{id:'osm',type:'raster',source:'osm'}]},
+  center:[LON0,LAT0], zoom:11
+});
+L('A. map created');
+
+/* ---------------------------------------------------------------- GL helpers */
+function compile(gl,type,src,tag){
+  var s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) L('\u2717 '+tag+': '+gl.getShaderInfoLog(s));
+  return s;
+}
+function link(gl,vs,fs,tag){
+  var p=gl.createProgram(); gl.attachShader(p,vs); gl.attachShader(p,fs); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) L('\u2717 link '+tag+': '+gl.getProgramInfoLog(p));
+  return p;
+}
+function target(gl,size){
+  var tex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,size,size,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  /* NEAREST throughout: every one of these textures holds ENCODED numbers, and linear
+     filtering would blend the encoding rather than the value. Interpolation, where it
+     is wanted, is done in-shader on decoded metres. */
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  var fbo=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  var ok=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  return {tex:tex,fbo:fbo,ok:ok,size:size};
+}
+
+/* -------------------------------------------------------------- GLSL fragments */
+var QUAD_VS='attribute vec2 a_pos; void main(){ gl_Position=vec4(a_pos*2.0-1.0,0.0,1.0); }';
+
+/* Terrarium: metres = r*256 + g + b/256 - 32768, negative over ocean (bathymetry).
+   The sea SURFACE is flat whatever lies beneath, so heights clamp at zero. */
+var GLSL_H=
+  'float decodeH(vec4 c){'+
+  '  return max((c.r*255.0*256.0 + c.g*255.0 + c.b*255.0/256.0) - 32768.0, 0.0); }'+
+  'vec4 encodeH(float h){'+
+  '  float v=h+32768.0, r=floor(v/256.0), g=floor(v-r*256.0);'+
+  '  return vec4(r/255.0, g/255.0, floor((v-r*256.0-g)*256.0)/255.0, 1.0); }';
+
+/* g is packed into 24 bits of RGB, keeping the no-float-extension, mobile-safe
+   property the DEM encoding already had. Round-trips to 1.3e-7 of full range. */
+var GLSL_PACK=
+  'vec4 packG(float v){'+
+  '  v=clamp(v,0.0,0.999999);'+
+  '  vec3 e=fract(vec3(1.0,255.0,65025.0)*v);'+
+  '  e-=e.yzz*vec3(1.0/255.0,1.0/255.0,0.0);'+
+  '  return vec4(e,1.0); }'+
+  'float unpackG(vec4 c){ return dot(c.rgb,vec3(1.0,1.0/255.0,1.0/65025.0)); }';
+
+/* Terrain is point samples, not flat blocks. Interpolating on DECODED metres keeps
+   every texel from being a square plateau casting a square-edged shadow. */
+function glslBilinear(name,sampler){
+  return 'float '+name+'(vec2 uv, vec2 px){'+
+    '  vec2 t=uv*px-0.5, f=fract(t), b=(floor(t)+0.5)/px, e=1.0/px;'+
+    '  float a00=decodeH(texture2D('+sampler+',b));'+
+    '  float a10=decodeH(texture2D('+sampler+',b+vec2(e.x,0.0)));'+
+    '  float a01=decodeH(texture2D('+sampler+',b+vec2(0.0,e.y)));'+
+    '  float a11=decodeH(texture2D('+sampler+',b+e));'+
+    '  return mix(mix(a00,a10,f.x),mix(a01,a11,f.x),f.y); }';
+}
+
+/* ------------------------------------------------------------------- the layer */
+var layer={
+  id:'shadow', type:'custom', renderingMode:'2d', tiles:{}, clock:0, px:0,
+  terrainMax:MAX_TERRAIN_H,
+
+  onAdd:function(m,gl){
+    /* PASS 1 — tile into the atlas, resampled onto the atlas grid */
+    var copyVS='attribute vec2 a_pos; varying vec2 v_uv; uniform vec4 u_tile, u_atlas;'+
+      'void main(){ v_uv=a_pos;'+
+      ' vec2 merc=u_tile.xy+a_pos*u_tile.zw;'+
+      ' gl_Position=vec4(((merc-u_atlas.xy)/u_atlas.zw)*2.0-1.0,0.0,1.0); }';
+    var copyFS='precision highp float; varying vec2 v_uv;'+
+      'uniform sampler2D u_tex; uniform vec2 u_tpx;'+
+      GLSL_H+glslBilinear('hTile','u_tex')+
+      'void main(){ gl_FragColor=encodeH(hTile(v_uv,u_tpx)); }';
+    this.pCopy=link(gl,compile(gl,gl.VERTEX_SHADER,copyVS,'copy.vs'),
+                       compile(gl,gl.FRAGMENT_SHADER,copyFS,'copy.fs'),'copy');
+    this.cPos=gl.getAttribLocation(this.pCopy,'a_pos');
+    this.cTile=gl.getUniformLocation(this.pCopy,'u_tile');
+    this.cAtlas=gl.getUniformLocation(this.pCopy,'u_atlas');
+    this.cTex=gl.getUniformLocation(this.pCopy,'u_tex');
+    this.cTpx=gl.getUniformLocation(this.pCopy,'u_tpx');
+
+    /* self-test source: cylinders of known height on a flat plane, so the correct
+       shadow is a closed-form stadium. OFF-CENTRE, because a single cylinder at the
+       centre of rotation is symmetric and would hide a rotation error. */
+    var testFS='precision highp float; uniform vec2 u_px, u_o0, u_o1, u_o2, u_o3;'+
+      'uniform float u_R, u_H;'+
+      GLSL_H+
+      'void main(){'+
+      '  vec2 p=gl_FragCoord.xy-u_px*0.5;'+
+      '  float h=0.0;'+
+      '  if(length(p-u_o0*u_px)<u_R) h=u_H;'+
+      '  if(length(p-u_o1*u_px)<u_R) h=u_H;'+
+      '  if(length(p-u_o2*u_px)<u_R) h=u_H;'+
+      '  if(length(p-u_o3*u_px)<u_R) h=u_H;'+
+      '  gl_FragColor=encodeH(h); }';
+    this.pTest=link(gl,compile(gl,gl.VERTEX_SHADER,QUAD_VS,'test.vs'),
+                       compile(gl,gl.FRAGMENT_SHADER,testFS,'test.fs'),'test');
+    this.tPos=gl.getAttribLocation(this.pTest,'a_pos');
+    this.tPx=gl.getUniformLocation(this.pTest,'u_px');
+    this.tR=gl.getUniformLocation(this.pTest,'u_R');
+    this.tH=gl.getUniformLocation(this.pTest,'u_H');
+    this.tO=[];
+    for(var i=0;i<4;i++) this.tO.push(gl.getUniformLocation(this.pTest,'u_o'+i));
+
+    /* PASS 2 — max height, 8x8 at a time. The longest shadow is maxH/tan(alt), so
+       assuming Everest everywhere costs resolution in direct proportion. */
+    var redFS='precision highp float;'+
+      'uniform sampler2D u_src; uniform vec2 u_srcPx; uniform float u_taps;'+
+      GLSL_H+
+      'void main(){'+
+      '  vec2 base=(gl_FragCoord.xy-0.5)*u_taps;'+
+      '  float m=0.0;'+
+      '  for(int j=0;j<8;j++){'+
+      '    if(float(j)>=u_taps) break;'+
+      '    for(int i=0;i<8;i++){'+
+      '      if(float(i)>=u_taps) break;'+
+      '      m=max(m,decodeH(texture2D(u_src,(base+vec2(float(i),float(j))+0.5)/u_srcPx)));'+
+      '    } }'+
+      '  gl_FragColor=encodeH(m); }';
+    this.pRed=link(gl,compile(gl,gl.VERTEX_SHADER,QUAD_VS,'red.vs'),
+                      compile(gl,gl.FRAGMENT_SHADER,redFS,'red.fs'),'red');
+    this.dPos=gl.getAttribLocation(this.pRed,'a_pos');
+    this.dSrc=gl.getUniformLocation(this.pRed,'u_src');
+    this.dSrcPx=gl.getUniformLocation(this.pRed,'u_srcPx');
+    this.dTaps=gl.getUniformLocation(this.pRed,'u_taps');
+
+    /* PASS 3 — g, in sun-aligned axes. A square rotated by t has a bounding box
+       (|cos t|+|sin t|) larger, so one rotated texel spans u_k atlas texels. */
+    var rotFS='precision highp float;'+
+      'uniform sampler2D u_dem; uniform vec2 u_px, u_u;'+
+      'uniform float u_k, u_T, u_gLo, u_gInv;'+
+      GLSL_H+GLSL_PACK+glslBilinear('hAtlas','u_dem')+
+      'void main(){'+
+      '  vec2 c=u_px*0.5, v=vec2(-u_u.y,u_u.x);'+
+      '  vec2 q=gl_FragCoord.xy-c;'+
+      '  vec2 p=c+(q.x*u_k)*u_u+(q.y*u_k)*v;'+
+      '  vec2 uv=p/u_px;'+
+      /* Outside the atlas, or where no tile has loaded, contribute nothing: the range
+         minimum can never exceed another pixel's g, so it can never cast. */
+      '  if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0){ gl_FragColor=packG(0.0); return; }'+
+      '  if(texture2D(u_dem,uv).a<0.5){ gl_FragColor=packG(0.0); return; }'+
+      '  gl_FragColor=packG((hAtlas(uv,u_px)-(q.x*u_k)*u_T-u_gLo)*u_gInv); }';
+    this.pRot=link(gl,compile(gl,gl.VERTEX_SHADER,QUAD_VS,'rot.vs'),
+                      compile(gl,gl.FRAGMENT_SHADER,rotFS,'rot.fs'),'rot');
+    this.rPos=gl.getAttribLocation(this.pRot,'a_pos');
+    this.rDem=gl.getUniformLocation(this.pRot,'u_dem');
+    this.rPx=gl.getUniformLocation(this.pRot,'u_px');
+    this.rU=gl.getUniformLocation(this.pRot,'u_u');
+    this.rK=gl.getUniformLocation(this.pRot,'u_k');
+    this.rT=gl.getUniformLocation(this.pRot,'u_T');
+    this.rLo=gl.getUniformLocation(this.pRot,'u_gLo');
+    this.rInv=gl.getUniformLocation(this.pRot,'u_gInv');
+
+    /* PASS 4 — doubling scan. Offsets are (n,0): whole texels, identical for every
+       pixel, so the maximum cannot propagate along differing staircases. */
+    var scanFS='precision highp float;'+
+      'uniform sampler2D u_src; uniform vec2 u_px, u_off; uniform float u_seed;'+
+      GLSL_PACK+
+      'void main(){'+
+      '  vec2 uv=gl_FragCoord.xy/u_px, uv2=uv+u_off/u_px;'+
+      /* Off-atlas reads must not invent a blocker. CLAMP_TO_EDGE would smear the
+         border value inward and streak shadows from the edge. */
+      '  float b=(uv2.x<0.0||uv2.x>1.0||uv2.y<0.0||uv2.y>1.0)?0.0:unpackG(texture2D(u_src,uv2));'+
+      /* The seed takes ONLY the shifted sample, so a pixel never shadows itself. */
+      '  float a=(u_seed>0.5)?0.0:unpackG(texture2D(u_src,uv));'+
+      '  gl_FragColor=packG(max(a,b)); }';
+    this.pScan=link(gl,compile(gl,gl.VERTEX_SHADER,QUAD_VS,'scan.vs'),
+                       compile(gl,gl.FRAGMENT_SHADER,scanFS,'scan.fs'),'scan');
+    this.sPos=gl.getAttribLocation(this.pScan,'a_pos');
+    this.sSrc=gl.getUniformLocation(this.pScan,'u_src');
+    this.sPx=gl.getUniformLocation(this.pScan,'u_px');
+    this.sOff=gl.getUniformLocation(this.pScan,'u_off');
+    this.sSeed=gl.getUniformLocation(this.pScan,'u_seed');
+
+    /* PASS 5 — shade */
+    var shadeVS='attribute vec2 a_pos; varying vec2 v_uv; uniform mat4 u_matrix; uniform vec4 u_atlas;'+
+      'void main(){ v_uv=a_pos;'+
+      ' vec2 merc=u_atlas.xy+a_pos*u_atlas.zw;'+
+      ' gl_Position=u_matrix*vec4(merc,0.0,1.0); }';
+    var shadeFS='precision highp float; varying vec2 v_uv;'+
+      'uniform sampler2D u_dem, u_scan;'+
+      'uniform vec2 u_px, u_u, u_s0, u_s1, u_s2, u_s3;'+
+      'uniform float u_k, u_T, u_gLo, u_gInv, u_synth, u_R, u_H;'+
+      'uniform vec4 u_col;'+
+      GLSL_H+GLSL_PACK+glslBilinear('hAtlas','u_dem')+
+      'float maxAt(vec2 uv){'+
+      '  vec2 t=uv*u_px-0.5, f=fract(t), b=(floor(t)+0.5)/u_px, e=1.0/u_px;'+
+      '  float a00=unpackG(texture2D(u_scan,b));'+
+      '  float a10=unpackG(texture2D(u_scan,b+vec2(e.x,0.0)));'+
+      '  float a01=unpackG(texture2D(u_scan,b+vec2(0.0,e.y)));'+
+      '  float a11=unpackG(texture2D(u_scan,b+e));'+
+      '  return mix(mix(a00,a10,f.x),mix(a01,a11,f.x),f.y); }'+
+      'void main(){'+
+      '  if(texture2D(u_dem,v_uv).a<0.5) discard;'+   /* alpha is coverage */
+      '  vec2 c=u_px*0.5, v=vec2(-u_u.y,u_u.x);'+
+      '  vec2 d=v_uv*u_px-c;'+
+      '  vec2 q=vec2(dot(d,u_u),dot(d,v))/u_k+c;'+    /* the same rotation, inverted */
+      '  if(q.x<0.0||q.x>u_px.x||q.y<0.0||q.y>u_px.y) discard;'+
+      '  float g0=(hAtlas(v_uv,u_px)-dot(d,u_u)*u_T-u_gLo)*u_gInv;'+
+      '  bool ours=(maxAt(q/u_px)>g0);'+
+      /* Self-test: the shadow of a vertical cylinder is its base disc swept along the
+         anti-sun direction for L=H/tan(alt) — a stadium with a ROUND cap. Compare. */
+      '  if(u_synth>0.5){'+
+      '    vec2 pc=d;'+
+      '    float Ln=u_H/u_T;'+
+      '    bool ana=false, on=false;'+
+      '    for(int ci=0;ci<4;ci++){'+
+      '      vec2 o=(ci==0)?u_s0:((ci==1)?u_s1:((ci==2)?u_s2:u_s3));'+
+      '      vec2 dd=pc-o*u_px;'+
+      '      if(length(dd)<u_R) on=true;'+
+      '      float t=clamp(dot(dd,-u_u),0.0,Ln);'+
+      '      if(length(dd+t*u_u)<u_R) ana=true;'+
+      '    }'+
+      '    if(on){ gl_FragColor=vec4(1.0,0.85,0.0,1.0); return; }'+
+      '    if(ana!=ours){ gl_FragColor=vec4(1.0,0.0,0.6,0.95); return; }'+   /* magenta */
+      '    if(ours){ gl_FragColor=vec4(0.10,0.20,0.50,0.70); return; }'+
+      '    discard; }'+
+      '  if(!ours) discard;'+
+      '  gl_FragColor=u_col; }';
+    this.pShade=link(gl,compile(gl,gl.VERTEX_SHADER,shadeVS,'shade.vs'),
+                        compile(gl,gl.FRAGMENT_SHADER,shadeFS,'shade.fs'),'shade');
+    this.hPos=gl.getAttribLocation(this.pShade,'a_pos');
+    this.hMatrix=gl.getUniformLocation(this.pShade,'u_matrix');
+    this.hAtlasR=gl.getUniformLocation(this.pShade,'u_atlas');
+    this.hDem=gl.getUniformLocation(this.pShade,'u_dem');
+    this.hScan=gl.getUniformLocation(this.pShade,'u_scan');
+    this.hPx=gl.getUniformLocation(this.pShade,'u_px');
+    this.hU=gl.getUniformLocation(this.pShade,'u_u');
+    this.hK=gl.getUniformLocation(this.pShade,'u_k');
+    this.hT=gl.getUniformLocation(this.pShade,'u_T');
+    this.hLo=gl.getUniformLocation(this.pShade,'u_gLo');
+    this.hInv=gl.getUniformLocation(this.pShade,'u_gInv');
+    this.hCol=gl.getUniformLocation(this.pShade,'u_col');
+    this.hSynth=gl.getUniformLocation(this.pShade,'u_synth');
+    this.hR=gl.getUniformLocation(this.pShade,'u_R');
+    this.hH=gl.getUniformLocation(this.pShade,'u_H');
+    this.hS=[];
+    for(var j=0;j<4;j++) this.hS.push(gl.getUniformLocation(this.pShade,'u_s'+j));
+
+    this.buf=gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER,this.buf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([0,0,1,0,0,1,1,1]),gl.STATIC_DRAW);
+    L('B. shaders ok (atlas cap '+ATLAS_MAX+'px)');
+  },
+
+  quad:function(gl,loc){
+    gl.bindBuffer(gl.ARRAY_BUFFER,this.buf);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  },
+
+  /* Atlas resolution sets shadow detail: texel = span / PX. Sized to the canvas, so
+     the texel tracks screen pixels; capped, because cost is 4x per doubling. */
+  resize:function(gl){
+    var want=Math.max(gl.canvas.width,gl.canvas.height), px=ATLAS_MIN;
+    while(px<want && px<ATLAS_MAX) px*=2;
+    px=Math.min(px,ATLAS_MAX,gl.getParameter(gl.MAX_TEXTURE_SIZE));
+    if(px===this.px) return;
+    var self=this;
+    ['atlas','ping','pong'].forEach(function(k){
+      if(self[k]){ gl.deleteTexture(self[k].tex); gl.deleteFramebuffer(self[k].fbo); }
+      self[k]=target(gl,px);
+    });
+    if(this.red) this.red.forEach(function(t){ gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo); });
+    this.red=[];
+    for(var rs=px; rs>1; ){
+      var next=Math.max(1,Math.ceil(rs/8)), t=target(gl,next);
+      t.taps=Math.ceil(rs/next); t.srcPx=rs; t.out=next;
+      this.red.push(t); rs=next;
+    }
+    this.px=px;
+    this.levels=Math.round(Math.log(px)/Math.LN2);
+    this.scanTex=null;
+    this.good=null;
+    L('B2. atlas '+px+'\u00b2, '+(this.levels+1)+' scan passes '+
+      ((this.atlas.ok&&this.ping.ok&&this.pong.ok)?'\u2713':'INCOMPLETE'));
+  },
+
+  /* Tiles covering a mercator rect. Longitude wraps, so a view spanning the
+     antimeridian needs no special case; dx keeps the unwrapped position. */
+  wanted:function(rect,z){
+    var n=Math.pow(2,z), out=[];
+    var x0=Math.floor(rect[0]*n), x1=Math.floor((rect[0]+rect[2])*n);
+    var y0=Math.max(0,Math.floor(rect[1]*n)), y1=Math.min(n-1,Math.floor((rect[1]+rect[2])*n));
+    for(var x=x0;x<=x1;x++) for(var y=y0;y<=y1;y++)
+      out.push({z:z, x:((x%n)+n)%n, y:y, n:n, dx:x});
+    return out;
+  },
+  tileCount:function(rect,z){
+    var n=Math.pow(2,z);
+    var nx=Math.floor((rect[0]+rect[2])*n)-Math.floor(rect[0]*n)+1;
+    var y0=Math.max(0,Math.floor(rect[1]*n)), y1=Math.min(n-1,Math.floor((rect[1]+rect[2])*n));
+    return nx*Math.max(y1-y0+1,0);
+  },
+
+  load:function(gl,t){
+    var key=t.z+'/'+t.x+'/'+t.y, self=this;
+    if(this.tiles[key]){ this.tiles[key].used=++this.clock; return this.tiles[key]; }
+    var rec={tex:null,ready:false,size:TILE_PX,used:++this.clock};
+    this.tiles[key]=rec;
+    var img=new Image(); img.crossOrigin='anonymous';
+    img.onload=function(){
+      var tex=gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D,tex);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+      /* These bytes are NUMBERS, not colour. By default WebGL lets the browser apply a
+         colour profile on upload; one count of drift in red is a 256 m elevation error. */
+      gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.NONE);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+      rec.tex=tex; rec.ready=true; rec.size=img.width;
+      if(!self._first){ self._first=true; L('D. first tile ' + img.width + 'px \u2713'); }
+      map.triggerRepaint();
+    };
+    img.onerror=function(){
+      /* resolved with no data, or one dead tile freezes the atlas forever */
+      rec.ready=true;
+      if(!self._terr){ self._terr=true; L('\u2717 tile failed (CORS/network): '+key); }
+      map.triggerRepaint();
+    };
+    img.src=TERRARIUM+key+'.png';
+    return rec;
+  },
+
+  evict:function(gl,keep){
+    var keys=Object.keys(this.tiles), self=this;
+    if(keys.length<=TILE_CACHE_MAX) return;
+    keys.sort(function(a,b){ return (self.tiles[a].used||0)-(self.tiles[b].used||0); });
+    var live=keys.length;
+    for(var i=0;i<keys.length && live>TILE_CACHE_MAX;i++){
+      var k=keys[i]; if(keep[k]) continue;
+      if(this.tiles[k].tex) gl.deleteTexture(this.tiles[k].tex);
+      delete this.tiles[k]; live--;
+    }
+  },
+
+  /* Reduce the atlas to one texel holding its max height, read that single pixel back.
+     On the GPU: an earlier main-thread version of this caused visible judder. */
+  measureMax:function(gl){
+    var src=this.atlas.tex;
+    gl.useProgram(this.pRed);
+    for(var i=0;i<this.red.length;i++){
+      var t=this.red[i];
+      gl.bindFramebuffer(gl.FRAMEBUFFER,t.fbo);
+      gl.viewport(0,0,t.out,t.out);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,src);
+      gl.uniform1i(this.dSrc,0);
+      gl.uniform2f(this.dSrcPx,t.srcPx,t.srcPx);
+      gl.uniform1f(this.dTaps,t.taps);
+      this.quad(gl,this.dPos);
+      src=t.tex;
+    }
+    var b=new Uint8Array(4);
+    gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,b);
+    var h=b[0]*256+b[1]+b[2]/256-32768;
+    if(isFinite(h)&&h>=0)
+      this.terrainMax=Math.min(MAX_TERRAIN_H,Math.max(H_STEP,Math.ceil(h/H_STEP)*H_STEP));
+  },
+
+  status:function(txt){ document.getElementById('tl').textContent=VERSION+'  '+txt; },
+
+  render:function(gl,args){
+    /* MapLibre v5 passes an options object, not a bare matrix array. */
+    var matrix=args;
+    if(args && !args.length)
+      matrix=(args.defaultProjectionData&&args.defaultProjectionData.mainMatrix)||args.mainMatrix||args.matrix;
+    if(!matrix||!matrix.length){
+      if(!this._noMat){ this._noMat=true; L('\u2717 no usable matrix; keys: '+Object.keys(args||{}).join(',')); }
+      return;
+    }
+    this.resize(gl);
+    var PX=this.px;
+
+    var bb=map.getBounds();
+    var bx0=mx(bb.getWest()), bx1=mx(bb.getEast());
+    if(bx1<bx0) bx1+=1;                      /* view crosses the antimeridian */
+    var by0=my(bb.getNorth()), by1=my(bb.getSouth());
+    var c=map.getCenter();
+    var mPerMerc=40075016.686*Math.cos(c.lat*RAD);
+    var s=sunAltAz(BASE+offsetMin*60000, c.lat, c.lng);
+    var when=new Date(BASE+offsetMin*60000).toISOString().replace('T',' ').slice(0,19)+' UTC';
+    var head=when+'  alt '+s.alt.toFixed(1)+'\u00b0 az '+s.az.toFixed(1)+'\u00b0';
+
+    /* No sun, no terrain shadows. (Night belongs to the basemap, not to this layer.) */
+    if(s.alt<=0){ this.status(head+'  \u2014 sun below horizon'); return; }
+
+    /* The computed area must hold every blocker that can reach the view, so its size
+       follows from the SUN, not the zoom: the longest shadow is maxH/tan(alt). Sizing
+       it to the viewport truncates every shadow longer than the screen — which at a
+       low sun is all of them. Symmetric about the view, so scrubbing time does not
+       move the grid; origin snapped to a texel, so panning translates it exactly. */
+    var vSpan=Math.max(bx1-bx0,by1-by0)*(1+2*MARGIN_FRAC);
+    var tanAlt=Math.tan(Math.max(s.alt,0.05)*RAD);
+    var reachM=this.terrainMax/tanAlt;
+    var a=Math.min(1.0, vSpan+2.0*reachM/mPerMerc);
+    var texel=a/PX;
+    var x0=Math.floor(((bx0+bx1)/2-a/2)/texel)*texel;
+    var y0=Math.floor(((by0+by1)/2-a/2)/texel)*texel;
+    var texelM=a*mPerMerc/PX;
+
+    /* One sun vector across the whole view is the model's core assumption. Shadow
+       length is h/tan(alt), so an altitude error d costs d/(sin.cos) in length —
+       which blows up at low sun. Cap that, and the usable view follows from the sun. */
+    var dAlt=0;
+    for(var ci=0;ci<4;ci++){
+      var cLat=latFromMercY(ci<2?by0:by1), cLon=((ci%2)?bx1:bx0)*360-180;
+      dAlt=Math.max(dAlt,Math.abs(sunAltAz(BASE+offsetMin*60000,cLat,cLon).alt-s.alt));
+    }
+    var altR=Math.max(s.alt,0.05)*RAD;
+    var tolDeg=SUN_LEN_TOL*Math.sin(altR)*Math.cos(altR)/RAD;
+    if(dAlt>tolDeg){
+      this.status(head+'  \u2014 view too wide for one sun vector ('+dAlt.toFixed(1)+
+                  '\u00b0 > '+tolDeg.toFixed(1)+'\u00b0), zoom in');
+      return;
+    }
+
+    /* ---------- PASS 1: build the atlas ---------- */
+    var synth=document.getElementById('test').checked;
+    var demZ=0, want=0, ready=0;
+    if(synth){
+      gl.bindFramebuffer(gl.FRAMEBUFFER,this.atlas.fbo);
+      gl.viewport(0,0,PX,PX);
+      gl.disable(gl.BLEND);
+      gl.useProgram(this.pTest);
+      gl.uniform2f(this.tPx,PX,PX);
+      /* placed by VIEWPORT fraction: the atlas is several times the viewport, so an
+         atlas-relative pattern would sit tens of km off-screen */
+      gl.uniform1f(this.tR,PX*TEST_R_FRAC*vSpan/a);
+      gl.uniform1f(this.tH,TEST_H);
+      for(var oi=0;oi<4;oi++)
+        gl.uniform2f(this.tO[oi],TEST_OFF[oi][0]*vSpan/a,TEST_OFF[oi][1]*vSpan/a);
+      this.quad(gl,this.tPos);
+      this.measureMax(gl);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+      this.good={x0:x0,y0:y0,a:a};
+    } else {
+      /* DEM zoom whose sample size matches the atlas texel — finer is wasted, coarser
+         is blurred — then drop levels until the tile count fits the budget. */
+      demZ=Math.round(Math.log(mPerMerc/(TILE_PX*texelM*DEM_RATIO))/Math.LN2);
+      demZ=Math.min(DEM_Z_MAX,Math.max(0,demZ));
+      while(demZ>0 && this.tileCount([x0,y0,a],demZ)>TILE_BUDGET) demZ--;
+      var list=this.wanted([x0,y0,a],demZ);
+      if(!list.length) return;
+      want=list.length;
+
+      var keep={};
+      for(var j=0;j<list.length;j++){
+        var rec=this.load(gl,list[j]);
+        keep[list[j].z+'/'+list[j].x+'/'+list[j].y]=1;
+        if(rec.ready) ready++;
+      }
+      this.evict(gl,keep);
+
+      /* Rebuild only once EVERY tile is in hand. A half-filled atlas is what makes
+         shadows blink and shift while zooming; until then keep the last complete one,
+         which is correctly georeferenced, just covering the previous area. */
+      if(ready===want || !this.good){
+        if(!ready) return;
+        gl.bindFramebuffer(gl.FRAMEBUFFER,this.atlas.fbo);
+        gl.viewport(0,0,PX,PX);
+        gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.disable(gl.BLEND);
+        gl.useProgram(this.pCopy);
+        gl.uniform4f(this.cAtlas,x0,y0,a,a);
+        var n=list[0].n;
+        for(var k=0;k<list.length;k++){
+          var t=list[k], r=this.tiles[t.z+'/'+t.x+'/'+t.y];
+          if(!r||!r.ready||!r.tex) continue;
+          gl.uniform2f(this.cTpx,r.size,r.size);
+          gl.uniform4f(this.cTile,t.dx/n,t.y/n,1/n,1/n);
+          gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,r.tex);
+          gl.uniform1i(this.cTex,0);
+          this.quad(gl,this.cPos);
+        }
+        this.measureMax(gl);
+        gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+        this.good={x0:x0,y0:y0,a:a};
+      }
+    }
+    if(!this.good) return;
+    /* Shade from what the atlas actually holds, not from what we asked for. */
+    x0=this.good.x0; y0=this.good.y0; a=this.good.a;
+    texelM=a*mPerMerc/PX;
+
+    /* ---------- sun vector in atlas space ---------- */
+    var azr=s.az*RAD;
+    var ux=Math.sin(azr), uy=-Math.cos(azr);   /* mercator y grows southward */
+    var kRot=Math.abs(ux)+Math.abs(uy);
+    var T=texelM*tanAlt;                       /* metres the ray rises per texel */
+    var sp=PX*kRot*0.5+1;
+    var gLo=-sp*T, gRange=MAX_TERRAIN_H+2.0*sp*T, gInv=1/gRange;
+
+    /* ---------- PASS 3: g, sun-aligned ---------- */
+    gl.bindFramebuffer(gl.FRAMEBUFFER,this.ping.fbo);
+    gl.viewport(0,0,PX,PX);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this.pRot);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,this.atlas.tex);
+    gl.uniform1i(this.rDem,0);
+    gl.uniform2f(this.rPx,PX,PX);
+    gl.uniform2f(this.rU,ux,uy);
+    gl.uniform1f(this.rK,kRot);
+    gl.uniform1f(this.rT,T);
+    gl.uniform1f(this.rLo,gLo);
+    gl.uniform1f(this.rInv,gInv);
+    this.quad(gl,this.rPos);
+
+    /* ---------- PASS 4: doubling scan ----------
+       Seed covers offset {1}; level k folds in {2^k}. After this.levels passes the
+       result is the max over offsets 1 .. PX upstream, with no gaps. */
+    var src=this.ping, dst=this.pong;
+    gl.useProgram(this.pScan);
+    gl.uniform2f(this.sPx,PX,PX);
+    for(var lv=-1;lv<this.levels;lv++){
+      gl.bindFramebuffer(gl.FRAMEBUFFER,dst.fbo);
+      gl.viewport(0,0,PX,PX);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,src.tex);
+      gl.uniform1i(this.sSrc,0);
+      gl.uniform2f(this.sOff,(lv<0)?1:Math.pow(2,lv),0.0);
+      gl.uniform1f(this.sSeed,lv<0?1:0);
+      this.quad(gl,this.sPos);
+      var tmp=src; src=dst; dst=tmp;
+    }
+    this.scanTex=src.tex;
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+
+    /* ---------- PASS 5: shade ---------- */
+    gl.viewport(0,0,gl.canvas.width,gl.canvas.height);
+    gl.useProgram(this.pShade);
+    gl.uniformMatrix4fv(this.hMatrix,false,matrix);
+    gl.uniform4f(this.hAtlasR,x0,y0,a,a);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,this.atlas.tex);
+    gl.uniform1i(this.hDem,0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,this.scanTex);
+    gl.uniform1i(this.hScan,1);
+    gl.uniform2f(this.hPx,PX,PX);
+    gl.uniform2f(this.hU,ux,uy);
+    gl.uniform1f(this.hK,kRot);
+    gl.uniform1f(this.hT,T);
+    gl.uniform1f(this.hLo,gLo);
+    gl.uniform1f(this.hInv,gInv);
+    gl.uniform4f(this.hCol,SHADOW_RGBA[0],SHADOW_RGBA[1],SHADOW_RGBA[2],SHADOW_RGBA[3]);
+    gl.uniform1f(this.hSynth,synth?1:0);
+    gl.uniform1f(this.hR,PX*TEST_R_FRAC*vSpan/a);
+    gl.uniform1f(this.hH,TEST_H);
+    for(var si=0;si<4;si++)
+      gl.uniform2f(this.hS[si],TEST_OFF[si][0]*vSpan/a,TEST_OFF[si][1]*vSpan/a);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    this.quad(gl,this.hPos);
+    gl.activeTexture(gl.TEXTURE0);
+
+    if(!this._ran){ this._ran=true; L('E. running \u2713'); }
+    this.status(head+(synth?'  SELF-TEST: shadow should be '+(TEST_H/tanAlt/1000).toFixed(2)+
+                             ' km toward az '+((s.az+180)%360).toFixed(0)+'\u00b0'
+                            :'  z'+demZ+'  '+ready+'/'+want+' tiles')+
+                '  atlas '+PX+'\u00b2  texel '+texelM.toFixed(0)+'m'+
+                '  hmax '+this.terrainMax+'m  reach '+(reachM/1000).toFixed(1)+'km');
+  }
+};
+
+map.on('load',function(){ L('C. adding layer'); map.addLayer(layer); });
+document.getElementById('t').addEventListener('input',function(e){
+  offsetMin=parseInt(e.target.value,10); map.triggerRepaint();
+});
+document.getElementById('test').addEventListener('change',function(){ map.triggerRepaint(); });
+document.getElementById('tl').addEventListener('click',function(){ log.classList.toggle('on'); });
+</script>
