@@ -1,4 +1,4 @@
-# ShadowChaser — HANDOFF (consolidated 2026-07-19)
+# ShadowChaser — HANDOFF (consolidated 2026-07-19; §4 terrain shadows updated 2026-07-27)
 
 Single authoritative status + knowledge document. Supersedes all prior HANDOFF versions and
 the 2026-07-18 correction block. `TODO.md` owns durable task detail; this file owns status,
@@ -81,66 +81,111 @@ very low sun — the case that broke Cesium's native shadows, so it is the right
 
 ---
 
-## 4. TERRAIN SHADOWS (#F4) — WORKING SPIKE
+## 4. TERRAIN SHADOWS (#F4) — COMPLETE, SHIPPED AS A MODULE (2026-07-27)
 
-`spikes/raymarch.html` — **our own GPU terrain-shadow raymarch. No API key, no dependency,
-no $25/mo.** User-confirmed: renders correctly over an OSM basemap, smooth, shadows lengthen
-and sweep as the time slider moves. Current spike header reads **v4 (sea-level clamp)**.
+**Status: DONE.** The terrain-shadow feature went spike (v4) → study app (v50–v64) →
+**extracted drop-in module**. The engine is finished and shipped as
+`shadow-layer.js`. Do not rebuild it. Do not relitigate build-vs-buy (our own GPU
+raymarch, no API key, no $25/mo).
 
-The build-vs-buy decision is **made** — shademap works and is turnkey, but ShadowChaser is
-being given away free. Don't relitigate.
+### The deliverable
+- **`shadow-layer.js`** — a MapLibre custom layer, `createShadowLayer(options)` →
+  `map.addLayer(layer)`. Fetches its own free Terrarium DEM tiles; needs only to
+  sit above the layer you want shadowed. API: `setTime(Date|ms)`, `getTime()`,
+  `setOptions({selfTest,showElevation,shadowColor,onStatus,onLog})`.
+- **`shadow-layer-example.html`** — minimal working wiring (map + time slider).
+- **`shadow-layer-README.md`** — full API + integration notes.
+- The standalone study remains as **`shadows_v64.html`** (VERSION `v64`) for
+  reference/debugging (self-hosted map + UI + self-test checkbox).
 
-### Architecture — two-pass MapLibre custom layer
-1. **PASS 1 — atlas.** Terrarium DEM tiles
-   (`https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png` — free,
-   CORS-OK, `crossOrigin='anonymous'`) are drawn into a single **1024² FBO texture** covering
-   the viewport **plus one tile of margin**, so off-screen ridges still cast in. Elevation
-   stays **RGB-encoded** in the atlas and is decoded at sample time — this avoids
-   float-texture extensions and keeps it mobile-safe.
-2. **PASS 2 — raymarch.** Full-screen quad over the atlas rect. Per pixel, march toward the
-   sun through the atlas testing `terrainHeight > h0 + d·tan(alt)`. **96 steps over 20 km.**
-   Lit pixels `discard`; shadowed pixels draw `rgba(0.02,0.05,0.16,0.55)`.
+### Extraction integrity (verified, don't second-guess)
+The module's shadow ENGINE is byte-for-byte v64: `shadeVS/shadeFS/copyVS/maxFS`
+shaders IDENTICAL, `_render` march logic identical modulo the documented swaps.
+Headless GL harness render **diff vs v64 = 0 pixels**. Only the wrapper changed:
+removed self-hosted map + OSM basemap, removed DOM UI (slider/checkboxes/status),
+removed the global `window.onerror` hijack, guarded `window.matchMedia` for
+SSR/headless, routed time through `this.timeMs`/`setTime()`, captured `map` in
+`onAdd`. No global side-effects; clean drop-in.
 
-Key constants: `DEM_Z_MAX=12`, `ATLAS=1024`, `MARCH_M=20000`, `STEPS=96`, shader loop capped
-at 128 iterations with a `u_steps` break (WebGL1 needs a constant loop bound).
+### Architecture (v50+ engine, current)
+Per-screen-pixel ray-march (NOT the old rotate/re-grid scan — that caused staircase
+coasts, streak combs, mask wisps; removed at v50). Three passes:
+- **PASS 1** — Terrarium DEM tiles → a **NEAR atlas** (fine, viewport×`NEAR_MULT`)
+  + a **FAR atlas** (coarse, whole shadow reach). RGB-encoded metres, bilinear on
+  decode. `NEAREST` texture filtering throughout (linear blends the encoding →
+  garbage).
+- **PASS 2** — far atlas → max-height reduction (sizes next frame) + 4×/16×/64×
+  block-max **mip chains** for both atlases.
+- **PASS 3** — per screen pixel, march toward the sun; near atlas while inside it,
+  far beyond; step grows 3%/sample; hierarchical prune-then-resolve (a block-max
+  level may only PROVE a span clear and skip it — casters always resolved at full
+  bilinear). Lit pixels `discard`; shadowed draw `SHADOW_RGBA`.
+
+Key constants (top of module): `DEM_Z_MAX=13`, `MARCH_STEPS=300`, `MARCH_GROW=0.03`,
+`NEAR_CASTER_M=8000` (native-res caster reach up-sun), `NEAR_MULT`, `TILE_BUDGET`,
+`NEAR_BUDGET`, `ATLAS_MAX`, `SHADOW_RGBA`.
+
+### Correctness (established, verified)
+- Spherical-earth curvature (`s²/2R`) + **atmospheric refraction** (apparent sun
+  casts the shadows) in the altitude test.
+- Water-aware: Terrarium bathymetry is negative; heights clamp `max(h,0)` so
+  underwater terrain doesn't cast; coastal cliffs still cast onto water; DEM-sharp
+  boundaries, shadows cross water.
+- Twilight veil is altitude-gated (v62): lit terrain stays bright through grazing
+  sun, terrain shadows carry the sunset, fades to night only at disc-set (the old
+  disc-fraction veil washed detail + blinked to night — fixed).
+- Verified against closed-form geometry (`selfTest` overlay) and an independent CPU
+  march (0 structural misses / 0 false positives). Coarse hierarchical march ==
+  exhaustive per-texel march, 0 pixel difference.
 
 ### Gotchas already solved — DO NOT RE-BREAK
-- **Texture filtering must be `NEAREST`** (both tile textures and the atlas). Linear blends
-  the *encoded* RGB and yields garbage elevations.
-- **Terrarium encodes bathymetry as negative height.** The sea surface is flat, so the
-  shader clamps `max(h, 0.0)` — otherwise underwater mountains cast shadows across the
-  ocean. Coastal cliffs still cast onto water correctly. *(This is the v4 fix.)*
-- **Sun below horizon:** `u_night` uniform paints a flat `rgba(0.02,0.03,0.10,0.55)` wash
-  instead of marching, and `tan(alt)` is floored at `alt = 0.05°` so a near-zero altitude
-  can't produce an infinite ray.
-- **MapLibre v5 changed the custom-layer render signature** — it passes an options object;
-  the matrix is at `args.defaultProjectionData.mainMatrix`, not a bare array. The spike
-  probes `args.defaultProjectionData.mainMatrix || args.mainMatrix || args.matrix`.
-- **Mercator y grows southward** → sun direction is `(sin(az), -cos(az))`.
-- **Metres per mercator unit at latitude φ:** `40075016.686 · cos(φ)`.
-- Solar position in the spike matches the app's `computeEclipse` to **~0.2°**.
-- The spike carries **on-page A→E tracing** (`#log`). Keep that pattern in any standalone
-  spike — the user tests on a phone and on slow connections where the console isn't handy.
+- `NEAREST` filtering on every encoded texture.
+- `max(h,0)` sea-level clamp (bathymetry).
+- `tan(alt)` floored at `alt=0.05°` (no infinite ray near horizon).
+- MapLibre v5 custom-layer render signature is an options object; matrix at
+  `args.defaultProjectionData.mainMatrix` (probe `||args.mainMatrix||args.matrix`).
+- Mercator y grows southward → sun dir `(sin(az), -cos(az))`.
+- Metres per mercator unit at φ: `40075016.686·cos(φ)`.
+- Near-branch clearance may only skip within the near rect (bound the DDA skip at
+  the rect exit) — otherwise a skip crosses the seam and steps over a far-atlas
+  caster (last invariant violations traced to this).
 
-### Next steps to productionise (~a day)
-1. **LRU cache eviction** — `this.tiles` grows unbounded; cap ~200 textures.
-2. **Zoom-aware DEM level** — currently hard-capped at z12 with a crude 80-tile safety limit
-   that silently truncates coverage when zoomed out. Pick a DEM zoom below the map zoom so
-   tile count stays ~20 at any zoom.
-3. **Scale march distance with zoom** — fixed 20 km is sub-pixel when wide, wasteful when tight.
-4. **Integrate into `js/map.js`** as a real layer with a UI toggle, fed the **selected
-   eclipse's max instant** (the app already computes it) instead of "now".
-5. **Mobile test.** The earlier CPU sunmap ran fine on the user's phone; the GPU version
-   should be lighter, but **verify** — including backgrounding, which has bitten this app.
-6. **Offline (optional).** Terrarium tiles are plain PNGs; `sw.js` could cache them like
-   basemap tiles. User has said **online-only is acceptable**, so nice-to-have, not a blocker.
+### The shademap comparison — SETTLED, from reading Ted's actual source
+Ted open-sourced his engine (`ted-piotrowski/leaflet-shadow-simulator`). Read it
+directly (`ted.js` in the sandbox). Findings, all measured, not guessed:
+- **Ted's shadow layer outputs a FLAT color** (`#01112f`, 0.7 opacity) — same kind
+  of overlay as ours. The 3D relief look in shademap.app is its **basemap**, not
+  its shadow.
+- **Our terrain shadows ≈ Ted's** — his exact march vs ours agree ~96–98% on the
+  same bare DEM; the residual is discretization scatter, not detail he has and we
+  lack.
+- The visible richness of shademap over ours is **(a) DSM tree/building shadows**
+  (his `getDSMElevationFromSampler2D` samples a surface model — trees + buildings —
+  from paid/proprietary data; his README confirms canopy/DSM sources are
+  user-provided) and **(b) a shaded-relief basemap**. Both live OUTSIDE the shadow
+  layer.
+- Levers tested and RULED OUT as the gap (each either no-op or a noise-trade):
+  DEM resolution (3 independent tests, no visible effect), shadow bias (matching
+  Ted's tiny 0.0005 recovers detail but adds equal false shadow — net loss),
+  stride growth, per-pixel supersampling (looked *worse* — dirty/blurry), and the
+  MapLibre `raster-dem` hillshade basemap (brought coast/tile-seam zigzags).
 
-### Spike files
-- `spikes/raymarch.html` — the working GPU shadow renderer (v4).
-- `spikes/dem_spike.html` — stage-1 proof: DEM → GPU texture, decoded in-shader.
-- `spikes/sunmap.html`, `spikes/horizon3.html` — earlier CPU approach; exact per-point
-  sunlit/shadow answer with margin in degrees. Still the best basis for an
-  "is *this specific spot* sunlit?" readout, and works offline from cached samples.
+### If more shadow richness is ever wanted (future, optional — NOT needed to ship)
+1. **DSM data.** Free canopy datasets exist and are commercial-use-OK — **Meta/WRI
+   1 m** (AWS open data, bucket `dataforgood-fb-data`) and **ETH GlobalCanopyHeight
+   10 m** (CC-BY). Both ship as **cloud-optimized GeoTIFFs**, not XYZ tiles → needs
+   a preprocessing pipeline (fetch → reproject → encode Terrarium-style PNGs → serve)
+   plus a shader change to add canopy height to terrain height before casting. This
+   is the ONLY thing proven to visibly close the gap. It's a data-engineering task.
+2. **Relief basemap** is the host app's concern, not this layer's — and does NOT
+   change the shadow calculation (it's pixels drawn under the shadow). Over a relief
+   basemap in the real app, these shadows will already read much closer to shademap.
+
+### Wiring into the eclipse app
+Add the layer over the existing MapLibre basemap; feed it the **selected eclipse's
+max instant** via `setTime()` (the app already computes it) instead of "now". Toggle
+by add/removeLayer. Mobile: v64 runs fine on the user's phone (confirmed); the module
+is the same engine, no heavier.
 
 ---
 
@@ -612,7 +657,11 @@ data/paths` stops growth but does not shrink existing history (that needs a dest
   along the centreline. A pin drop-shadow was tried and rejected as a smudge.
 
 ### Open bugs
-- **#F4 terrain shadows** — spike works; needs productionising (§4).
+- **#F4 terrain shadows — COMPLETE (2026-07-27).** Shipped as the `shadow-layer.js`
+  drop-in module; engine verified pixel-identical to the v64 study. See §4. Only
+  remaining (optional, non-blocking) work is wiring it into `js/map.js` fed the
+  selected eclipse's max instant, and — if ever wanted — DSM canopy data for
+  tree/building shadows.
 - **#R3 polar corridor "onion ring" (deck.gl).** 1950-09-12 corridor + ovals render as polar
   onion rings; SolidPolygonLayer mis-triangulates polar polygons even with clean unwrapped
   data. Workaround: corridor fill DISABLED (path lines only); ovals still filled. 4 candidates
