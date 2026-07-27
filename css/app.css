@@ -941,6 +941,59 @@
       height:   100%;
     }
 
+    /* Terrain-shadow toggle — top-left overlay button */
+    .map-shadow-btn {
+      position:        absolute;
+      top:             0.6rem;
+      left:            0.6rem;
+      z-index:         200;
+      background:      rgba(10,12,15,0.88);
+      border:          1px solid var(--border2);
+      border-radius:   var(--radius);
+      padding:         0.35rem 0.7rem;
+      color:           var(--text);
+      font-family:     var(--mono);
+      font-size:       0.72rem;
+      letter-spacing:  0.04em;
+      cursor:          pointer;
+      backdrop-filter: blur(4px);
+      pointer-events:  auto;
+    }
+    .map-shadow-btn:hover                  { border-color: var(--gold-dim); }
+    .map-shadow-btn[aria-pressed="true"]   { border-color: var(--gold); color: var(--gold2); }
+    .map-shadow-btn:disabled               { opacity: 0.4; cursor: not-allowed; }
+
+    /* Terrain-shadow time scrubber — bottom bar, only while shadows are on */
+    .shadow-timeline {
+      position:        absolute;
+      left:            0.75rem;
+      right:           0.75rem;
+      bottom:          0.75rem;
+      z-index:         20;
+      display:         flex;
+      align-items:     center;
+      gap:             0.85rem;
+      background:      rgba(10,12,15,0.92);
+      border:          1px solid var(--border2);
+      border-radius:   var(--radius);
+      padding:         0.5rem 0.9rem;
+      backdrop-filter: blur(4px);
+    }
+    .shadow-timeline[hidden] { display: none; }
+    .shadow-timeline input[type="range"] {
+      flex:         1;
+      accent-color: var(--gold);
+      cursor:       pointer;
+    }
+    .shadow-clock {
+      font-family: var(--mono);
+      font-size:   0.72rem;
+      color:       var(--gold);
+      white-space: nowrap;
+      min-width:   9.5rem;
+      text-align:  right;
+    }
+
     /* MapLibre attribution — restyle to match dark theme */
     .maplibregl-ctrl-attrib {
       background: rgba(10,12,15,0.8) !important;

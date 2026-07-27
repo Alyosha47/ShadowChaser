@@ -364,6 +364,8 @@ function updateMapState() {
   if (!selectedEntry) return;   /* not ready yet (init-time only) */
   var isNewEclipse = (selectedEntry !== updateMapState._lastEntry);
   updateMapState._lastEntry = selectedEntry;
+  /* Keep terrain shadows (if on) anchored to the selected eclipse's max. */
+  if (typeof shadowOnEclipseChange === 'function') shadowOnEclipseChange(isNewEclipse);
   clearMapLayers();
   clearMapMarkers();
   clearPathMarkers();

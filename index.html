@@ -32,7 +32,7 @@
   </script>
     <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-07-18d">
+  <link rel="stylesheet" href="css/app.css?v=2026-07-27e">
 </head>
 <body>
 
@@ -97,6 +97,17 @@
         <button class="map-popup-close" id="map-popup-close" aria-label="Close">&times;</button>
         <div class="map-popup-title" id="map-popup-title"></div>
         <div class="map-popup-grid" id="map-popup-grid"></div>
+      </div>
+
+      <!-- Terrain-shadow toggle — top left of map -->
+      <button id="btn-shadow" class="map-shadow-btn" aria-pressed="false"
+              title="Terrain shadows at the selected eclipse">&#9680;&#8202;Shadows</button>
+
+      <!-- Terrain-shadow time scrubber — shown only while shadows are on -->
+      <div id="shadow-timeline" class="shadow-timeline" hidden>
+        <input id="shadow-slider" type="range" min="0" max="1000" value="500" step="1"
+               aria-label="Shadow time">
+        <div id="shadow-clock" class="shadow-clock">&mdash;</div>
       </div>
 
     </div>
@@ -196,6 +207,7 @@
       <div class="settings-section">
         <div class="about-text">
           <p>Choose an eclipse in the search panel, click a viewing location on the map panel, see the eclipse&rsquo;s circumstances on the info panel.</p>
+          <p>The map&rsquo;s <strong>Shadows</strong> button drapes terrain shadows over the globe at the eclipse&rsquo;s greatest moment, with a scrubber to watch them lengthen. It streams elevation data, so it needs a connection &mdash; the button is greyed out when you&rsquo;re offline.</p>
           <p class="install-note">This site works in-browser, but is optimized for standalone use.
             <a href="#" id="install-link">Click here to install it on your home screen.</a></p>
           <p>Combine any of these in the search field, in any order:</p>
@@ -355,10 +367,10 @@
 
 
 <!-- search_parser.js provides parseSearch(), applyFilter(), filterToString() -->
-<script src="js/search_parser.js?v=2026-06-05c"></script>
+<script src="js/search_parser.js?v=2026-07-27e"></script>
 
 <!-- eclipse.js provides computeEclipse(), fundamentalArgs(), sunAltAz(), findMaximum() -->
-<script src="js/eclipse.js?v=2026-06-05c"></script>
+<script src="js/eclipse.js?v=2026-07-27e"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
      Single source of truth for BUILD. The <meta> and build stamp auto-populate from it.
@@ -440,7 +452,7 @@ window.scFlagFreshDetails = function () {
 };
 
 var DATA_BASE = './data';
-var BUILD     = '2026-07-18d';   /* ← THE single source. Everything below follows it. */
+var BUILD     = '2026-07-27e';   /* ← THE single source. Everything below follows it. */
 
 /* Propagate BUILD so it never has to be typed twice. The <meta name="build"> and
    every element with [data-build-stamp] are filled from this one constant, so a
@@ -467,17 +479,19 @@ if ('serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD, { updateViaCache: 'none' }));
 }
 </script>
-<script src="js/format.js?v=2026-06-05c"></script>
-<script src="js/state.js?v=2026-07-14a"></script>
-<script src="js/cities.js?v=2026-06-05c"></script>
-<script src="js/tabs.js?v=2026-07-14a"></script>
-<script src="js/search.js?v=2026-06-05c"></script>
-<script src="js/list.js?v=2026-07-14a"></script>
-<script src="js/local.js?v=2026-06-05c"></script>
-<script src="js/details.js?v=2026-06-05c"></script>
-<script src="js/url.js?v=2026-06-05c"></script>
-<script src="js/map.js?v=2026-07-18d"></script>
-<script src="js/share.js?v=2026-06-05c"></script>
-<script src="js/init.js?v=2026-06-05c"></script>
+<script src="js/format.js?v=2026-07-27e"></script>
+<script src="js/state.js?v=2026-07-27e"></script>
+<script src="js/cities.js?v=2026-07-27e"></script>
+<script src="js/tabs.js?v=2026-07-27e"></script>
+<script src="js/search.js?v=2026-07-27e"></script>
+<script src="js/list.js?v=2026-07-27e"></script>
+<script src="js/local.js?v=2026-07-27e"></script>
+<script src="js/details.js?v=2026-07-27e"></script>
+<script src="js/url.js?v=2026-07-27e"></script>
+<script src="js/map.js?v=2026-07-27e"></script>
+<script src="js/shadow-layer.js?v=2026-07-27e"></script>
+<script src="js/shadow-ui.js?v=2026-07-27e"></script>
+<script src="js/share.js?v=2026-07-27e"></script>
+<script src="js/init.js?v=2026-07-27e"></script>
 </body>
 </html>
