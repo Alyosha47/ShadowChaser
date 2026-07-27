@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>v53 — ShadowChaser terrain shadows</title>
+<title>v64 — ShadowChaser terrain shadows</title>
 <link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
 <script src="vendor/maplibre-gl-csp-5.5.0.js"></script>
 <script>
@@ -22,7 +22,7 @@
   #tl{cursor:pointer}
 </style>
 <div id="map"></div>
-<div id="log">v53 — starting…
+<div id="log">v57 — starting…
 </div>
 <div id="ui">
   <input id="t" type="range" min="-720" max="720" value="0" step="2">
@@ -35,32 +35,29 @@
 /* ============================================================================
    TERRAIN SHADOWS — GPU, no API key, no dependency.
 
-   Every ray in the scene shares one sun vector. Writing g = h - s*tan(alt), where
-   s is distance along the sun direction, pixel i is shadowed iff some j upstream
-   has h_j > h_i + (s_j - s_i)*tan(alt) — which rearranges to simply g_j > g_i.
+   A pixel is in shadow iff some point up-sun is high enough to block the sun:
+   marching distance s along the sun direction, pixel i is blocked iff any j has
+   h_j > h_i + (s_j - s_i)*tan(alt). Rather than a running-max scan (the pre-v50
+   rotate/re-grid pipeline, removed — it caused every re-gridding artefact:
+   staircase coasts, streak combs, mask wisps), v50+ marches each screen pixel
+   toward the sun per-pixel at screen resolution.
 
-   So the whole problem is "is there a larger g ahead of me along this line?" — a
-   running maximum. A running maximum over a texture is a doubling scan: shift by
-   1 texel and take the max, then 2, then 4 ... log2(N) passes cover the width.
-   The shadow test then costs ONE lookup: no loop, no step size, and no sampling
-   artefacts at any sun angle. Cost does not rise as the sun drops.
-
-   The shifts must be a WHOLE number of texels, or each pixel snaps its own way and
-   the maximum propagates along slightly different staircases (visible as blocks).
-   So the field is built ROTATED, with the sun along +x, and every shift is (2^k, 0).
-
-     PASS 1  DEM tiles          -> NEAR atlas (fine, viewport) + FAR atlas
-                                    (coarse, whole shadow reach)   [bilinear on metres]
+     PASS 1  DEM tiles          -> NEAR atlas (fine, viewport x NEAR_MULT) +
+                                    FAR atlas (coarse, whole shadow reach)
+                                    [bilinear on decoded metres]
      PASS 2  far atlas          -> max height    (reduction, sizes the next frame)
-     PASS 3  per-pixel RAY MARCH at screen resolution: near atlas first, far
-             beyond it, step growing 3%/sample. This is the shademap-class
-             design (v50): no rotated re-grid, no global g field, no water
-             display mask — shadows cross water, boundaries are DEM-sharp, and
-             every earlier re-gridding artefact (staircase coasts, streak combs,
-             mask wisps) is structurally impossible.
+             each atlas         -> 4x/16x/64x block-max mip chain (buildMips)
+     PASS 3  per-pixel RAY MARCH at screen resolution: near atlas while inside
+             it, far beyond, step growing 3%/sample. Both atlases run the same
+             hierarchical prune-then-resolve rule (glslStep): a block-max level
+             may only PROVE a span clear and skip it; casters are always resolved
+             at full bilinear resolution. This is the shademap-class design: no
+             rotated re-grid, no global g field, no water display mask — shadows
+             cross water and boundaries are DEM-sharp.
 
    VERIFIED: against closed-form geometry (self-test checkbox), and against an
-   independent per-pixel march over the same atlas. Both agree to one texel.
+   independent per-pixel march over the same atlas (CPU harness). Both agree to
+   one texel; the harness reports 0 structural misses and 0 false positives.
 
    v43 — CURVED EARTH, SEPARABLY. On a sphere two things break the flat model at
    low sun: the Earth bulges by ds^2/(2R) between caster and receiver, and the
@@ -70,22 +67,27 @@
      => (using ds*s_i + ds^2/2 = (s_j^2 - s_i^2)/2, exact)
      h_j - s_j*tan(alt0) - s_j^2/(2R)  >  h_i - s_i*tan(alt0) - s_i^2/(2R)
 
-   IT STILL SEPARATES. g gains one quadratic term and the running-max scan is
-   untouched. This removes the one-sun-vector altitude error to first order (the
-   gate now checks only the second-order residual), caps shadow reach at the
-   grazing horizon sqrt(2*R*h) instead of infinity, and — with Saemundsson
-   refraction added to alt — carries shadows to visible sunset. Residuals left
-   out, both sub-texel here: sec^2(alt) factor on the gradient term (<1% below
-   6 deg) and terrestrial ray bending (~k*ds^2/2R, ~9 m at 30 km).
+   The blocked test becomes  h(s) - s*tanA - s^2/(2R) > h0, with tanA the
+   receiver-local apparent altitude. This removes the one-sun-vector altitude
+   error (each pixel evaluates its own solar altitude from the subsolar point),
+   caps shadow reach at the grazing horizon sqrt(2*R*h) instead of infinity,
+   and — with Saemundsson refraction added to alt — carries shadows to visible
+   sunset. Residuals left out, both sub-texel here: sec^2(alt) factor on the
+   gradient term (<1% below 6 deg) and terrestrial ray bending (~9 m at 30 km).
+
+   v58 — FINE CASTERS. Membership in the near rect (not stride) now selects the
+   atlas, so casters up to 1-20 km up-sun are resolved at the near texel, giving
+   dendritic ridge silhouettes instead of far-atlas blobs. See glslStep and the
+   HANDOFF_shadows_v58 section 5.
    ========================================================================== */
 
-var VERSION='v53';
+var VERSION='v64';
 
 var TERRARIUM='https://s3.amazonaws.com/elevation-tiles-prod/terrarium/';
 var TILE_PX=256;                 /* nominal; the real size is read from each image */
 var DEM_Z_MAX=13;
 var TILE_BUDGET=window.matchMedia('(min-width: 900px)').matches ? 160 : 30;
-var TILE_CACHE_MAX=300;
+var TILE_CACHE_MAX=380;   /* v57: room for the near-field budget; see NEAR-FIELD ACCURACY note */
 var ATLAS_MIN=1024;
 /* Texel size was believed the only lever left on BUG B; v43 adds three targeted ones
    (soft shadow edge, perpendicular swath max in pass 3, water mask from the DEM's own
@@ -107,8 +109,42 @@ var MAX_TERRAIN_H=9000;          /* ceiling only; the real max is measured each 
 var H_STEP=250;                  /* quantise it, or the atlas chases its own contents */
 var MARCH_STEPS=300;             /* per-pixel ray samples (early-out when deep) */
 var MARCH_GROW=0.03;             /* step growth per sample; 0 in self-test */
-var NEAR_MULT=1.6;               /* near-atlas span = viewport span x this */
-var NEAR_BUDGET=90;              /* tile cap for the near atlas */
+/* NEAR-CASTER GATE (v59 fix). The near branch resolves fine casters at UNIT
+   near-texel; at grazing sun rayH stays ~h0 for tens of km, so the near mips
+   can't prune and stepN resolves at 38 m over and over. Left unbounded that
+   burns the whole step budget a few km up-sun, and the DISTANT caster that
+   throws the long sunset shadow is never reached — long shadows vanish (v58/
+   early v59 bug). So the near branch only runs for the first NEAR_CASTER_M of
+   ray; beyond it the FAR branch takes over exactly as in v57 (its stride grows,
+   crossing 198 km in ~140 steps), which is what preserves long shadows. The
+   window still covers the casters that visibly shape a shadow's edge; casters
+   farther up-sun soften below a pixel anyway (the LOD trade already documented).
+   Budget: ~140 steps for the far march leaves ~150 for near; at 38 m unit stride
+   that is ~5.7 km, so 5000 m is safe with margin. Tunable: raise for more near
+   detail if the step budget allows, lower if grazing-sun shadows still truncate. */
+var NEAR_CASTER_M=8000;
+/* v64: crispness. Native-resolution casters (near atlas) now extend 8 km up-sun,
+   not 5. Measured on the real Loch Broom DEM (harness): native 12 m casters give
+   1.31x the shadow-edge detail of the 200 m far atlas, and the far atlas was
+   OVER-shadowing (85% vs the exact 79%) - the blob-bleeding/melding you saw.
+   8 km is the measured-safe max at grazing sun: step-budget sim p99=296 of 300,
+   zero cap-hits (10 km+ truncates long shadows, the v58 bug). Improves #1 (ridges
+   smoothed), #2 (promontories not unifying), and #3 (Carn nan Sgeir timing).
+   PHONE REVERT: 5000 if grazing frames stutter. To go wider, raise MARCH_STEPS. */
+/* NEAR-FIELD ACCURACY (v57). shademap's visible sharpness advantage is not
+   physics or better source data (same ~30 m SRTM/NASADEM lineage) — it is
+   resolution spent on the near field. These two lines buy roughly one extra
+   near-zoom level: a tighter span and a bigger tile budget let zN rise, so
+   texN drops from ~36 m toward ~15-18 m at typical zooms.
+   COST: ~2x near-tile count, ~2x tile-cache pressure (DEM+OSM siblings,
+   ~0.5 MB per tile pair). Fine on desktop.
+   >>> OPUS: IF THIS CAUSES MEMORY PRESSURE / CRASHES ON PHONES, REVERT TO
+   >>> THE PREVIOUS VALUES:  NEAR_MULT=1.6;  NEAR_BUDGET=90;  TILE_CACHE_MAX=300;
+   (Nothing else depends on these; the march adapts automatically.) */
+var NEAR_MULT=1.2;               /* near-atlas span = viewport span x this */
+var NEAR_BUDGET=170;             /* tile cap for the near atlas */
+var FAR_MIPS=['coarse1','coarse2','coarse3'];   /* 4x/16x/64x block max, far  */
+var NEAR_MIPS=['nearC1','nearC2','nearC3'];     /* 4x/16x/64x block max, near */
 var SHADOW_RGBA=[0.02,0.05,0.16,0.55];
 var R_EARTH=6371000;             /* geometric radius; drives the g quadratic term */
 /* WATER MASK, two signals, max wins.
@@ -257,14 +293,6 @@ var GLSL_H=
 
 /* g is packed into 24 bits of RGB, keeping the no-float-extension, mobile-safe
    property the DEM encoding already had. Round-trips to 1.3e-7 of full range. */
-var GLSL_PACK=
-  'vec4 packG(float v){'+
-  '  v=clamp(v,0.0,0.999999);'+
-  '  vec3 e=fract(vec3(1.0,255.0,65025.0)*v);'+
-  '  e-=e.yzz*vec3(1.0/255.0,1.0/255.0,0.0);'+
-  '  return vec4(e,1.0); }'+
-  'float unpackG(vec4 c){ return dot(c.rgb,vec3(1.0,1.0/255.0,1.0/65025.0)); }';
-
 /* Terrain is point samples, not flat blocks. Interpolating on DECODED metres keeps
    every texel from being a square plateau casting a square-edged shadow. */
 function glslBilinear(name,sampler){
@@ -275,6 +303,38 @@ function glslBilinear(name,sampler){
     '  float a01=decodeH(texture2D('+sampler+',b+vec2(0.0,e.y)));'+
     '  float a11=decodeH(texture2D('+sampler+',b+e));'+
     '  return mix(mix(a00,a10,f.x),mix(a01,a11,f.x),f.y); }';
+}
+
+/* ONE HIERARCHICAL STEP over one atlas (v58). Until v57 this rule existed only
+   for the FAR atlas: the near atlas was consulted only while the stride still
+   equalled one near texel, so every caster past ~33 near texels (~430 m of ray)
+   was read from the far atlas and its ridges were smoothed away. That coarse
+   caster side - not the data, not the physics - was the whole silhouette gap
+   against shademap. The near-only-at-unit-stride rule was right; the fix is to
+   give the near atlas the same prune-then-resolve machinery, not to relax it.
+
+   Generated per atlas exactly as glslBilinear is: GLSL ES 1.00 cannot index
+   samplers, and passing them as parameters would still need one call site each,
+   so a generator keeps ONE structure instead of two hand-copied branches.
+
+   INVARIANTS (each was a shipped bug - see HANDOFF section 2.5-2.7):
+     - max levels PRUNE ONLY; h is never taken from one, only `hm<=rayH` -> skip
+     - max levels are POINT-sampled; bilinear on a max undershoots between block
+       centres and beads
+     - a proven-clear skip advances to the tested cell's DDA exit, never a fixed
+       width */
+function glslStep(name,hfun,m1,m2,m3){
+  return 'void '+name+'(vec2 q, float s, float rayH, float t, out float h, out float st){'+
+    '  float str=max(t,s*u_grow);'+
+    '  if(str<=t*1.001){ h='+hfun+'(q,u_px); st=t; return; }'+
+    '  float C=(str<=4.0*t)?4.0:((str<=16.0*t)?16.0:64.0);'+
+    '  float hm=(C==4.0)?decodeH(texture2D('+m1+',q))'+
+    '          :((C==16.0)?decodeH(texture2D('+m2+',q)):decodeH(texture2D('+m3+',q)));'+
+    '  if(hm<=rayH){ h=-1e9; st=ddaExit(q*u_px,C,0.06*C)*t; return; }'+
+    /* one cheaper level is worth a probe before paying for a full-res sample */
+    '  if(C>4.0 && decodeH(texture2D('+m1+',q))<=rayH){'+
+    '    h=-1e9; st=ddaExit(q*u_px,4.0,0.24)*t; return; }'+
+    '  h='+hfun+'(q,u_px); st=t; }';
 }
 
 /* ------------------------------------------------------------------- the layer */
@@ -398,16 +458,35 @@ var layer={
        shadows. Sampling a 4x4 BLOCK-MAX level with texel >= stride is
        conservative: no caster can be stepped over. (Tevs-style maximum mipmap;
        the price is slight dilation of the most distant shadows.) */
+    /* APRON (v58). The block max must bound every height the march can READ
+       inside that block, and the march reads BILINEAR: a sample just inside a
+       block's edge takes taps from the NEIGHBOUR block, which a plain 4x4 max
+       does not bound. So the reduction covers 6x6 - the 4x4 block plus a
+       one-texel ring. It also covers ddaExit's 0.06-cell overshoot.
+       Measured (CPU harness, 5 worlds x 3000 rays, 324k prunes): prune-invariant
+       violations 387 -> 1, worst overshoot 110 m -> 2 m. Cost: max step count
+       142 -> 172 of a 300 budget, because a fatter max prunes slightly less.
+       Over-conservative is FREE here - these levels only ever prune, so a high
+       max costs steps, never correctness (unlike v54, where it dilated shadows).
+       Taps outside the texture clamp to the edge (target() is CLAMP_TO_EDGE). */
     var maxFS='precision highp float; varying vec2 v_uv;'+
       'uniform sampler2D u_src; uniform vec2 u_px;'+   /* u_px: SOURCE px */
       GLSL_H+
       'void main(){'+
       '  vec2 b=(floor(v_uv*u_px*0.25)*4.0+0.5)/u_px;'+
       '  float m=0.0;'+
-      '  for(int dy=0;dy<4;dy++) for(int dx=0;dx<4;dx++)'+
+      '  for(int dy=-1;dy<=4;dy++) for(int dx=-1;dx<=4;dx++)'+
       '    m=max(m,decodeH(texture2D(u_src,b+vec2(float(dx),float(dy))/u_px)));'+
       '  gl_FragColor=encodeH(m); }';
-    this.pMax=link(gl,compile(gl,gl.VERTEX_SHADER,QUAD_VS,'max.vs'),
+    /* maxFS samples the source at v_uv, so its VS must WRITE v_uv. QUAD_VS does
+       not — it only sets gl_Position. In v57 this shader built only the FAR
+       mips and the far march tolerated the resulting garbage; v58 reused it for
+       the NEAR mips, which ARE sampled per-pixel in the near rect, so the
+       garbage showed up as a crosshatch and broke near pruning. Pair it with a
+       v_uv-writing VS, matching copyVS/shadeVS. */
+    var maxVS='attribute vec2 a_pos; varying vec2 v_uv;'+
+      'void main(){ v_uv=a_pos; gl_Position=vec4(a_pos*2.0-1.0,0.0,1.0); }';
+    this.pMax=link(gl,compile(gl,gl.VERTEX_SHADER,maxVS,'max.vs'),
                       compile(gl,gl.FRAGMENT_SHADER,maxFS,'max.fs'),'max');
     this.mPos=gl.getAttribLocation(this.pMax,'a_pos');
     this.mSrc=gl.getUniformLocation(this.pMax,'u_src');
@@ -431,14 +510,29 @@ var layer={
     this.vao=isGL2?gl.createVertexArray():(this.vaoExt?this.vaoExt.createVertexArrayOES():null);
     var shadeFS=((derivOK&&!isGL2)?'#extension GL_OES_standard_derivatives : enable\n':'')+
       'precision highp float; varying vec2 v_uv;'+
-      'uniform sampler2D u_dem0, u_dem1, u_demC;'+  /* near, far, far block-max */
+      'uniform sampler2D u_dem0, u_dem1, u_c1, u_c2, u_c3, u_n1, u_n2, u_n3;'+
+      /* near, far, far max-mips, near max-mips. Eight sampler units: exactly the
+         GLES2 guaranteed minimum for a fragment shader, checked at onAdd. */
       'uniform vec2 u_px, u_u, u_s0, u_s1, u_s2, u_s3;'+
       'uniform vec3 u_r0, u_r1;'+                   /* x0, y0, span */
-      'uniform float u_t0, u_t1, u_mpm, u_tanA, u_RE, u_reach, u_grow;'+
+      'uniform float u_t0, u_t1, u_mpm, u_tanA, u_RE, u_reach, u_grow, u_nearMax;'+
       'uniform float u_sde, u_cde, u_slon;'+       /* sin/cos(dec), subsolar lon */
       'uniform float u_edge, u_synth, u_R, u_H, u_elev;'+
       'uniform vec4 u_col;'+
       GLSL_H+glslBilinear('hN','u_dem0')+glslBilinear('hF','u_dem1')+
+      /* distance (texel units of the CALLER's atlas) from ft to the exit
+         boundary of its C-sized cell along u — a proven-clear skip must stop at
+         the TESTED cell's edge, or it crosses into an untested neighbour and can
+         step over a caster. `pad` lands the next sample just inside the
+         neighbour; it is 0 when the "cell" is a whole atlas rect, where landing
+         outside would read the other atlas. */
+      'float ddaExit(vec2 ft,float C,float pad){'+
+      '  vec2 bnd=(floor(ft/C)+max(sign(u_u),vec2(0.0)))*C;'+
+      '  float dx=abs(u_u.x)>1e-6?(bnd.x-ft.x)/u_u.x:1e9;'+
+      '  float dy=abs(u_u.y)>1e-6?(bnd.y-ft.y)/u_u.y:1e9;'+
+      '  return max(min(dx,dy),0.0)+pad; }'+
+      glslStep('stepN','hN','u_n1','u_n2','u_n3')+
+      glslStep('stepF','hF','u_c1','u_c2','u_c3')+
       'void main(){'+
       '  vec2 m=u_r1.xy+v_uv*u_r1.z;'+              /* absolute mercator */
       '  vec2 uv1=(m-u_r1.xy)/u_r1.z;'+
@@ -465,10 +559,6 @@ var layer={
       '  float altD=57.29578*asin(clamp(sin(lat)*u_sde+cos(lat)*u_cde*cos(lon-u_slon),-1.0,1.0));'+
       '  if(altD>-2.0) altD+=1.02/tan((altD+10.3/(altD+5.11))*0.01745329)/60.0;'+
       '  float tanA=(u_synth>0.5)?u_tanA:tan(max(altD,0.05)*0.01745329);'+
-      /* fraction of the 0.266-deg solar disc above the local horizon: the real
-         penumbral terminator, ~60 km wide, sweeping with time */
-      '  float xd=clamp(altD/0.266,-1.0,1.0);'+
-      '  float fLit=(u_synth>0.5)?1.0:(0.5+(asin(xd)+xd*sqrt(max(0.0,1.0-xd*xd)))/3.14159265);'+
       '  float curv=(u_synth>0.5)?0.0:(0.5/u_RE);'+
       '  float best=-1e9;'+
       '  float s=1.5*u_t0;'+
@@ -478,24 +568,49 @@ var layer={
       '    vec2 q0=(q-u_r0.xy)/u_r0.z;'+
       '    bool qn=q0.x>0.003&&q0.x<0.997&&q0.y>0.003&&q0.y<0.997;'+
       '    float h; float st;'+
-      '    if(qn){ h=hN(q0,u_px); st=max(u_t0,s*u_grow); }'+
-      '    else { vec2 q1=(q-u_r1.xy)/u_r1.z;'+
+      /* HIERARCHICAL TRAVERSAL (v55 rule, v58 on BOTH atlases). A block-max may
+         only ever PROVE a ray clears a region — v54 used it as the occluder, so
+         64-texel (~10 km) range silhouettes falsely shadowed the whole sea once
+         rays lived long enough, blinking as the time scrub moved reach across
+         the threshold. Correct rule (Tevs): test the proposed level's max
+         against the ray at the span's NEAR end (the ray only rises, so this
+         bounds the span); if it cannot block, skip the whole cell; if it might,
+         probe once at 4x, else resolve exactly. Coarse levels PRUNE, they never
+         occlude. Point samples only — a max level is conservative only
+         un-interpolated. See glslStep().
+
+         WHICH ATLAS: near rect AND within NEAR_CASTER_M up-sun. v58 selected by
+         MEMBERSHIP alone — the near branch then owned the whole 78 km near rect,
+         and at grazing sun the low ray can't prune the near mips, so stepN
+         resolves at unit 38 m for tens of km, exhausting MARCH_STEPS ~11 km in.
+         The distant caster that throws the LONG shadow was never reached, so
+         long sunset shadows truncated to lit. The distance gate keeps the near
+         branch to the affordable near-caster window and hands off to the far
+         branch (v57 behaviour, growing stride, long shadows preserved). */
+      '    float rayH=s*tanA + s*s*curv + h0;'+
+      '    bool useN = qn && (s < u_nearMax);'+
+      '    if(useN){'+
+      '      stepN(q0,s,rayH,u_t0,h,st);'+
+      /* a clearance proven against the NEAR mips holds only where the near
+         atlas is the terrain, so bound the skip at the rect exit too. Without
+         this the skip can cross the seam and step over a caster the far atlas
+         carries (CPU harness: the last 3 invariant violations in 324k prunes). */
+      '      if(h<-1.0e8) st=min(st, ddaExit(q0*u_px,u_px.x,0.0)*u_t0);'+
+      '    } else {'+
+      '      vec2 q1=(q-u_r1.xy)/u_r1.z;'+
       /* leaving the far rect ends the ray: the rect is sized so nothing beyond
          it can reach the view. (v52 CLAMPED here, so rays re-sampled the edge
          column forever — the creeping zigzag wall of false shadow.) */
       '      if(q1.x<0.0||q1.x>1.0||q1.y<0.0||q1.y>1.0) break;'+
-      /* stride beyond one far texel would step over casters: switch to the 4x4
-         block-max level, whose texel always covers the stride (up to 4x) */
-      '      if(s*u_grow<u_t1){ h=hF(q1,u_px); st=u_t1; }'+
-            /* POINT sample: a max level is conservative only un-interpolated */
-      '      else { h=decodeH(texture2D(u_demC,q1)); st=min(max(u_t1,s*u_grow),4.0*u_t1); } }'+
-      '    best=max(best, h - s*tanA - s*s*curv - h0);'+
+      '      stepF(q1,s,rayH,u_t1,h,st);'+
+      '    }'+
+      '    best=max(best, h - rayH);'+
       '    if(best>8.0) break;'+                    /* deep shadow: saturated */
       '    s+=st;'+
       '  }'+
       /* bias: half a near-texel of ray rise + a floor, or the pixel's own slope
          self-shadows every sun-facing hillside (terrain-march acne) */
-      '  float mrg=best-(0.5+0.4*u_t0*max(tanA,0.08));'+
+      '  float mrg=best-(0.5+0.4*min(u_t0,150.0)*max(tanA,0.08));'+
       '  bool ours=(mrg>0.0);'+
       /* Self-test: stadium analytic in FAR-atlas texels, flat plane. NOTE: at a
          very low test sun the growing step erodes distant tips; run it at
@@ -516,9 +631,23 @@ var layer={
       '    if(ours){ gl_FragColor=vec4(0.10,0.20,0.50,0.70); return; }'+
       '    discard; }'+
       (derivOK
-       ? '  float aa=clamp(mrg/(1.5*fwidth(mrg)+1e-9),0.0,1.0);'
+       ? '  float aa=clamp(mrg/max(1.5*fwidth(mrg),0.6),0.0,1.0);'
        : '  float aa=smoothstep(0.0,u_edge,mrg);')+
-      '  float A=u_col.a*(1.0-(1.0-aa)*fLit);'+
+      /* TWILIGHT VEIL. aa: 1 = terrain-shadowed, 0 = lit. The sunset STORY is
+         told by the terrain shadows themselves: at grazing sun they grow until
+         only the peaks are still lit (shademap's last frame is a single lit
+         pixel on a summit). The veil's only job is to take an already-shadowed
+         scene to true night once the sun is really gone — it must NOT dim the
+         lit terrain while the sun is still up, or it greys out exactly the
+         shadow detail we want to show (the v58–v62 disc-fraction veil did this:
+         lit and shadowed converged to one grey ~1' before disc-set, washing the
+         detail and blinking to night).
+         So: veil ~0 (lit stays bright, basemap clear) while the apparent sun is
+         at/above the horizon, ramping to 1 (full night) only as the disc sets.
+         altD is the refracted apparent altitude; the disc spans +/-0.266 deg.
+         VEIL_DAY..VEIL_NIGHT bracket the ramp; tune for a faster/slower dusk. */
+      '  float veil = 1.0 - smoothstep(-0.55, -0.12, altD);'+
+      '  float A=u_col.a*max(aa, veil);'+
       '  if(A<=0.004) discard;'+
       '  gl_FragColor=vec4(u_col.rgb,A); }';
     this.pShade=link(gl,compile(gl,gl.VERTEX_SHADER,shadeVS,'shade.vs'),
@@ -527,7 +656,7 @@ var layer={
     if(derivOK && !gl.getProgramParameter(this.pShade,gl.LINK_STATUS)){
       derivOK=false; this.aaMode='step-fallback';
       var shadeFS2=shadeFS.replace(/^#extension[^\n]*\n/,'')
-        .replace('float aa=clamp(mrg/(1.5*fwidth(mrg)+1e-9),0.0,1.0);',
+        .replace('float aa=clamp(mrg/max(1.5*fwidth(mrg),0.6),0.0,1.0);',
                  'float aa=smoothstep(0.0,u_edge,mrg);');
       this.pShade=link(gl,compile(gl,gl.VERTEX_SHADER,shadeVS,'shade.vs'),
                           compile(gl,gl.FRAGMENT_SHADER,shadeFS2,'shade.fb'),'shade-fb');
@@ -535,16 +664,26 @@ var layer={
     this.hPos=gl.getAttribLocation(this.pShade,'a_pos');
     var U=function(n){ return gl.getUniformLocation(layer.pShade,n); };
     this.hMatrix=U('u_matrix'); this.hAtlasR=U('u_atlas');
-    this.hD0=U('u_dem0'); this.hD1=U('u_dem1'); this.hDC=U('u_demC');
+    this.hD0=U('u_dem0'); this.hD1=U('u_dem1');
+    this.hC1=U('u_c1'); this.hC2=U('u_c2'); this.hC3=U('u_c3');
+    this.hN1=U('u_n1'); this.hN2=U('u_n2'); this.hN3=U('u_n3');
     this.hR0=U('u_r0'); this.hR1=U('u_r1');
     this.hSde=U('u_sde'); this.hCde=U('u_cde'); this.hSlon=U('u_slon');
     this.hPx=U('u_px'); this.hU=U('u_u');
     this.hT0=U('u_t0'); this.hT1=U('u_t1'); this.hMpm=U('u_mpm');
     this.hTanA=U('u_tanA'); this.hRE=U('u_RE');
     this.hReach=U('u_reach'); this.hGrow=U('u_grow'); this.hEdge=U('u_edge');
+    this.hNearMax=U('u_nearMax');
     this.hCol=U('u_col'); this.hSynth=U('u_synth'); this.hElev=U('u_elev');
     this.hR=U('u_R'); this.hH=U('u_H');
     this.hS=[]; for(var j=0;j<4;j++) this.hS.push(U('u_s'+j));
+
+    /* Eight fragment samplers is the GLES2 guaranteed minimum, so this should
+       never fail — but if a device reports fewer, degrade to v57 behaviour
+       (near mips unbound, far mips serve both) rather than render nothing. */
+    this.units=gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
+    this.nearMips=(this.units>=8);
+    if(!this.nearMips) L('\u2717 only '+this.units+' texture units: near mips off');
 
     this.gl=gl;
     this.buf=gl.createBuffer();
@@ -574,8 +713,13 @@ var layer={
       if(self[k]){ gl.deleteTexture(self[k].tex); gl.deleteFramebuffer(self[k].fbo); }
       self[k]=target(gl,px);
     });
-    if(this.coarse){ gl.deleteTexture(this.coarse.tex); gl.deleteFramebuffer(this.coarse.fbo); }
-    this.coarse=target(gl,px/4);
+    var self2=this;
+    /* max-mip chains: 4x/16x/64x of the far atlas and of the near atlas.
+       px/4 + px/16 + px/64 squared is ~1.07 MB per chain at px 2048. */
+    FAR_MIPS.concat(NEAR_MIPS).forEach(function(k,i){
+      if(self2[k]){ gl.deleteTexture(self2[k].tex); gl.deleteFramebuffer(self2[k].fbo); }
+      self2[k]=target(gl,px/Math.pow(4,(i%3)+1));
+    });
     if(this.red) this.red.forEach(function(t){ gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo); });
     this.red=[];
     for(var rs=px; rs>1; ){
@@ -733,16 +877,28 @@ var layer={
     gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   },
 
-  buildCoarse:function(gl){
-    var PX=this.px;
-    gl.bindFramebuffer(gl.FRAMEBUFFER,this.coarse.fbo);
-    gl.viewport(0,0,PX/4,PX/4);
+  /* MAX-MIP CHAIN (v54; v58 runs it over EITHER atlas). 4x, 16x, 64x block-max
+     levels. The march picks the level whose texel covers its stride, so the
+     stride grows EXPONENTIALLY with distance yet can never step over a caster —
+     any reach in ~180 samples. (v53's single 4x level capped the stride: step
+     count grew linearly with reach, rays exhausted the budget at a common front
+     — the creeping zigzag wall — and phase-aliased at the cap — the bead
+     chains.) Each level is built from the one above, so the apron in maxFS
+     compounds; that is conservative in the safe direction. */
+  buildMips:function(gl,srcTex,keys){
+    var PX=this.px, src=srcTex, self=this;
     gl.disable(gl.BLEND);
     gl.useProgram(this.pMax);
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,this.atlas.tex);
-    gl.uniform1i(this.mSrc,0);
-    gl.uniform2f(this.mPx,PX,PX);
-    this.quad(gl,this.mPos);
+    keys.forEach(function(k,i){
+      var out=PX/Math.pow(4,i+1);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,self[k].fbo);
+      gl.viewport(0,0,out,out);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,src);
+      gl.uniform1i(self.mSrc,0);
+      gl.uniform2f(self.mPx,out*4,out*4);
+      self.quad(gl,self.mPos);
+      src=self[k].tex;
+    });
     gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   },
 
@@ -830,7 +986,7 @@ var layer={
         gl.uniform2f(this.tO[oi],TEST_OFF[oi][0]*vTest/a,TEST_OFF[oi][1]*vTest/a);
       this.quad(gl,this.tPos);
       this.measureMax(gl);
-      this.buildCoarse(gl);
+      this.buildMips(gl,this.atlas.tex,FAR_MIPS);
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);
       this.good={x0:x0,y0:y0,a:a};
       this.goodN=null;                       /* march falls back to far: exact test */
@@ -875,7 +1031,7 @@ var layer={
         if(readyF){
           this.copyInto(gl,this.atlas,[x0,y0,a],list);
           this.measureMax(gl);
-          this.buildCoarse(gl);
+          this.buildMips(gl,this.atlas.tex,FAR_MIPS);
           this.good={x0:x0,y0:y0,a:a};
           this.demZ=demZ;
         }
@@ -883,6 +1039,7 @@ var layer={
       if(readyN===listN.length || !this.goodN){
         if(readyN){
           this.copyInto(gl,this.near,[xN,yN,aN],listN);
+          this.buildMips(gl,this.near.tex,NEAR_MIPS);
           this.goodN={x0:xN,y0:yN,a:aN};
           this.zN=zN;
         }
@@ -891,9 +1048,15 @@ var layer={
     if(!this.good) return;
     x0=this.good.x0; y0=this.good.y0; a=this.good.a;
     texelM=a*mPerMerc/PX;
-    var gN=this.goodN||this.good;             /* synth or not-yet: near = far */
-    var nearTex=this.goodN?this.near.tex:this.atlas.tex;
-    var texNM2=gN.a*mPerMerc/PX;
+    /* The near branch samples u_dem0 with u_r0/u_t0 AND prunes against the near
+       mips. All three must describe the SAME rect. If the near mips are absent
+       (device < 8 texture units), fall the whole near branch back to the far
+       atlas so it stays self-consistent — never near atlas + far mips, which
+       would prune against the wrong texels and miss casters. */
+    var useNear=this.goodN&&this.nearMips;
+    var nearTex=useNear?this.near.tex:this.atlas.tex;
+    var rN=useNear?this.goodN:this.good;
+    var texNM2=rN.a*mPerMerc/PX;
     var edgeM=Math.max(0.5,0.75*texNM2*tanAlt);
 
     /* ---------- PASS 3: march ---------- */
@@ -906,9 +1069,22 @@ var layer={
     gl.uniform1i(this.hD0,0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,this.atlas.tex);
     gl.uniform1i(this.hD1,1);
-    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,this.coarse.tex);
-    gl.uniform1i(this.hDC,2);
-    gl.uniform3f(this.hR0,gN.x0,gN.y0,gN.a);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,this.coarse1.tex);
+    gl.uniform1i(this.hC1,2);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D,this.coarse2.tex);
+    gl.uniform1i(this.hC2,3);
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D,this.coarse3.tex);
+    gl.uniform1i(this.hC3,4);
+    /* Near mips when the near branch is active; otherwise the far chain, which
+       matches the far-atlas fallback bound to u_dem0 above. */
+    var nm=useNear?NEAR_MIPS:FAR_MIPS;
+    var nh=[this.hN1,this.hN2,this.hN3];
+    for(var mi=0;mi<3;mi++){
+      gl.activeTexture(gl.TEXTURE5+mi);
+      gl.bindTexture(gl.TEXTURE_2D,this[nm[mi]].tex);
+      gl.uniform1i(nh[mi],5+mi);
+    }
+    gl.uniform3f(this.hR0,rN.x0,rN.y0,rN.a);
     gl.uniform3f(this.hR1,x0,y0,a);
     var sub=sunSub(BASE+offsetMin*60000);
     gl.uniform1f(this.hSde,Math.sin(sub.de));
@@ -923,6 +1099,7 @@ var layer={
     gl.uniform1f(this.hRE,R_EARTH);
     gl.uniform1f(this.hReach,reachM);
     gl.uniform1f(this.hGrow,synth?0.0:MARCH_GROW);
+    gl.uniform1f(this.hNearMax,synth?1e9:NEAR_CASTER_M);
     gl.uniform1f(this.hEdge,edgeM);
     gl.uniform4f(this.hCol,SHADOW_RGBA[0],SHADOW_RGBA[1],SHADOW_RGBA[2],SHADOW_RGBA[3]);
     gl.uniform1f(this.hSynth,synth?1:0);
