@@ -119,9 +119,10 @@ actually clears · landscape space reclaim · mobile install note · banner slim
 
 - **Truncated basemap labels ("MAD" for Madrid, "LON" for London) + patchy detail (western US
   loses its states).** DIAGNOSED, not fixed. These labels are **baked into the raster tiles**. On a
-  globe, Cesium requests a different LOD per tile depending on distance from the camera, so a word
-  spanning a tile boundary can straddle two DIFFERENT zoom levels and get cut; and areas further
-  round the curve are served coarser tiles, losing their detail. **Inherent to any raster basemap
+  globe, the renderer requests a different LOD per tile depending on distance from the camera, so
+  a word spanning a tile boundary can straddle two DIFFERENT zoom levels and get cut; and areas
+  further round the curve are served coarser tiles, losing their detail. **Inherent to any raster
+  basemap
   with pre-rendered labels on a 3D globe — no tuning fixes it.**
   **The proper fix:** switch to **label-free base tiles** (Esri publishes Light Gray *Base* and
   Imagery without labels — that's what its separate "Reference" overlays are for) and render the
@@ -202,46 +203,42 @@ actually clears · landscape space reclaim · mobile install note · banner slim
 
 ---
 
-## 🧭 STANDING RULE — USE CESIUM'S API BEFORE HAND-ROLLING
-Most of the churn in this project came from treating Cesium as a dumb renderer to outsmart,
-rather than an engine with a considered API. Two costly examples:
-- The land fill was floated as a **primitive over** the globe, whose occlusion of labels then led
-  to clamp-to-ground and the iOS crash. The answer was to make it **imagery** — i.e. part of the
-  globe surface. Days lost.
-- Eclipse paths were **lifted** off the ground to win a depth fight against border lines, which
-  parallaxed them across the surface. `depthFailMaterial` does exactly this, at zero geometric cost.
+## 🧭 STANDING RULE — USE THE RENDERER'S API BEFORE HAND-ROLLING
+*(Active renderer is **MapLibre + deck.gl** (`js/map.js`). The dormant `cesium` branch is
+parity-only — see PARITY.md. The canonical, renderer-neutral statement of this rule lives in
+HANDOFF §5; this is the task-side reminder + the outstanding tech debt.)*
 
-**Rule: before writing per-frame code or geometry tricks to fake a visual effect, name the Cesium
-API that should do it. If you can't name one, say so out loud rather than hacking silently.**
+**Rule: before writing per-frame code or geometry tricks to fake a visual effect, name the
+API (MapLibre / deck.gl on the live app; Cesium on that branch) that should do it. If you can't
+name one, say so out loud rather than hacking silently.** Most churn in this project came from
+treating the renderer as a dumb surface to outsmart rather than an engine with a considered API.
 
-**Corollary — beware "safety rails".** Several bugs this session were constants added as harmless
-guards that quietly became the DOMINANT term: a 2 km arrow floor (at street zoom the whole view is
-2 km, so the arrow filled the screen); a 16 px screen floor applied AFTER a 300 km ground cap (at
-globe zoom the floor was larger than the cap, so `Math.max` threw the cap away and the arrow
-spanned Africa). If two limits can fight, write down which one must win — and check the arithmetic
-at BOTH extremes, not just the one you were looking at.
-The tell is any code running every frame to simulate something the engine likely does natively.
+**Corollary — beware "safety rails" (renderer-agnostic).** Constants added as harmless guards
+have twice become the DOMINANT term: a 2 km arrow floor (at street zoom the whole view is ~2 km,
+so the arrow filled the screen); a 16 px screen floor applied AFTER a 300 km ground cap (at globe
+zoom the floor exceeded the cap, so `Math.max` threw the cap away and the arrow spanned Africa).
+If two limits can fight, write down which must win — and check the arithmetic at BOTH extremes.
 
-### Audit: hand-rolled effects vs the native API
-DONE — and the rule paid for itself immediately:
-- ~~NE2↔vector crossfade~~ — **deleted outright**. The hand-rolled `band()` alpha ramp existed to
-  hand over to a vector land fill that was itself the mobile OOM. Removing both was the fix.
-- ~~Marker/label occlusion at the limb~~ — now `EllipsoidalOccluder`, the native horizon test.
-  Fixed the half-eaten labels ("Mexico City" → "TY") and the hemisphere blink in one move.
-- ~~Sun-arrow sizing~~ — now `camera.getPixelSize()`, the engine's own metres-per-pixel. My
-  hand-rolled frustum trig was simply wrong and produced arrows many times the requested size.
+### Hand-rolled tech debt on the **cesium branch** (dormant — does NOT apply to the live MapLibre app)
+Recorded so it isn't lost if that branch is ever revived. These name Cesium primitives with no
+MapLibre equivalent; do not port them to `map.js`.
+- **Border fade with zoom** — pokes `material.uniforms.color.alpha` every frame; Cesium
+  primitives support distance-based appearance natively.
+- **Arrow geometry rebuild** — surface geometry recomputed per frame via `CallbackProperty`; a
+  `Billboard` with `scaleByDistance` would be GPU-side and free, IF the limb/occlusion problem is
+  solved by the engine rather than by hand.
 
-STILL HAND-ROLLED (audit when convenient):
-- **Border fade with zoom** — we poke `material.uniforms.color.alpha` every frame. Primitives
-  support distance-based appearance natively.
-- **Arrow geometry rebuild** — the arrow is still surface geometry recomputed per frame via
-  `CallbackProperty`. A `Billboard` with `scaleByDistance` would be GPU-side and free — IF the
-  limb/occlusion problem is solved properly rather than by hand. The sizing is now correct, so
-  this is an optimisation, not a bug fix.
+*(The live MapLibre renderer has its own equivalents — e.g. globe occlusion via
+`map.transform.isLocationOccluded`, see HANDOFF §8.4. #P2 and #R1 are the open occlusion items on
+the live app.)*
 
 ---
 
 ## ⛔ DO NOT DO (verified traps — recorded so they aren't re-attempted)
+*(Some traps below name **Cesium** primitives — `CLAMP_TO_GROUND`, `depthFailMaterial`,
+order-independent translucency. Those apply to the dormant `cesium` branch only; the live
+MapLibre+deck.gl app can't hit them, but the equivalent occlusion/depth question is real there —
+see #P2. The data-key and safety-rail traps are renderer-agnostic.)*
 - **Do NOT rename the `ep.centreline` DATA KEY → `centerline`.** Internal JSON key emitted by
   the generator and read by `map.js` (plus the layer id) — distinct from the visible label.
   Renaming requires changing generator output, regenerating EVERY path file, and changing the
@@ -282,10 +279,13 @@ generalizes that into a saved, catalog-wide report.
 
 ---
 
-## MAP — remaining Cesium correctness (not cosmetic)
-- **Pole-encircling umbra-oval fills.** The pole-encircling ring was SKIPPED on the old
-  renderer. Cesium fills the ellipsoid natively; verify polar-cap ovals (e.g. Jan 2094) now
-  fill correctly and remove the skip if so.
+## MAP — remaining path/oval correctness (not cosmetic)
+- **Pole-encircling umbra-oval fills.** The pole-encircling ring was SKIPPED on the old renderer.
+  On the **live MapLibre + deck.gl** renderer this is the **#R3 "onion ring"** problem —
+  `SolidPolygonLayer` mis-triangulates polar polygons, so the fill is currently disabled for the
+  corridor (ovals still fill). Verify polar-cap ovals (e.g. Jan 2094) and decide per #R3.
+  (On the dormant `cesium` branch the ellipsoid fills natively, so the ring works there — a
+  genuine behavioural difference between the branches, not a bug to chase on both.)
 - **Cosmetic terminus-join kinks** — 1533 / 1563 / 1587 (small joins); **1522** is a bumpy
   mid-latitude grazer (γ +0.995) — livable. Low priority polish.
 
@@ -398,8 +398,9 @@ generalizes that into a saved, catalog-wide report.
   an in-flight map.
   **The actual fix (for a dedicated session):** stop precaching anything the PAGE fetches for
   itself. The fetch handler already caches on demand, so the shell scripts/CSS don't need to be in
-  the install list at all; precache only what the page never requests (Cesium Workers/Assets,
-  out-of-range besselian/paths). Then measure the network panel again. Do this calmly, on a
+  the install list at all; precache only what the page never requests (the MapLibre CSP **worker**
+  + vendor assets, out-of-range besselian/paths). Then measure the network panel again. Do this
+  calmly, on a
   branch, with an offline test after — `sw.js` is the most fragile file in the project.
 - **Path JSON size — curve thinning (RDP).** Full-loop traces + pole tips added points. Reduce
   size WITHOUT losing accuracy via Douglas–Peucker decimation per curve at ~200–500 m (far
@@ -417,8 +418,10 @@ generalizes that into a saved, catalog-wide report.
 ## INFRA (durable; keystones of the offline goal)
 - **Git-LFS vs GitHub-release bundle** for the large path-chunk files — decide before
   open-sourcing.
-- **Open-source prep** — licensing/attribution: Cesium (Apache-2.0), Natural Earth (public
-  domain), NASA Blue Marble, eclipse data (Espenak/Meeus).
+- **Open-source prep** — licensing/attribution for the **live stack**: MapLibre GL JS (BSD-3),
+  deck.gl (MIT), Natural Earth (public domain), NASA Blue Marble, eclipse data (Espenak/Meeus),
+  Terrarium DEM tiles (the shadow engine's source). (The dormant `cesium` branch additionally
+  carries Cesium, Apache-2.0 — only relevant if that branch is ever shipped.)
 - **Production bundling** (single JS/CSS) — optimization, not a blocker (SW precaches
   individual files fine).
 - **"Download everything for the field" toggle** — a Settings option (while online) to precache
