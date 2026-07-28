@@ -104,6 +104,8 @@ var ATLAS_MAX=_mm('(min-width: 1200px)') ? 4096
              :_mm('(min-width: 900px)') ? 2048 : 1024;
 var MARGIN_FRAC=0.12;            /* atlas overhang beyond the viewport, each side */
 var DEM_RATIO=1.0;               /* DEM sample size / atlas texel; 1 = matched */
+var SS_ZOOM_MAX=12;              /* above this zoom a single ray is already clean -> skip supersampling */
+var SS_SUN_MAX=18;               /* below this sun altitude (deg) shadows graze/speckle -> supersample anyway */
 var MAX_TERRAIN_H=9000;          /* ceiling only; the real max is measured each frame */
 var H_STEP=250;                  /* quantise it, or the atlas chases its own contents */
 var MARCH_STEPS=300;             /* per-pixel ray samples (early-out when deep) */
@@ -331,6 +333,18 @@ var layer={
   terrainMax:MAX_TERRAIN_H,
 
   onAdd:function(m,gl){ this.map=m;
+    /* Supersample-on-idle: during pan/zoom (and time scrubbing) render a single
+       ray so motion stays smooth; ~130ms after motion stops, repaint once at full
+       supersampling. this._moving gates the SS cost in the render loop. */
+    var self=this;
+    this._moving=false; this._moveTimer=null;
+    this._bumpMotion=function(){
+      self._moving=true;
+      if(self._moveTimer) clearTimeout(self._moveTimer);
+      self._moveTimer=setTimeout(function(){ self._moving=false; if(self.map) self.map.triggerRepaint(); },130);
+    };
+    m.on('move',this._bumpMotion);
+    m.on('zoom',this._bumpMotion);
     /* PASS 1 — tile into the atlas, resampled onto the atlas grid */
     var copyVS='attribute vec2 a_pos; varying vec2 v_uv; uniform vec4 u_tile, u_atlas;'+
       'void main(){ v_uv=a_pos;'+
@@ -506,6 +520,7 @@ var layer={
       'uniform float u_t0, u_t1, u_mpm, u_tanA, u_RE, u_reach, u_grow, u_nearMax;'+
       'uniform float u_sde, u_cde, u_slon;'+       /* sin/cos(dec), subsolar lon */
       'uniform float u_edge, u_synth, u_R, u_H, u_elev;'+
+      'uniform float u_ss, u_pixM;'+              /* supersample toggle + mercator per screen pixel */
       'uniform vec4 u_col;'+
       GLSL_H+glslBilinear('hN','u_dem0')+glslBilinear('hF','u_dem1')+
       /* distance (texel units of the CALLER's atlas) from ft to the exit
@@ -521,6 +536,46 @@ var layer={
       '  return max(min(dx,dy),0.0)+pad; }'+
       glslStep('stepN','hN','u_n1','u_n2','u_n3')+
       glslStep('stepF','hF','u_c1','u_c2','u_c3')+
+      /* SUPERSAMPLE occlusion at an arbitrary mercator point: the same march as
+         main(), returning 1.0 (terrain-shadowed) or 0.0 (lit). main() averages
+         this over a 2x2 sub-pixel grid when u_ss is on, so the grey it produces
+         is the TRUE fractional shadow coverage of the pixel (physical anti-
+         aliasing), not an edge blur. Kept identical to the inline march. */
+      'float occAt(vec2 m){'+
+      '  vec2 uv1=(m-u_r1.xy)/u_r1.z;'+
+      '  vec2 uv0=(m-u_r0.xy)/u_r0.z;'+
+      '  bool in0=uv0.x>0.003&&uv0.x<0.997&&uv0.y>0.003&&uv0.y<0.997&&texture2D(u_dem0,uv0).a>0.5;'+
+      '  float h0=in0?hN(uv0,u_px):hF(uv1,u_px);'+
+      '  float lat=atan(0.5*(exp(3.14159265*(1.0-2.0*m.y))-exp(-3.14159265*(1.0-2.0*m.y))));'+
+      '  float lon=m.x*6.2831853-3.14159265;'+
+      '  float altD=57.29578*asin(clamp(sin(lat)*u_sde+cos(lat)*u_cde*cos(lon-u_slon),-1.0,1.0));'+
+      '  if(altD>-2.0) altD+=1.02/tan((altD+10.3/(altD+5.11))*0.01745329)/60.0;'+
+      '  float tanA=(u_synth>0.5)?u_tanA:tan(max(altD,0.05)*0.01745329);'+
+      '  float curv=(u_synth>0.5)?0.0:(0.5/u_RE);'+
+      '  float best=-1e9;'+
+      '  float s=1.5*u_t0;'+
+      '  for(int i=0;i<'+MARCH_STEPS+';i++){'+
+      '    if(s>u_reach) break;'+
+      '    vec2 q=m+u_u*(s/u_mpm);'+
+      '    vec2 q0=(q-u_r0.xy)/u_r0.z;'+
+      '    bool qn=q0.x>0.003&&q0.x<0.997&&q0.y>0.003&&q0.y<0.997;'+
+      '    float h; float st;'+
+      '    float rayH=s*tanA + s*s*curv + h0;'+
+      '    bool useN = qn && (s < u_nearMax);'+
+      '    if(useN){'+
+      '      stepN(q0,s,rayH,u_t0,h,st);'+
+      '      if(h<-1.0e8) st=min(st, ddaExit(q0*u_px,u_px.x,0.0)*u_t0);'+
+      '    } else {'+
+      '      vec2 q1=(q-u_r1.xy)/u_r1.z;'+
+      '      if(q1.x<0.0||q1.x>1.0||q1.y<0.0||q1.y>1.0) break;'+
+      '      stepF(q1,s,rayH,u_t1,h,st);'+
+      '    }'+
+      '    best=max(best, h - rayH);'+
+      '    if(best>8.0) break;'+
+      '    s+=st;'+
+      '  }'+
+      '  float mrg=best-(0.5+0.4*min(u_t0,150.0)*max(tanA,0.08));'+
+      '  return mrg>0.0?1.0:0.0; }'+
       'void main(){'+
       '  vec2 m=u_r1.xy+v_uv*u_r1.z;'+              /* absolute mercator */
       '  vec2 uv1=(m-u_r1.xy)/u_r1.z;'+
@@ -548,7 +603,11 @@ var layer={
       '  if(altD>-2.0) altD+=1.02/tan((altD+10.3/(altD+5.11))*0.01745329)/60.0;'+
       '  float tanA=(u_synth>0.5)?u_tanA:tan(max(altD,0.05)*0.01745329);'+
       '  float curv=(u_synth>0.5)?0.0:(0.5/u_RE);'+
-      '  float best=-1e9;'+
+      /* when supersampling is on, occAt() does the marching — skip this
+         single-ray march entirely (it would otherwise be a wasted 5th march).
+         The self-test (u_synth) still needs it. */
+      '  float best=-1e9; float mrg=0.0; bool ours=false;'+
+      '  if(u_ss<0.5||u_synth>0.5){'+
       '  float s=1.5*u_t0;'+
       '  for(int i=0;i<'+MARCH_STEPS+';i++){'+
       '    if(s>u_reach) break;'+
@@ -598,8 +657,8 @@ var layer={
       '  }'+
       /* bias: half a near-texel of ray rise + a floor, or the pixel's own slope
          self-shadows every sun-facing hillside (terrain-march acne) */
-      '  float mrg=best-(0.5+0.4*min(u_t0,150.0)*max(tanA,0.08));'+
-      '  bool ours=(mrg>0.0);'+
+      '  mrg=best-(0.5+0.4*min(u_t0,150.0)*max(tanA,0.08));'+
+      '  ours=(mrg>0.0); }'+
       /* Self-test: stadium analytic in FAR-atlas texels, flat plane. NOTE: at a
          very low test sun the growing step erodes distant tips; run it at
          mid-day altitudes, where the tolerance is one texel as before. */
@@ -621,6 +680,10 @@ var layer={
       (derivOK
        ? '  float aa=clamp(mrg/max(1.5*fwidth(mrg),0.6),0.0,1.0);'
        : '  float aa=smoothstep(0.0,u_edge,mrg);')+
+      /* SUPERSAMPLE: replace the single-sample edge estimate with the true
+         fractional shadow coverage over a 2x2 sub-pixel grid. Off by default. */
+      '  if(u_ss>0.5){ float d=0.25*u_pixM;'+
+      '    aa=0.25*(occAt(m+vec2(-d,-d))+occAt(m+vec2(d,-d))+occAt(m+vec2(-d,d))+occAt(m+vec2(d,d))); }'+
       /* TWILIGHT VEIL. aa: 1 = terrain-shadowed, 0 = lit. The sunset STORY is
          told by the terrain shadows themselves: at grazing sun they grow until
          only the peaks are still lit (shademap's last frame is a single lit
@@ -664,6 +727,7 @@ var layer={
     this.hNearMax=U('u_nearMax');
     this.hCol=U('u_col'); this.hSynth=U('u_synth'); this.hElev=U('u_elev');
     this.hR=U('u_R'); this.hH=U('u_H');
+    this.hSS=U('u_ss'); this.hPixM=U('u_pixM');
     this.hS=[]; for(var j=0;j<4;j++) this.hS.push(U('u_s'+j));
 
     /* Eight fragment samplers is the GLES2 guaranteed minimum, so this should
@@ -1089,6 +1153,21 @@ var layer={
     gl.uniform1f(this.hGrow,synth?0.0:MARCH_GROW);
     gl.uniform1f(this.hNearMax,synth?1e9:NEAR_CASTER_M);
     gl.uniform1f(this.hEdge,edgeM);
+    /* supersample toggle + mercator span of one screen pixel (world px = 512*2^z).
+       Gate the 4x cost to where speckle actually appears: zoomed out, or a
+       grazing sun. Zoomed in under a high sun a single ray is already clean, so
+       skip it there and keep pan/scrub smooth. */
+    var ssOn=0;
+    if(this.opts&&this.opts.ss&&this.map){
+      var _z=this.map.getZoom(), _cc=this.map.getCenter();
+      var _lat=_cc.lat*0.01745329, _lon=_cc.lng*0.01745329;
+      var _sa=Math.asin(Math.max(-1,Math.min(1,
+        Math.sin(_lat)*Math.sin(sub.de)+Math.cos(_lat)*Math.cos(sub.de)*Math.cos(_lon-sub.lon))))*57.29578;
+      ssOn=(_z<SS_ZOOM_MAX || _sa<SS_SUN_MAX)?1:0;
+      if(this._moving) ssOn=0;   /* single ray while panning/zooming/scrubbing */
+    }
+    gl.uniform1f(this.hSS,ssOn);
+    gl.uniform1f(this.hPixM, 1.0/(512.0*Math.pow(2.0, this.map?this.map.getZoom():0)));
     gl.uniform4f(this.hCol,SHADOW_RGBA[0],SHADOW_RGBA[1],SHADOW_RGBA[2],SHADOW_RGBA[3]);
     gl.uniform1f(this.hSynth,synth?1:0);
     gl.uniform1f(this.hElev,(this.opts&&this.opts.showElevation)?1:0);
@@ -1117,6 +1196,7 @@ var layer={
   layer.opts = {
     selfTest:      !!userOpts.selfTest,
     showElevation: !!userOpts.showElevation,
+    ss:            !!userOpts.ss,
     onStatus:      (typeof userOpts.onStatus === 'function') ? userOpts.onStatus : null,
     onLog:         (typeof userOpts.onLog    === 'function') ? userOpts.onLog    : null
   };
@@ -1132,8 +1212,13 @@ var layer={
                : Date.now();
 
   /* ---- public API ---- */
+  layer.onRemove = function(m){
+    if (this._bumpMotion) { try { m.off('move',this._bumpMotion); m.off('zoom',this._bumpMotion); } catch(e){} }
+    if (this._moveTimer) clearTimeout(this._moveTimer);
+  };
   layer.setTime = function(t){
     this.timeMs = (t instanceof Date) ? t.getTime() : (typeof t === 'number' ? t : Date.now());
+    if (this._bumpMotion) this._bumpMotion();   /* scrubbing counts as motion */
     if (this.map) this.map.triggerRepaint();
     return this;
   };
@@ -1144,6 +1229,7 @@ var layer={
     if ('onStatus'      in o) this.opts.onStatus = (typeof o.onStatus==='function')?o.onStatus:null;
     if ('onLog'         in o) { this.opts.onLog = (typeof o.onLog==='function')?o.onLog:null; _log = this.opts.onLog || function(){}; }
     if (o.shadowColor && o.shadowColor.length===4){ for (var i=0;i<4;i++) SHADOW_RGBA[i]=o.shadowColor[i]; }
+    if ('ss' in o) this.opts.ss = !!o.ss;
     if (this.map) this.map.triggerRepaint();
     return this;
   };

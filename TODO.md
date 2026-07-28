@@ -14,29 +14,65 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-07-11 — **Cesium migration landed and mobile offline works** (survives
-backgrounding + offline reload; seamless online↔offline). map.js consolidated to one `PROFILE`.
-Mobile offline basemap = NE2; sun-arrow rebuilt as flat surface geometry. What remains on the
-map is cosmetic polish (below). The two big non-map items still stand: search temporal tokens
-and the full-catalog pre-ship audit.
+Last touched: 2026-07-28 — **Terrain-shadow module WIRED INTO THE APP and finished**
+(BUILD `2026-07-27r`; full detail in HANDOFF §4). New file `js/shadow-ui.js` owns the
+integration: on-map toggle, ruler scrubber, three-way time sync (SUNTRACK + contact
+rows + Rise/Set), location-aware max time, Settings shadow-strength, online-only
+gating, and the Mercator-flip + supersampling machinery. Also restored the
+never-ported basemap picker (`_scSetBasemap`/`_scRecenter`) and fixed a latent
+listener-stacking bug in `map.js`. Shadow work is CLOSED. What's newly open: the
+**observer-pin cluster (#P1)** and **paths-through-the-planet (#P2)** below, both
+deck.gl draw-order/occlusion issues surfaced (not caused) during the shadow work.
+
+Prior note (2026-07-11): Cesium migration landed and mobile offline works; map.js
+consolidated to one `PROFILE`. (Superseded — the app reverted to MapLibre; see
+HANDOFF §2. Kept for history.)
 
 ---
 
 ## PRIORITY ORDER (suggested re-entry)
-*(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. The cosmetics
-backlog that used to sit at #1 is closed — see "Shipped this session".)*
-1. **#F4 Topographic shadow overlay** — THE next big feature, and the reason for the Cesium
-   migration. Needs real scoping first: terrain provider, and the large open question of
-   **offline terrain data**. Deserves its own thread.
-2. **Label-free basemaps + our own labels** — one change that fixes the truncated tile labels
+*(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. Terrain
+shadows are DONE and wired in (HANDOFF §4). Priorities are the USER's to set — this is a
+suggestion.)*
+1. **Observer-pin cluster (#P1) + paths-through-the-planet (#P2)** — visible map bugs, see
+   "OPEN BUGS — MAP (deck.gl draw order / globe occlusion)" below. Batch them; likely one
+   root cause. #P2 was fixed once before (regression).
+2. **Mercator/globe toggle in Settings** — new, small (the shadow feature already flips
+   projection via `map.setProjection`; expose a user preference). See OPEN — UI / COPY.
+3. **Label-free basemaps + our own labels** — one change that fixes the truncated tile labels
    ("MAD"/"LON"), the patchy per-tile detail, AND placename language. See OPEN — UI / COPY.
-3. **Full-catalog audit — the pre-ship GATE** (see PRE-SHIP GATE). The real blocker to shipping;
+4. **Full-catalog audit — the pre-ship GATE** (see PRE-SHIP GATE). The real blocker to shipping;
    the 2028/2041 regression proved spot-checks insufficient.
-4. **On-map control strip** (basemap / clouds / shadows) — decide the model before building; it
-   likely makes the desktop Map panel redundant.
-5. **Search temporal tokens** — needs a design decision before any code.
-6. **Mobile UX / layout pass** (interdependent — one sitting).
-7. Open bugs → UX deliberations → Features.
+5. **On-map control strip** (basemap / clouds / shadows) — decide the model before building; it
+   likely makes the desktop Map panel redundant. *Partly realized already: shadows now have an
+   on-map toggle button; use it as the pattern.*
+6. **Search temporal tokens** — needs a design decision before any code.
+7. **Mobile UX / layout pass** (interdependent — one sitting).
+8. Remaining open bugs → UX deliberations → Features.
+
+---
+
+## OPEN BUGS — MAP (deck.gl draw order / globe occlusion)
+*(All surfaced during the 2026-07-28 shadow session; none caused by it. Terse status is in
+HANDOFF §11; candidate-fix detail lives here.)*
+
+- **#P1 observer pin — three issues, batch them (likely shared root cause):**
+  - (a) **pin renders BEHIND the eclipse path** — deck.gl draws the path over the marker.
+    Candidate: marker vs deck-layer ordering / depth; the pin may be a deck layer that needs to
+    sit above the path layers, or a maplibre marker whose stacking vs the deck overlay is wrong.
+  - (b) **pin drifts to the top-left corner while zooming the globe, then snaps back** on settle
+    — the marker's globe reprojection lags the camera transform mid-gesture. Candidate: it's a
+    per-frame-positioned element not following MapLibre's globe transform during the zoom; check
+    how the pin is projected vs. a native MapLibre `Marker` (which reprojects correctly on globe).
+  - (c) **pin tip is not exactly on the location dot** — anchor/offset error. The pin artwork's
+    tip must land on the coordinate at all zooms (this was a stated invariant — see PARITY
+    checklist "Pin tip lands on the exact coordinate at all zooms"). Fix the anchor.
+- **#P2 eclipse paths visible THROUGH the far edge of the planet** (globe backface). Path lines
+  on the hemisphere facing away from the camera show through the limb. **Fixed once before —
+  regression; find the prior fix.** Same family as #R1 (city labels fade through the globe) and
+  the STANDING RULE example about paths lifted off the ground / `depthFailMaterial` (that was
+  the Cesium fix; on MapLibre+deck.gl the equivalent is deck depth-test / horizon culling — name
+  the deck.gl parameter before hand-rolling).
 
 ---
 
@@ -104,7 +140,19 @@ actually clears · landscape space reclaim · mobile install note · banner slim
   Guy's thought: put a discreet **street / topo / satellite toggle on the map itself** (a real win
   on mobile), and later small toggles for **clouds** and **shadows** — which would make the Map
   panel redundant on desktop. Decide the model before building: an on-map control strip is the
-  natural home for layer toggles, and it scales to the coming overlays.
+  natural home for layer toggles, and it scales to the coming overlays. *Status update (2026-07-28):
+  the **Settings basemap picker now works** — it was silently dead on the maplibre branch
+  (`_scSetBasemap`/`_scRecenter` were never ported from the Cesium version; restored this session,
+  with a live raster/vector `setStyle` swap). Shadows already have an on-map toggle button — the
+  first piece of the control strip.*
+
+- **Mercator / globe projection toggle (NEW, 2026-07-28).** Add a Settings preference to choose
+  the map projection. The shadow feature already flips projection at runtime
+  (`map.setProjection({type:'mercator'|'globe'})` — it forces Mercator while shadows show, because
+  the shadow engine is Mercator-only; see HANDOFF §4), so the mechanism exists. The toggle must
+  **cooperate** with that: the user's choice is the *resting* projection, but shadows still force
+  Mercator while showing and restore the user's choice (not hard-coded globe) when hidden. Small,
+  but wire the interaction deliberately so the two don't fight.
 
 - **Should HYBRID eclipses match a search for "total"?** They ARE total along part of their path
   (569 of 11,898). Arguments: a chaser searching "total" near a location would want a hybrid that
@@ -321,9 +369,11 @@ generalizes that into a saved, catalog-wide report.
 - **#F2 Cloud-cover / weather overlay** — the killer feature. Forecast (near-term) +
   climatology (far-future); needs data-source choice, globe-layer rendering, online/offline
   behavior, controls, perf. ~2 sessions of design before code.
-- **#F3 Animated shadow on globe with time slider** — scrub the umbra/penumbra in real time.
-  Most on-brand feature. (Cesium's the reason we migrated — this is now buildable.)
-- **#F4 Topographic shadow overlay** — terrain shadows at the observer location.
+- **#F3 Animated shadow on globe with time slider** — scrub the umbra/penumbra across the map in
+  real time. Most on-brand feature. Distinct from the terrain-shadow scrubber that shipped:
+  that scrubs *terrain* shadows at one place; #F3 animates the *umbra/penumbra footprint*
+  sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
+  clean precedent for the time-plumbing.
 - **#F1 Personal "ShadowChaser log"** — eclipses visited / wishlist; schema, localStorage (or
   future sync), UI in list/details, "been there" vs "want to go", merge with selection state.
 

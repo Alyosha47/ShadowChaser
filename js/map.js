@@ -36,6 +36,58 @@ var _deckLayers = null; /* last layers array pushed to the overlay */
 */
 
 var ONLINE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+
+/* Selectable online basemaps (Settings → Online map). 'osm' keeps the default
+   OpenFreeMap vector style (OSM data, our tinted cartography); the rest are
+   raster tile overrides. Tile URL order is provider-native and matches
+   MapLibre's {z}/{x}/{y} (row = {y}) substitution: ArcGIS uses {z}/{y}/{x}. */
+var BASEMAPS = {
+  esri_street:  { name: 'Esri Street',      attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}' },
+  esri_imagery: { name: 'Esri Satellite',   attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' },
+  esri_topo:    { name: 'Esri Topographic', attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}' },
+  esri_terrain: { name: 'Esri Terrain',     attr: 'Esri', max: 13, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}' },
+  esri_gray:    { name: 'Esri Light Gray',  attr: 'Esri', max: 16, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}' },
+  opentopo:     { name: 'OpenTopoMap',      attr: '\u00a9 OpenTopoMap (CC-BY-SA)',       max: 17, url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png' },
+  osm:          { name: 'OpenStreetMap',    attr: '\u00a9 OpenStreetMap contributors',   max: 19, url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' }
+};
+
+function _basemapKey() {
+  try { return localStorage.getItem('sc_basemap') || 'osm'; } catch (e) { return 'osm'; }
+}
+
+/* A MapLibre style for a basemap key. 'osm'/default → the vector style we
+   already ship; any other key → a single raster layer. */
+function _basemapStyle(key) {
+  var bm = BASEMAPS[key];
+  if (!bm || key === 'osm') return ONLINE_STYLE_URL;
+  return {
+    version: 8,
+    sources: { basemap: { type: 'raster', tiles: [bm.url], tileSize: 256, maxzoom: bm.max, attribution: bm.attr } },
+    layers:  [{ id: 'basemap', type: 'raster', source: 'basemap' }]
+  };
+}
+
+/* Swap the online basemap live from Settings. Raster/vector swap via setStyle;
+   the style.load handler re-applies projection, fog and tint, and the deck.gl
+   overlay (a control) plus terrain shadows re-attach themselves. Offline uses
+   the bundled local style, so we only persist the choice until back online. */
+window._scSetBasemap = function (key) {
+  if (key !== 'osm' && !BASEMAPS[key]) return;
+  try { localStorage.setItem('sc_basemap', key); } catch (e) {}
+  if (!map || isOffline()) return;
+  try { map.setStyle(_basemapStyle(key)); } catch (e) {}
+};
+
+/* Force a recentre on the current selection (the fly-to is otherwise guarded by
+   isNewEclipse). Renderer-agnostic. */
+window._scRecenter = function () {
+  if (typeof updateMapState !== 'function') return;
+  updateMapState._lastEntry = null;
+  updateMapState();
+};
+
+var _mapEventsWired = false;   /* guard: map-level listeners survive setStyle, so
+                                  attach them once, not on every style.load */
 var basemapData = null;     /* parsed GeoJSON cache: {countries, land, cities?, rivers?, lakes?} */
 var basemapLoading = null;  /* in-flight Promise so we only fetch once */
 
@@ -233,9 +285,11 @@ function initMap() {
   loadBasemapData().then(function (data) {
     var online     = (navigator.onLine !== false) && !_forceOffline;
     var localStyle = buildLocalStyle(data);
-    createMap(online ? ONLINE_STYLE_URL : localStyle, online, localStyle);
+    createMap(online ? _basemapStyle(_basemapKey()) : localStyle, online, localStyle);
+    var sel = document.getElementById('basemap');
+    if (sel) sel.value = _basemapKey();
   }).catch(function () {
-    createMap(ONLINE_STYLE_URL, true, null);
+    createMap(_basemapStyle(_basemapKey()), true, null);
   });
 }
 
@@ -267,9 +321,15 @@ function createMap(style, isOnline, localStyleFallback) {
       'horizon-blend': 0.04, 'space-color': '#0a0c1a', 'star-intensity': 0.3
     }); } catch (e) {}
 
-    map.on('render', updateMarkerOcclusion);
-    map.on('zoom', updateOvalVisibility);
-    map.on('zoom', updateArrowScale);
+    /* These are map-level listeners — they persist across setStyle, so wire them
+       once. (Re-adding on every style.load stacked duplicates on each basemap
+       swap.) */
+    if (!_mapEventsWired) {
+      map.on('render', updateMarkerOcclusion);
+      map.on('zoom', updateOvalVisibility);
+      map.on('zoom', updateArrowScale);
+      _mapEventsWired = true;
+    }
 
     if (!deckOverlay) {
       deckOverlay = new DeckGL.MapboxOverlay({ layers: [], interleaved: false });

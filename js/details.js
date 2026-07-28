@@ -30,7 +30,7 @@ function buildContactRows(rec, res, lbl, tz) {
     var s = c.sun || {};
     rows.push({ ut: c.ut, html:
         '<tr' + (cls ? ' class="' + cls + ' ct-row"' : ' class="ct-row"')
-      + ' onclick="sunTrackJump(' + c.ut + ')">'
+      + ' onclick="scOnContactRow(' + c.ut + ')">'
       + '<td>' + contactIcon(phase, type, c.v) + ' ' + phase + '</td>'
       + '<td>' + fmtTime(c.ut)       + '</td>'
       + '<td>' + fmtAng(s.alt)       + '</td>'
@@ -41,7 +41,7 @@ function buildContactRows(rec, res, lbl, tz) {
   pushContact('C1', res.C1, '');
   pushContact('C2', res.C2, 'row-umbral');
   rows.push({ ut: res.tMax, html:
-      '<tr class="row-max ct-row" onclick="sunTrackJump(' + res.tMax + ')"><td>' + contactIcon('MAX', type, null) + ' MAX</td>'
+      '<tr class="row-max ct-row" onclick="scOnContactRow(' + res.tMax + ')"><td>' + contactIcon('MAX', type, null) + ' MAX</td>'
     + '<td>' + fmtTime(res.tMax)     + '</td>'
     + '<td>' + fmtAng(res.sun.alt)   + '</td>'
     + '<td>' + fmtAng(res.sun.az)    + '</td></tr>' });
@@ -61,7 +61,7 @@ function buildContactRows(rec, res, lbl, tz) {
         if (ut === null) return;
         var az = sunAltAz(fundamentalArgs(rec, t, c.lat, lonW, alt, dT_s), c.lat).az;
         rows.push({ ut: ut, html:
-            '<tr><td>' + horizonIcon(rising) + ' ' + label + '</td>'
+            '<tr class="ct-row" onclick="scOnContactRow(' + ut + ')"><td>' + horizonIcon(rising) + ' ' + label + '</td>'
           + '<td>' + fmtTime(ut)       + '</td>'
           + '<td>0\u00b0</td>'
           + '<td>' + fmtAng(az)        + '</td></tr>' });
@@ -387,7 +387,12 @@ function buildSunTrack(rec, lat, lon, altM, res, tz) {
       + (p.mag > 0 ? '  \u00b7  mag ' + p.mag.toFixed(3) : '');
   }
 
-  slider.addEventListener('input', function () { draw(parseInt(slider.value, 10)); });
+  slider.addEventListener('input', function () {
+    var i = parseInt(slider.value, 10);
+    draw(i);
+    /* Drive terrain shadows from the sun-track slider (no-op if shadows off). */
+    if (typeof shadowTimeFromSunTrack === 'function') shadowTimeFromSunTrack(pts[i].t);
+  });
   draw(parseInt(slider.value, 10));
 
   /* Let the contact-time rows jump the slider to a given UT — lands exactly on
@@ -400,6 +405,14 @@ function buildSunTrack(rec, lat, lon, altM, res, tz) {
     slider.focus();
   };
 }
+
+/* Contact-time row / MAX row click: jump the SUNTRACK slider AND (if terrain
+   shadows are on) the shadow time to that instant. Module-level so it exists
+   even when the sun-track panel didn't render. */
+window.scOnContactRow = function (ut) {
+  if (typeof window.sunTrackJump === 'function') window.sunTrackJump(ut);
+  if (typeof shadowTimeFromSunTrack === 'function') shadowTimeFromSunTrack(ut);
+};
 
 function contactIcon(phase, type, v) {
   /* Thin wrapper over eclipseIcon for the contact-times table. v is the

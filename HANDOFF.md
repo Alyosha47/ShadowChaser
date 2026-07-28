@@ -1,4 +1,4 @@
-# ShadowChaser — HANDOFF (consolidated 2026-07-19; §4 terrain shadows updated 2026-07-27)
+# ShadowChaser — HANDOFF (consolidated 2026-07-19; §4 terrain shadows WIRED IN 2026-07-28)
 
 Single authoritative status + knowledge document. Supersedes all prior HANDOFF versions and
 the 2026-07-18 correction block. `TODO.md` owns durable task detail; this file owns status,
@@ -81,12 +81,14 @@ very low sun — the case that broke Cesium's native shadows, so it is the right
 
 ---
 
-## 4. TERRAIN SHADOWS (#F4) — COMPLETE, SHIPPED AS A MODULE (2026-07-27)
+## 4. TERRAIN SHADOWS (#F4) — COMPLETE, MODULE **WIRED INTO THE APP** (2026-07-28)
 
-**Status: DONE.** The terrain-shadow feature went spike (v4) → study app (v50–v64) →
-**extracted drop-in module**. The engine is finished and shipped as
+**Status: DONE and integrated.** The terrain-shadow feature went spike (v4) → study
+app (v50–v64) → **extracted drop-in module** → **wired into the eclipse app**
+(2026-07-28; BUILD `2026-07-27r`). The engine is finished and shipped as
 `shadow-layer.js`. Do not rebuild it. Do not relitigate build-vs-buy (our own GPU
-raymarch, no API key, no $25/mo).
+raymarch, no API key, no $25/mo). **The wiring/integration is §4's "Wiring into the
+eclipse app — DONE" subsection below — read it before touching shadow code.**
 
 ### The deliverable
 - **`shadow-layer.js`** — a MapLibre custom layer, `createShadowLayer(options)` →
@@ -181,11 +183,117 @@ directly (`ted.js` in the sandbox). Findings, all measured, not guessed:
    change the shadow calculation (it's pixels drawn under the shadow). Over a relief
    basemap in the real app, these shadows will already read much closer to shademap.
 
-### Wiring into the eclipse app
-Add the layer over the existing MapLibre basemap; feed it the **selected eclipse's
-max instant** via `setTime()` (the app already computes it) instead of "now". Toggle
-by add/removeLayer. Mobile: v64 runs fine on the user's phone (confirmed); the module
-is the same engine, no heavier.
+### Wiring into the eclipse app — DONE (2026-07-28). BUILD `2026-07-27r`.
+The module is fully integrated. All integration logic lives in a new file
+**`js/shadow-ui.js`** (~443 lines, the only new file); the engine `shadow-layer.js`
+gained a small, opt-in supersampling addition (below) and nothing else.
+
+**Pristine engine backup:** `shadow-layer.ORIGINAL.js` (repo root + delivered) is the
+byte-for-byte v64 engine as first committed (`ba1c20f`). The shipped
+`shadow-layer.js` differs from it by **supersampling only** — verified by diff.
+Keep it as the safety net; if a shadow change ever misbehaves, diff against it.
+
+**How it's wired:**
+- **On-map toggle** — a "Shadows" button top-left of the map (`#btn-shadow`).
+  Greyed out + explanatory `title` when `isOffline()` (the engine streams DEM
+  tiles → online-only; there's also a note in Settings→Instructions).
+- **State machine** (documented atop `shadow-ui.js`): `_shadowArmed` (user toggled
+  on) vs `_shadowShowing` (layer up AND map in Mercator). `updateShadowVisibility()`
+  reconciles them on every toggle and zoom.
+- **PROJECTION — the load-bearing integration fact.** The engine's vertex shader
+  hands MapLibre a **flat-Mercator** quad (`gl_Position = u_matrix * vec4(merc,0,1)`).
+  On the app's **globe** projection MapLibre's matrix does not warp that flat quad
+  onto the sphere, so it renders as a **sheet floating in space** (a "sinewave/
+  parallelogram" pinned off in the ocean). Fix: **flip the whole map to `mercator`
+  while shadows are shown, back to `globe` when off/zoomed-out.** At the zoom you
+  view terrain shadows the two projections look near-identical and the seam bugs the
+  globe exists to avoid don't occur that far in. `setProjection` is cheap (no style
+  reload). The globe-aware alternative (port the shader to MapLibre's `projectTile`
+  globe projection) was rejected: the raymarch assumes a linear screen↔mercator
+  mapping, so it's a re-architecture, not a wrap. **Left as a deferred option; not
+  needed.**
+- **Zoom gate** — `SHADOW_MIN_ZOOM = 6`. Armed + zoom ≥ 6 → Mercator + layer +
+  scrubber. Armed + zoomed out → keep the globe, drop the layer, show a "zoom in to
+  reveal terrain shadows" hint in the bar.
+- **TIME.** Opens at the **greatest-eclipse instant** from the Besselian record's
+  `td_ge` (a `"HH:MM:SS"` TD string → UT = TD − ΔT → absolute ms on the record's
+  date). If an **observer pin** is set and the eclipse is visible there, it anchors
+  on that **location's local maximum** instead (`computeEclipse(...).tMax`, already
+  UT). Re-anchors when the eclipse OR the pin changes; leaves a manual scrub alone
+  otherwise. Scrubber window = event span (`tmin`/`tmax`). (Rise/Set clamp to that
+  window — deliberately not widened.)
+- **SCRUBBER** — a flush, full-width bottom bar (34px). Left: selected date over
+  time (two lines, UTC). Right: a **ruler whose time strip slides past a fixed gold
+  centre needle** (not a range input). Drag / wheel (±5 min) / arrow keys.
+  `SHADOW_PX_PER_MIN = 6`.
+- **THREE-WAY TIME SYNC.** `setShadowTime(ms)` is the SINGLE owner. The on-map
+  scrubber, the SUNTRACK slider, and the contact-times rows (C1–C4, MAX, **and
+  Rise/Set**) all move through it and stay in step. Plumbing:
+  `window.shadowTimeFromSunTrack(ut)` (SUNTRACK slider → shadow, guarded so it
+  doesn't bounce back) and `window.scOnContactRow(ut)` (a row click → SUNTRACK +
+  shadow). One re-entrancy guard `_drivingSunTrack`; loop-free because
+  `sunTrackJump` sets the slider without firing `input`. **`details.js` was edited
+  for this — SHARED per PARITY.md.** The edits (row `onclick` → `scOnContactRow`,
+  the SUNTRACK slider `input` → `shadowTimeFromSunTrack`, and a module-level
+  `window.scOnContactRow`) are all `typeof`-guarded, so cherry-picking `details.js`
+  to the **cesium** branch is safe — the shadow-ui globals simply won't exist there
+  and the calls no-op.
+- **BASEMAP-SWAP SURVIVAL.** `_scSetBasemap` uses `setStyle`, which wipes custom
+  layers and resets projection. `shadow-ui` re-adds the shadow layer + reasserts
+  Mercator on `style.load` if shadows were showing. (Also fixed a **latent
+  pre-existing bug** found here: `map.js` `style.load` re-registered the
+  `render`/`zoom` listeners on every call → they stacked on each basemap swap. Now
+  guarded with `_mapEventsWired`. Also restored the never-ported `_scSetBasemap`/
+  `_scRecenter` — the basemap picker was dead on the maplibre branch; see §11.)
+- **STRENGTH.** Settings → "Shadow strength" slider drives the tint alpha live via
+  `setOptions({shadowColor})`, persisted (`localStorage sc_shadow_opacity`).
+
+**SUPERSAMPLING — the speckle fix (reconciles the "ruled out" note above).**
+Earlier (§4 shademap comparison) supersampling was tried to add *detail* and looked
+worse. That is a **different problem** from what shipped here. The grazing-sun / low-
+zoom **speckle** is *threshold aliasing*: each pixel's single march ray point-samples
+a binary in/out field that has real sub-pixel structure, so neighbours flip lit/dark.
+Confirmed by elimination this session — coarsening the DEM (`demRatio` up to 5×) and
+widening the edge ramp (`edgeBoost`) both **failed** (speckle is terrain-scale-
+independent), so both experiments were **reverted out of the engine**. The fix is
+**true 2×2 sub-pixel supersampling**: a copy of the march, `occAt()`, sampled at four
+sub-pixel offsets and averaged → the grey is the pixel's *actual fractional shadow
+coverage* (physical AA, positions unchanged, edges stay crisp). It's **on by default**
+and made affordable by two gates, both in the engine:
+- **Where:** only when zoom < `SS_ZOOM_MAX` (12) **or** sun altitude < `SS_SUN_MAX`
+  (18°). Zoomed in under a high sun a single ray is already clean.
+- **When:** **idle only** — single ray during pan/zoom/scrub (`this._moving`, set by
+  map `move`/`zoom` + `setTime`, cleared ~130 ms after motion stops with a repaint).
+  This is what restored smooth panning. `#2`: when SS is on the redundant inline
+  center march is skipped (4×, not 5×). `onRemove` detaches the motion listeners
+  (no leak across basemap swaps).
+Engine additions for this: `occAt()`, uniforms `u_ss`/`u_pixM`, the
+`SS_ZOOM_MAX`/`SS_SUN_MAX` consts + gate, the `_moving` machinery, `onRemove`, and
+`opts.ss`. **Nothing else in the engine changed** (default path bit-identical when
+`u_ss=0`).
+
+**No console dev-knobs remain.** The `scShadowRatio`/`scShadowEdge`/`scShadowSuper`
+tuning helpers were scaffolding and were removed in the tidy-up. If a user-facing
+supersample toggle is ever wanted, it should be a proper Settings control (the engine
+`ss` option is still there to drive it).
+
+**Files touched this session, with PARITY class:**
+- `js/shadow-ui.js` — NEW, renderer-only (map integration).
+- `js/shadow-layer.js` — engine, renderer-only (supersampling addition; keep in sync
+  with the cesium branch only if that branch ever adopts this engine).
+- `js/map.js` — renderer-only (basemap picker restore, listener-stacking fix,
+  one-line `shadowOnEclipseChange` hook in `updateMapState`).
+- `js/details.js` — **SHARED** (sync hooks, guarded; cherry-pick to cesium).
+- `index.html` — renderer-only loader block (script tags for shadow-layer/shadow-ui,
+  the shadow DOM in the map tab, the Shadow-strength Settings row, offline note) +
+  BUILD bump.
+- `css/app.css` — new `.shadow-*` classes (scrubber/button). Treat as renderer-only.
+- `shadow-layer.ORIGINAL.js` — NEW, the pristine-engine backup (not loaded).
+
+**Regression pass before trusting a fresh clone:** toggle shadows on/off; scrub and
+confirm SUNTRACK + contact rows track (and vice-versa); click Rise/Set; swap basemap
+with shadows on (they reappear); go offline (button greys); pan/zoom-in should be
+smooth, the accurate 4× frame arriving on settle.
 
 ---
 
@@ -306,6 +414,9 @@ ShadowChaser/
 ├── TODO.md             (durable detail — candidate fixes, UX questions, feature pool)
 ├── PARITY.md           (maplibre ⇄ cesium branch sync rules)
 ├── DESIGN_SPEC_cesium_map.md   (pin / arrow / palette values — ported, still authoritative)
+├── shadow-layer-README.md      (terrain-shadow engine API + integration notes)
+├── shadow-layer-example.html   (minimal standalone wiring of the engine)
+├── shadow-layer.ORIGINAL.js    (pristine v64 engine backup; NOT loaded — safety net, see §4)
 ├── vendor/
 │   ├── maplibre-gl-csp-5.5.0.js + maplibre-gl-csp-worker-5.5.0.js   (official CSP build)
 │   ├── maplibre-gl-5.5.0.css
@@ -334,6 +445,10 @@ ShadowChaser/
     │                   updateMarkerOcclusion, updateOvalVisibility, _deckLayers retainer
     ├── search.js       parseCoords, onSearchChanged
     ├── search_parser.js pure parser, UMD, strict-mode
+    ├── shadow-layer.js  TERRAIN-SHADOW ENGINE — createShadowLayer() MapLibre custom layer;
+    │                    GPU DEM raymarch + supersampling. Mercator-only. Don't rebuild (§4).
+    ├── shadow-ui.js     TERRAIN-SHADOW INTEGRATION — toggle, ruler scrubber, 3-way time sync,
+    │                    projection flip, online gating, Settings strength. setShadowTime owner.
     ├── share.js        share modal/sheet (tabstop format)
     ├── state.js        chunkCache, AppState get/set/on + window forwarding shims
     ├── tabs.js         switchTab, switchSidebarTab, TZ_ZONES
@@ -341,10 +456,11 @@ ShadowChaser/
     └── url.js          pushState, restoreFromHash, event wiring
 ```
 
-**Script load order** — vendor CSS, MapLibre CSP JS, `setWorkerUrl`, `deck.min.js` +
-`window.DeckGL = window.deck`, `js/tz_lookup.js`, `css/app.css?v=BUILD`; then at body end:
-format, state, tabs, cities, search_parser, eclipse, search, list, local, details, share,
-map, url, init.
+**Script load order** (from `index.html`) — vendor CSS, MapLibre CSP JS, `setWorkerUrl`,
+`deck.min.js` + `window.DeckGL = window.deck`, `js/tz_lookup.js`, `css/app.css?v=BUILD`,
+`search_parser` + `eclipse` (in head); then at body end: format, state, cities, tabs, search,
+list, local, details, url, map, **shadow-layer, shadow-ui**, share, init. (Shadow scripts load
+right after `map.js` — they use its globals — and before `share.js`/`init.js`.)
 
 **All runtime dependencies are local — no CDN in the shipped app.** That is the prerequisite
 that lets the service worker cache everything. (`data build tools/*.html` still reference
@@ -657,22 +773,36 @@ data/paths` stops growth but does not shrink existing history (that needs a dest
   along the centreline. A pin drop-shadow was tried and rejected as a smudge.
 
 ### Open bugs
-- **#F4 terrain shadows — COMPLETE (2026-07-27).** Shipped as the `shadow-layer.js`
-  drop-in module; engine verified pixel-identical to the v64 study. See §4. Only
-  remaining (optional, non-blocking) work is wiring it into `js/map.js` fed the
-  selected eclipse's max instant, and — if ever wanted — DSM canopy data for
-  tree/building shadows.
-- **#R3 polar corridor "onion ring" (deck.gl).** 1950-09-12 corridor + ovals render as polar
-  onion rings; SolidPolygonLayer mis-triangulates polar polygons even with clean unwrapped
-  data. Workaround: corridor fill DISABLED (path lines only); ovals still filled. 4 candidates
-  in TODO. User has chosen to leave it.
+- **#F4 terrain shadows — COMPLETE & WIRED IN (2026-07-28).** No longer open. Shipped
+  as the `shadow-layer.js` module and fully integrated into the app; see §4's "Wiring
+  into the eclipse app — DONE" subsection for the whole integration. Only optional,
+  non-blocking future work: DSM canopy data for tree/building shadows (§4).
+- **#P1 observer pin — three issues, all NON-shadow, PARKED as a cluster** (surfaced
+  while building shadows; batch them, likely shared root cause in the deck.gl marker /
+  globe reprojection):
+  (a) the pin renders **behind the eclipse path** (deck.gl draw order — path over
+  marker);
+  (b) while **zooming the globe** the pin **drifts toward the top-left corner and then
+  snaps back** into place on settle (marker reprojection lagging the globe transform);
+  (c) the pin **tip is not exactly on the location dot** (anchor/offset — note this
+  contradicts the "tip = the coordinate" claim under Working; treat Working as stale
+  on this point until fixed).
+- **#P2 eclipse paths show THROUGH the far edge of the planet** (globe backface): path
+  lines on the hemisphere facing away from the camera are visible through the limb.
+  **This was corrected before in the past** (regression) — find the prior fix. Deck.gl
+  layers over the globe need depth/horizon occlusion; related to #R1 (labels fade
+  through the globe).
+- **#R3 polar corridor "onion ring" (deck.gl).** 1950-09-12 corridor + ovals render as
+  polar onion rings; SolidPolygonLayer mis-triangulates polar polygons even with clean
+  unwrapped data. Workaround: corridor fill DISABLED (path lines only); ovals still
+  filled. 4 candidates in TODO. User has chosen to leave it.
 - **#R4 offline basemap on mobile** — confirmed broken pre-revert; **re-verify on the maplibre
   branch** before spending time on it.
 - **#R5 pinch-zoom on iOS not blocked** — `user-scalable=no` is ignored by iOS Safari. Fix:
   `touch-action: pan-y` on scrollable panels but NOT the map container.
 - **#R1 (polish) city labels fade through the globe on spin** — WebGL symbol labels, not DOM
   markers, so the `isLocationOccluded` approach doesn't directly apply. Check what MapLibre v5
-  offers for symbol-layer occlusion on globe before hand-rolling.
+  offers for symbol-layer occlusion on globe before hand-rolling. (Same family as #P2.)
 - **Ancient/BCE centuries not yet rebuilt** — still show pre-improvement data; rebuild + BUILD
   bump clears them.
 - Eclipse paths in offline mode: not re-confirmed since the revert. Verify.

@@ -963,36 +963,109 @@
     .map-shadow-btn[aria-pressed="true"]   { border-color: var(--gold); color: var(--gold2); }
     .map-shadow-btn:disabled               { opacity: 0.4; cursor: not-allowed; }
 
-    /* Terrain-shadow time scrubber — bottom bar, only while shadows are on */
+    /* Terrain-shadow time scrubber — flush full-width bar at the bottom. Left:
+       selected date/time on two lines. Right: a ruler whose strip slides past a
+       fixed centre needle. Shown only while shadows are on. */
     .shadow-timeline {
       position:        absolute;
-      left:            0.75rem;
-      right:           0.75rem;
-      bottom:          0.75rem;
+      left:            0;
+      right:           0;
+      bottom:          0;
       z-index:         20;
       display:         flex;
-      align-items:     center;
-      gap:             0.85rem;
+      align-items:     stretch;
+      height:          34px;
       background:      rgba(10,12,15,0.92);
-      border:          1px solid var(--border2);
-      border-radius:   var(--radius);
-      padding:         0.5rem 0.9rem;
+      border-top:      1px solid var(--border2);
+      overflow:        hidden;
       backdrop-filter: blur(4px);
     }
     .shadow-timeline[hidden] { display: none; }
-    .shadow-timeline input[type="range"] {
-      flex:         1;
-      accent-color: var(--gold);
-      cursor:       pointer;
+
+    .shadow-readout {
+      flex:          0 0 auto;
+      display:       flex;
+      flex-direction: column;
+      justify-content: center;
+      padding:       0 0.7rem;
+      border-right:  1px solid var(--border2);
+      font-family:   var(--mono);
+      line-height:   1.15;
+      user-select:   none;
+      -webkit-user-select: none;
     }
-    .shadow-clock {
+    .shadow-date { font-size: 0.6rem;  color: var(--text-dim); white-space: nowrap; }
+    .shadow-clock{ font-size: 0.72rem; color: var(--gold);     white-space: nowrap; }
+
+    .shadow-ruler-wrap {
+      position:    relative;
+      flex:        1 1 auto;
+      height:      100%;
+      overflow:    hidden;
+      cursor:      ew-resize;
+      touch-action: none;
+      outline:     none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .shadow-ruler {
+      position:    absolute;
+      top:         0;
+      left:        0;
+      height:      100%;
+      will-change: transform;
+    }
+    .shadow-tick {
+      position:   absolute;
+      bottom:     0;
+      width:      1px;
+      height:     5px;
+      background: var(--border2);
+    }
+    .shadow-tick.major { height: 9px; background: var(--text-dim); }
+    .shadow-tick-label {
+      position:    absolute;
+      bottom:      11px;
+      transform:   translateX(-50%);
       font-family: var(--mono);
-      font-size:   0.72rem;
-      color:       var(--gold);
+      font-size:   0.6rem;
+      color:       var(--text-dim);
       white-space: nowrap;
-      min-width:   9.5rem;
-      text-align:  right;
     }
+    .shadow-center {
+      position:      absolute;
+      left:          50%;
+      top:           0;
+      bottom:        0;
+      width:         0;
+      border-left:   2px solid var(--gold);
+      pointer-events: none;
+    }
+    .shadow-center::after {
+      content:      '';
+      position:     absolute;
+      top:          0;
+      left:         -5px;
+      border-left:  5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top:   6px solid var(--gold);
+    }
+
+    /* Zoomed-out hint replaces the readout + ruler */
+    .shadow-hint {
+      display:     none;
+      flex:        1;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--mono);
+      font-size:   0.68rem;
+      color:       var(--text-dim);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .shadow-timeline.hint .shadow-readout,
+    .shadow-timeline.hint .shadow-ruler-wrap { display: none; }
+    .shadow-timeline.hint .shadow-hint       { display: flex; }
 
     /* MapLibre attribution — restyle to match dark theme */
     .maplibregl-ctrl-attrib {

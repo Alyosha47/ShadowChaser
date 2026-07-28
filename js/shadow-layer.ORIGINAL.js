@@ -1,37 +1,36 @@
-<!doctype html>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>v64 — ShadowChaser terrain shadows</title>
-<link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
-<script src="vendor/maplibre-gl-csp-5.5.0.js"></script>
-<script>
-  if (window.maplibregl && maplibregl.setWorkerUrl)
-    maplibregl.setWorkerUrl('vendor/maplibre-gl-csp-worker-5.5.0.js');
-</script>
-<style>
-  html,body{margin:0;height:100%}
-  #map{position:absolute;inset:0}
-  /* Hidden by default but kept: there is no console on a phone. Opens on any error,
-     and the status line toggles it. */
-  #log{display:none;position:absolute;top:0;left:0;right:0;z-index:9;font:13px/1.4 monospace;
-       white-space:pre-wrap;padding:8px 10px;color:#8f8;background:rgba(0,0,0,.8)}
-  #log.on{display:block}
-  #ui{position:absolute;bottom:0;left:0;right:0;z-index:9;padding:10px;
-      background:rgba(0,0,0,.72);color:#eee;font:13px monospace}
-  #t{width:100%}
-  #tl{cursor:pointer}
-</style>
-<div id="map"></div>
-<div id="log">v57 — starting…
-</div>
-<div id="ui">
-  <input id="t" type="range" min="-720" max="720" value="0" step="2">
-  <div id="tl">…</div>
-  <label><input id="test" type="checkbox"> self-test</label>
-  <label><input id="elev" type="checkbox"> show elevation</label>
-  <button id="probe" type="button">probe centre</button>
-</div>
-<script>
+/* ============================================================================
+ * ShadowLayer — terrain shadow custom layer for MapLibre GL JS
+ * Extracted from the ShadowChaser v64 study. The shadow ENGINE (atlas build,
+ * ray-march, shaders) is byte-for-byte the study's; only the study's self-hosted
+ * map, DOM UI, and time slider were removed and replaced with a small API.
+ *
+ * USAGE:
+ *   const shadow = createShadowLayer({ time: new Date() });     // or Date.now() ms
+ *   map.addLayer(shadow);              // add over your existing basemap
+ *   shadow.setTime(new Date());        // update the instant; repaints
+ *   shadow.setOptions({ selfTest:false, showElevation:false,
+ *                       onStatus:null, onLog:null });
+ *
+ * OPTIONS (all optional):
+ *   time         Date | epoch-ms       the instant shadows are cast for (default now)
+ *   shadowColor  [r,g,b,a] 0..1        default [0.02,0.05,0.16,0.55]
+ *   demUrlBase   Terrarium {z}/{x}/{y}.png base (default AWS elevation-tiles-prod)
+ *   selfTest     bool  draw the analytic self-test overlay (default false)
+ *   showElevation bool debug elevation readout tint (default false)
+ *   onStatus     fn(text) receive the per-frame status string (default none)
+ *   onLog        fn(msg)  receive diagnostic log lines (default none)
+ *
+ * The layer samples Terrarium DEM tiles it fetches itself; it does NOT depend on
+ * your basemap's sources. It only needs to sit ABOVE the layer you want shadowed.
+ * ==========================================================================*/
+function createShadowLayer(userOpts){
+  userOpts = userOpts || {};
+  var _mm = (typeof window !== 'undefined' && window.matchMedia)
+    ? function(q){ return window.matchMedia(q).matches; }
+    : function(){ return false; };   /* headless / SSR: conservative defaults */
+
+/* ---- constants & helpers (from study) ---- */
+
 /* ============================================================================
    TERRAIN SHADOWS — GPU, no API key, no dependency.
 
@@ -86,7 +85,7 @@ var VERSION='v64';
 var TERRARIUM='https://s3.amazonaws.com/elevation-tiles-prod/terrarium/';
 var TILE_PX=256;                 /* nominal; the real size is read from each image */
 var DEM_Z_MAX=13;
-var TILE_BUDGET=window.matchMedia('(min-width: 900px)').matches ? 160 : 30;
+var TILE_BUDGET=_mm('(min-width: 900px)') ? 160 : 30;
 var TILE_CACHE_MAX=380;   /* v57: room for the near-field budget; see NEAR-FIELD ACCURACY note */
 var ATLAS_MIN=1024;
 /* Texel size was believed the only lever left on BUG B; v43 adds three targeted ones
@@ -101,8 +100,8 @@ var ATLAS_MIN=1024;
    Doubling the cap halves the texel, hence halves both artefacts. Costs 3 x px^2 x 4
    bytes across atlas plus ping and pong, so it is desktop only and still clamped by
    MAX_TEXTURE_SIZE below. Drop back to 2048 if memory bites. */
-var ATLAS_MAX=window.matchMedia('(min-width: 1200px)').matches ? 4096
-             :window.matchMedia('(min-width: 900px)').matches ? 2048 : 1024;
+var ATLAS_MAX=_mm('(min-width: 1200px)') ? 4096
+             :_mm('(min-width: 900px)') ? 2048 : 1024;
 var MARGIN_FRAC=0.12;            /* atlas overhang beyond the viewport, each side */
 var DEM_RATIO=1.0;               /* DEM sample size / atlas texel; 1 = matched */
 var MAX_TERRAIN_H=9000;          /* ceiling only; the real max is measured each frame */
@@ -193,14 +192,11 @@ var TEST_OFF=[[-0.25,-0.25],[0.25,-0.25],[-0.25,0.25],[0.25,0.25]];
 
 var LAT0=57.9200, LON0=-5.2000;
 var BASE=Date.parse('2026-08-12T18:28:41Z');
-var offsetMin=0;
 
-var log=document.getElementById('log');
-function L(m){
-  log.textContent += m+"\n";
-  if(m.indexOf('\u2717')>=0) log.classList.add('on');   /* surface failures unasked */
-}
-window.onerror=function(m,s,ln){ L('\u2717 '+m+' @'+ln); };
+
+/* logging routes to an optional per-instance callback (see factory) */
+var _log=function(){};
+function L(m){ try{ _log(m); }catch(e){} }
 
 var RAD=Math.PI/180;
 
@@ -239,15 +235,6 @@ function sunSub(ms){
   return { de:de, lon:al-gmst*RAD };
 }
 
-var map=new maplibregl.Map({
-  container:'map',
-  style:{version:8,
-    sources:{ osm:{ type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-                    tileSize:256, attribution:'\u00a9 OpenStreetMap' } },
-    layers:[{id:'osm',type:'raster',source:'osm'}]},
-  center:[LON0,LAT0], zoom:11
-});
-L('A. map created');
 
 /* ---------------------------------------------------------------- GL helpers */
 function compile(gl,type,src,tag){
@@ -338,11 +325,12 @@ function glslStep(name,hfun,m1,m2,m3){
 }
 
 /* ------------------------------------------------------------------- the layer */
+/* ---- the custom layer object (study engine) ---- */
 var layer={
   id:'shadow', type:'custom', renderingMode:'2d', tiles:{}, clock:0, px:0,
   terrainMax:MAX_TERRAIN_H,
 
-  onAdd:function(m,gl){
+  onAdd:function(m,gl){ this.map=m;
     /* PASS 1 — tile into the atlas, resampled onto the atlas grid */
     var copyVS='attribute vec2 a_pos; varying vec2 v_uv; uniform vec4 u_tile, u_atlas;'+
       'void main(){ v_uv=a_pos;'+
@@ -773,13 +761,13 @@ var layer={
       gl.bindTexture(gl.TEXTURE_2D,prevTex);
       rec.tex=tex; rec.ready=true; rec.size=img.width; rec.img=img;
       if(!self._first){ self._first=true; L('D. first tile ' + img.width + 'px \u2713'); }
-      map.triggerRepaint();
+      self.map.triggerRepaint();
     };
     img.onerror=function(){
       /* resolved with no data, or one dead tile freezes the atlas forever */
       rec.ready=true;
       if(!self._terr){ self._terr=true; L('\u2717 tile failed (CORS/network): '+key); }
-      map.triggerRepaint();
+      self.map.triggerRepaint();
     };
     img.src=TERRARIUM+key+'.png';
     /* The matching BASEMAP tile — the water-mask authority. Same URL family as the
@@ -802,9 +790,9 @@ var layer={
       gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.BROWSER_DEFAULT_WEBGL);
       gl.bindTexture(gl.TEXTURE_2D,prevTex);
       rec.osm=tex; rec.osmReady=true;
-      map.triggerRepaint();
+      self.map.triggerRepaint();
     };
-    om.onerror=function(){ rec.osmReady=true; map.triggerRepaint(); };
+    om.onerror=function(){ rec.osmReady=true; self.map.triggerRepaint(); };
     om.src='https://tile.openstreetmap.org/'+key+'.png';
     return rec;
   },
@@ -902,7 +890,7 @@ var layer={
     gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   },
 
-  status:function(txt){ document.getElementById('tl').textContent=VERSION+'  '+txt; },
+  status:function(txt){ if(this.opts&&this.opts.onStatus) this.opts.onStatus(VERSION+'  '+txt); },
 
   render:function(gl,args){
     /* An exception escaping into MapLibre's render loop aborts its per-frame
@@ -924,15 +912,15 @@ var layer={
     this.resize(gl);
     var PX=this.px;
 
-    var bb=map.getBounds();
+    var bb=this.map.getBounds();
     var bx0=mx(bb.getWest()), bx1=mx(bb.getEast());
     if(bx1<bx0) bx1+=1;                      /* view crosses the antimeridian */
     var by0=my(bb.getNorth()), by1=my(bb.getSouth());
-    var c=map.getCenter();
+    var c=this.map.getCenter();
     var mPerMerc=40075016.686*Math.cos(c.lat*RAD);
-    var s=sunAltAz(BASE+offsetMin*60000, c.lat, c.lng);
+    var s=sunAltAz(this.timeMs, c.lat, c.lng);
     var altApp=refracted(s.alt);        /* the APPARENT sun casts the shadows */
-    var when=new Date(BASE+offsetMin*60000).toISOString().replace('T',' ').slice(0,19)+' UTC';
+    var when=new Date(this.timeMs).toISOString().replace('T',' ').slice(0,19)+' UTC';
     var head=when+'  alt '+s.alt.toFixed(1)+'\u00b0 app '+altApp.toFixed(1)+
              '\u00b0 az '+s.az.toFixed(1)+'\u00b0';
 
@@ -972,7 +960,7 @@ var layer={
        a viewport rotates shadows by well under a texel. */
 
     /* ---------- PASS 1: build the atlases ---------- */
-    var synth=document.getElementById('test').checked;
+    var synth=(this.opts&&this.opts.selfTest);
     var demZ=0, zN=0, want=0, ready=0;
     if(synth){
       gl.bindFramebuffer(gl.FRAMEBUFFER,this.atlas.fbo);
@@ -1086,7 +1074,7 @@ var layer={
     }
     gl.uniform3f(this.hR0,rN.x0,rN.y0,rN.a);
     gl.uniform3f(this.hR1,x0,y0,a);
-    var sub=sunSub(BASE+offsetMin*60000);
+    var sub=sunSub(this.timeMs);
     gl.uniform1f(this.hSde,Math.sin(sub.de));
     gl.uniform1f(this.hCde,Math.cos(sub.de));
     gl.uniform1f(this.hSlon,sub.lon);
@@ -1103,7 +1091,7 @@ var layer={
     gl.uniform1f(this.hEdge,edgeM);
     gl.uniform4f(this.hCol,SHADOW_RGBA[0],SHADOW_RGBA[1],SHADOW_RGBA[2],SHADOW_RGBA[3]);
     gl.uniform1f(this.hSynth,synth?1:0);
-    gl.uniform1f(this.hElev,document.getElementById('elev').checked?1:0);
+    gl.uniform1f(this.hElev,(this.opts&&this.opts.showElevation)?1:0);
     gl.uniform1f(this.hR,PX*TEST_R_FRAC*vTest/a);
     gl.uniform1f(this.hH,TEST_H);
     for(var si=0;si<4;si++)
@@ -1124,60 +1112,46 @@ var layer={
   }
 };
 
-map.on('load',function(){ L('C. adding layer'); map.addLayer(layer); });
 
-/* PROBE. Reads one point two independent ways: straight out of Terrarium's PNG on the
-   2D canvas (no GPU at all) and out of the atlas via readPixels. A disagreement in
-   metres localises the fault; agreement clears the copy pass and moves it downstream.
-   Opens the log FIRST and catches everything, so a failure reports itself. */
-var probeCanvas=document.createElement('canvas');
-function say(m){ L(m); try{ alert(m); }catch(e){} }
-function probe(lng,lat){
-  log.classList.add('on');
-  try{
-    var self=layer, gl=self.gl;
-    if(!gl){ say('probe: layer has no gl yet'); return; }
-    if(!self.good){ say('probe: no atlas built yet'); return; }
-    var pmx=mx(lng), pmy=my(lat), g=self.good, PX=self.px;
-    var fx=(pmx-g.x0)/g.a, fy=(pmy-g.y0)/g.a;
-    var out='PROBE '+lat.toFixed(5)+','+lng.toFixed(5);
-    if(fx<0||fx>1||fy<0||fy>1){ say(out+'  outside atlas ('+fx.toFixed(2)+','+fy.toFixed(2)+')'); return; }
-    var tx=Math.min(PX-1,Math.floor(fx*PX)), ty=Math.min(PX-1,Math.floor(fy*PX));
-    var pk=new Uint8Array(4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER,self.atlas.fbo);
-    gl.readPixels(tx,ty,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pk);
-    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-    var raw=pk[0]*256+pk[1]+pk[2]/256-32768;
-    out+='\n  atlas '+tx+','+ty+' rgba '+pk[0]+','+pk[1]+','+pk[2]+','+pk[3]+' = '+raw.toFixed(1)+'m';
-    var z=self.demZ;
-    if(z===undefined){ say(out+'\n  (self-test mode: no DEM to compare)'); return; }
-    var n=Math.pow(2,z), gx=pmx*n, gy=pmy*n;
-    var TX=Math.floor(gx), TY=Math.floor(gy);
-    var key=z+'/'+(((TX%n)+n)%n)+'/'+TY, rec=self.tiles[key];
-    out+='\n  tile '+key;
-    if(!rec){ say(out+'  NOT IN CACHE'); return; }
-    if(!rec.img){ say(out+'  no image (failed to load?)'); return; }
-    var S=rec.img.width;
-    probeCanvas.width=S; probeCanvas.height=S;
-    var cx=probeCanvas.getContext('2d',{willReadFrequently:true});
-    cx.clearRect(0,0,S,S); cx.drawImage(rec.img,0,0);
-    var px_=Math.min(S-1,Math.floor((gx-TX)*S)), py_=Math.min(S-1,Math.floor((gy-TY)*S));
-    var d=cx.getImageData(px_,py_,1,1).data;
-    var terr=d[0]*256+d[1]+d[2]/256-32768;
-    out+=' px '+px_+','+py_+' rgb '+d[0]+','+d[1]+','+d[2]+' = '+terr.toFixed(1)+'m';
-    out+='\n  TERRARIUM '+Math.max(terr,0).toFixed(1)+'m   ATLAS '+raw.toFixed(1)+
-         'm   DELTA '+(raw-Math.max(terr,0)).toFixed(1)+'m';
-    say(out);
-  }catch(e){ say('\u2717 probe threw: '+(e&&e.message?e.message:e)); }
+  /* ---- wire options into the layer instance ---- */
+  layer.opts = {
+    selfTest:      !!userOpts.selfTest,
+    showElevation: !!userOpts.showElevation,
+    onStatus:      (typeof userOpts.onStatus === 'function') ? userOpts.onStatus : null,
+    onLog:         (typeof userOpts.onLog    === 'function') ? userOpts.onLog    : null
+  };
+  _log = layer.opts.onLog || function(){};
+  if (userOpts.shadowColor && userOpts.shadowColor.length === 4) {
+    for (var i=0;i<4;i++) SHADOW_RGBA[i] = userOpts.shadowColor[i];
+  }
+  if (typeof userOpts.demUrlBase === 'string') TERRARIUM = userOpts.demUrlBase;
+
+  /* initial time */
+  layer.timeMs = (userOpts.time instanceof Date) ? userOpts.time.getTime()
+               : (typeof userOpts.time === 'number') ? userOpts.time
+               : Date.now();
+
+  /* ---- public API ---- */
+  layer.setTime = function(t){
+    this.timeMs = (t instanceof Date) ? t.getTime() : (typeof t === 'number' ? t : Date.now());
+    if (this.map) this.map.triggerRepaint();
+    return this;
+  };
+  layer.setOptions = function(o){
+    o = o || {};
+    if ('selfTest'      in o) this.opts.selfTest      = !!o.selfTest;
+    if ('showElevation' in o) this.opts.showElevation = !!o.showElevation;
+    if ('onStatus'      in o) this.opts.onStatus = (typeof o.onStatus==='function')?o.onStatus:null;
+    if ('onLog'         in o) { this.opts.onLog = (typeof o.onLog==='function')?o.onLog:null; _log = this.opts.onLog || function(){}; }
+    if (o.shadowColor && o.shadowColor.length===4){ for (var i=0;i<4;i++) SHADOW_RGBA[i]=o.shadowColor[i]; }
+    if (this.map) this.map.triggerRepaint();
+    return this;
+  };
+  layer.getTime = function(){ return this.timeMs; };
+
+  return layer;
 }
-map.on('click',function(ev){ probe(ev.lngLat.lng,ev.lngLat.lat); });
-var pb=document.getElementById('probe');
-if(pb) pb.addEventListener('click',function(){ var c=map.getCenter(); probe(c.lng,c.lat); });
-else say('\u2717 probe button missing: stale HTML is cached');
-document.getElementById('t').addEventListener('input',function(e){
-  offsetMin=parseInt(e.target.value,10); map.triggerRepaint();
-});
-document.getElementById('test').addEventListener('change',function(){ map.triggerRepaint(); });
-document.getElementById('elev').addEventListener('change',function(){ map.triggerRepaint(); });
-document.getElementById('tl').addEventListener('click',function(){ log.classList.toggle('on'); });
-</script>
+
+/* UMD-ish export: browser global + CommonJS + ES-module-friendly */
+if (typeof module !== 'undefined' && module.exports) { module.exports = createShadowLayer; }
+if (typeof window !== 'undefined') { window.createShadowLayer = createShadowLayer; }

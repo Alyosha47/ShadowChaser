@@ -1,44 +1,73 @@
 /* ── Terrain-shadow map wiring ──────────────────────────────────────────
-   Wires the drop-in shadow engine (js/shadow-layer.js, exposes
-   window.createShadowLayer) into the eclipse map:
+   Wires the drop-in shadow engine (js/shadow-layer.js, window.createShadowLayer)
+   into the eclipse map: a "Shadows" toggle on the map, a bottom time-scrubber
+   (a ruler whose strip slides past a fixed centre needle), and shadows cast for
+   the selected eclipse's date, opening at its greatest-eclipse instant.
 
-   - a "Shadows" toggle button on the map (top-left);
-   - a time scrubber across the bottom of the map;
-   - shadows are cast for the SELECTED eclipse's date, opening at its
-     greatest-eclipse instant (from the Besselian record's td_ge).
+   ONLINE-ONLY: the engine streams Terrarium DEM tiles, so the toggle greys out
+   whenever isOffline() is true.
 
-   ONLINE-ONLY: the layer fetches Terrarium DEM tiles, so the toggle is
-   disabled (greyed) whenever isOffline() reports no connection.
+   TIME SYNC: setShadowTime(ms) is the SINGLE owner of "what instant are the
+   shadows cast for". The scrubber, the SUNTRACK slider and the contact-times
+   rows all route through it, so the three stay in step; _drivingSunTrack guards
+   the one path that could otherwise feed back.
 
-   setShadowTime(ms) is the SINGLE owner of "what instant are the shadows
-   cast for". The on-map slider calls it today; the SUNTRACK slider and the
-   contact-times rows will call the same function when their links are wired,
-   so those three controls stay in sync through one place (with one
-   re-entrancy guard) rather than N pairwise links.
+   STATE MACHINE:
+     _shadowArmed   — the user wants shadows (the toggle is on).
+     _shadowShowing — the layer is actually up AND the map is in Mercator.
+   Armed-but-not-showing happens when zoomed out past SHADOW_MIN_ZOOM (the globe
+   is kept and a "zoom in" hint shown) or when offline. updateShadowVisibility()
+   reconciles the two on every toggle and every zoom.
 
-   Globals consumed (all defined by other modules, resolved at call time):
-     map, mapReady, selectedEntry            (map.js)
-     isOffline()                             (map.js)
-     loadChunk()                             (state.js)
-   Depends on window.createShadowLayer       (js/shadow-layer.js) */
+   Globals consumed (defined elsewhere, resolved at call time): map, mapReady,
+   selectedEntry, isOffline (map.js); loadChunk (state.js); parseCoords
+   (search.js); computeEclipse (eclipse.js); window.sunTrackJump (details.js).
+   Depends on window.createShadowLayer (js/shadow-layer.js). */
 
-var _shadowLayer = null;     /* the live custom layer, or null when off      */
-var _shadowOn    = false;    /* ARMED: user's toggle intent                  */
-var _shadowShowing = false;  /* layer currently up + map in mercator          */
-var _shadowWin   = null;     /* {t0ms,t1ms,maxms,curms} absolute-ms window    */
-var _shadowSync  = false;    /* re-entrancy guard for setShadowTime           */
-var _shadowWinKey = null;    /* which eclipse _shadowWin was computed for     */
-var _shadowLocKey = null;    /* which observer location it was anchored for   */
-var _shadowZoomHandler = null;
+/* ---- tuning constants ---- */
+var SHADOW_MIN_ZOOM   = 6;                         /* below this zoom: keep globe, show hint */
+var SHADOW_PX_PER_MIN = 6;                         /* horizontal scale of the scrubber ruler */
+var SHADOW_TINT       = [0.02, 0.05, 0.16, 0.55];  /* deep navy; alpha (index 3) = strength  */
 
-/* Below this zoom the globe stays; terrain shadows read only when zoomed in,
-   so we don't sacrifice the sphere to show shadows nobody could see. Nudge to
-   taste. */
-var SHADOW_MIN_ZOOM = 6.5;
+/* ---- state ---- */
+var _shadowLayer       = null;   /* the live custom layer, or null                */
+var _shadowArmed       = false;  /* user intent: shadows toggled on               */
+var _shadowShowing     = false;  /* layer up + map in Mercator                    */
+var _shadowWin         = null;   /* {t0ms,t1ms,maxms,curms} for the selection      */
+var _shadowWinKey      = null;   /* eclipse the window was computed for            */
+var _shadowLocKey      = null;   /* observer location the window was anchored for  */
+var _rulerWinKey       = null;   /* window the ruler ticks were built for          */
+var _drivingSunTrack   = false;  /* guard: a SUNTRACK-originated move is applied    */
+var _shadowZoomHandler = null;   /* map 'zoom' listener installed while armed      */
+var _shadowStyleHooked = false;  /* style.load reattach hook installed once        */
 
-/* Shadow tint — deep navy, matches the engine default; kept here so the app
-   owns the look in one place. */
-var SHADOW_TINT = [0.02, 0.05, 0.16, 0.55];
+/* Persisted shadow strength (alpha). */
+(function () {
+  try {
+    var v = localStorage.getItem('sc_shadow_opacity');
+    if (v != null) SHADOW_TINT[3] = Math.max(0, Math.min(1, parseFloat(v)));
+  } catch (e) {}
+})();
+
+/* Live-adjust shadow darkness (0..100 from the Settings slider); persisted. */
+function setShadowOpacity(pct) {
+  SHADOW_TINT[3] = Math.max(0, Math.min(1, pct / 100));
+  try { localStorage.setItem('sc_shadow_opacity', String(SHADOW_TINT[3])); } catch (e) {}
+  if (_shadowLayer && _shadowLayer.setOptions) {
+    try { _shadowLayer.setOptions({ shadowColor: SHADOW_TINT }); } catch (e) {}
+  }
+}
+
+/* Zero-pad to two digits. */
+function _p2(n) { return (n < 10 ? '0' : '') + n; }
+
+/* Build the shadow layer for an instant. Supersampling (true 2x2 sub-pixel
+   coverage) is on; the engine itself gates the cost to where speckle appears
+   and to idle frames. */
+function _makeShadowLayer(timeMs) {
+  _shadowLayer = createShadowLayer({ time: timeMs, shadowColor: SHADOW_TINT, ss: true });
+  return _shadowLayer;
+}
 
 /* Parse a "HH:MM:SS" (or "HH:MM") clock string to decimal hours. */
 function _hmsToHours(s) {
@@ -103,13 +132,16 @@ function computeShadowWindow(entry) {
   });
 }
 
-/* Format an absolute instant for the scrubber readout (UTC — unambiguous and
-   location-independent; SUNTRACK already handles local time at a pin). */
-function _fmtShadowClock(ms) {
+/* Readout: date line + time line (UTC — unambiguous and location-independent;
+   SUNTRACK handles local time at a pin). */
+var _SC_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function _fmtShadowDate(ms) {
   var d = new Date(ms);
-  function p(n) { return (n < 10 ? '0' : '') + n; }
-  return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate())
-       + '\u2002' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ' UTC';
+  return d.getUTCDate() + ' ' + _SC_MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
+}
+function _fmtShadowTime(ms) {
+  var d = new Date(ms);
+  return _p2(d.getUTCHours()) + ':' + _p2(d.getUTCMinutes()) + ' UTC';
 }
 
 /* THE single owner of shadow time. Clamps to the window, updates the engine,
@@ -122,45 +154,90 @@ function setShadowTime(ms) {
 
   if (_shadowLayer) _shadowLayer.setTime(ms);
 
-  _shadowSync = true;
-  var sl = document.getElementById('shadow-slider');
-  if (sl) {
-    var span = _shadowWin.t1ms - _shadowWin.t0ms;
-    sl.value = span > 0 ? Math.round((ms - _shadowWin.t0ms) / span * 1000) : 500;
-  }
-  _shadowSync = false;
+  /* Position the scrubber ruler: the time strip slides so the current instant
+     sits under the fixed centre needle. */
+  var winKey = _shadowWin.t0ms + '_' + _shadowWin.t1ms;
+  if (_rulerWinKey !== winKey) _renderRulerTicks();
+  _positionRuler(ms);
 
+  var cd = document.getElementById('shadow-date');
+  if (cd) cd.textContent = _fmtShadowDate(ms);
   var ck = document.getElementById('shadow-clock');
-  if (ck) ck.textContent = _fmtShadowClock(ms);
+  if (ck) ck.textContent = _fmtShadowTime(ms);
+
+  /* Drive the SUNTRACK slider to match (clamped to its own window by
+     indexForUT). Skipped when the move originated FROM SUNTRACK, so it doesn't
+     bounce back. sunTrackJump sets the slider without firing 'input', so this is
+     loop-free. */
+  if (!_drivingSunTrack && typeof window.sunTrackJump === 'function' && selectedEntry
+      && document.getElementById('st-slider')) {
+    var b = Date.UTC(selectedEntry.year, selectedEntry.month - 1, selectedEntry.day);
+    try { window.sunTrackJump((ms - b) / 3600e3); } catch (e) {}
+  }
 }
 
-/* Convenience for future callers (SUNTRACK / contact rows) that speak in UT
-   decimal hours for the selected eclipse rather than absolute ms. */
+/* Convenience for callers (SUNTRACK / contact rows) that speak in UT decimal
+   hours for the selected eclipse rather than absolute ms. */
 function setShadowTimeUT(utHours) {
   if (!_shadowWin || !selectedEntry) return;
   var base = Date.UTC(selectedEntry.year, selectedEntry.month - 1, selectedEntry.day);
   setShadowTime(base + utHours * 3600e3);
 }
 
+/* Entry point for SUNTRACK-originated changes: moves the shadow time but marks
+   the move so the owner doesn't jump SUNTRACK back onto itself. */
+function shadowTimeFromSunTrack(utHours) {
+  _drivingSunTrack = true;
+  try { setShadowTimeUT(utHours); } finally { _drivingSunTrack = false; }
+}
+if (typeof window !== 'undefined') window.shadowTimeFromSunTrack = shadowTimeFromSunTrack;
+
+/* Build the ruler's tick strip for the current window: a minor tick every 5
+   minutes, a labelled major tick every 15. Called when the window changes. */
+function _renderRulerTicks() {
+  var ruler = document.getElementById('shadow-ruler');
+  if (!ruler || !_shadowWin) return;
+  var t0 = _shadowWin.t0ms, t1 = _shadowWin.t1ms;
+  ruler.style.width = ((t1 - t0) / 60000 * SHADOW_PX_PER_MIN) + 'px';
+  var startMin = Math.ceil(t0 / 60000 / 5) * 5;
+  var endMin   = Math.floor(t1 / 60000);
+  var html = '';
+  for (var m = startMin; m <= endMin; m += 5) {
+    var ms = m * 60000;
+    var x  = (ms - t0) / 60000 * SHADOW_PX_PER_MIN;
+    var major = (m % 15 === 0);
+    html += '<div class="shadow-tick' + (major ? ' major' : '') + '" style="left:' + x.toFixed(1) + 'px"></div>';
+    if (major) {
+      var d = new Date(ms);
+      html += '<div class="shadow-tick-label" style="left:' + x.toFixed(1) + 'px">'
+            + _p2(d.getUTCHours()) + ':' + _p2(d.getUTCMinutes()) + '</div>';
+    }
+  }
+  ruler.innerHTML = html;
+  _rulerWinKey = t0 + '_' + t1;
+}
+
+/* Slide the strip so `ms` sits under the centre needle. */
+function _positionRuler(ms) {
+  var wrap  = document.getElementById('shadow-ruler-wrap');
+  var ruler = document.getElementById('shadow-ruler');
+  if (!wrap || !ruler || !_shadowWin) return;
+  var offPx = (ms - _shadowWin.t0ms) / 60000 * SHADOW_PX_PER_MIN;
+  ruler.style.transform = 'translateX(' + (wrap.clientWidth / 2 - offPx) + 'px)';
+}
+
 function _shadowTimelineEl()  { return document.getElementById('shadow-timeline'); }
 function _shadowBtnEl()       { return document.getElementById('btn-shadow'); }
 
-/* Timeline has three modes: 'off' (hidden), 'show' (slider + clock), and
-   'hint' (armed but zoomed too far out — a "zoom in" prompt in place of the
-   controls). */
+/* Timeline has three modes: 'off' (hidden), 'show' (readout + ruler), and
+   'hint' (armed but zoomed too far out — the .hint class swaps in a static
+   "zoom in" prompt). */
 function _renderTimeline(mode) {
   var tl = _shadowTimelineEl(); if (!tl) return;
-  var sl = document.getElementById('shadow-slider');
-  var ck = document.getElementById('shadow-clock');
   if (mode === 'off') { tl.hidden = true; return; }
   tl.hidden = false;
-  if (mode === 'hint') {
-    if (sl) sl.style.display = 'none';
-    if (ck) { ck.textContent = 'Zoom in to reveal terrain shadows'; ck.style.textAlign = 'center'; ck.style.flex = '1'; }
-  } else {                                   /* 'show' */
-    if (sl) sl.style.display = '';
-    if (ck) { ck.style.textAlign = ''; ck.style.flex = ''; }
-  }
+  if (mode === 'hint') tl.classList.add('hint');
+  else                 tl.classList.remove('hint');
 }
 
 /* Arm shadows: the user WANTS shadows. Whether they SHOW right now depends on
@@ -171,12 +248,12 @@ function enableShadows() {
   if (typeof createShadowLayer !== 'function') return;
   if (isOffline()) { refreshShadowAvailability(); return; }
 
-  _shadowOn = true;
+  _shadowArmed = true;
   _syncShadowButton();
   _attachShadowZoom();
 
   computeShadowWindow(selectedEntry).then(function (win) {
-    if (!_shadowOn || !win) return;
+    if (!_shadowArmed || !win) return;
     _shadowWin    = win;
     _shadowWinKey = selectedEntry;
     var c = (typeof parseCoords === 'function') ? parseCoords() : null;
@@ -188,7 +265,7 @@ function enableShadows() {
 
 /* Disarm: remove the layer, restore the globe, hide the scrubber. */
 function disableShadows() {
-  _shadowOn = false;
+  _shadowArmed = false;
   _shadowShowing = false;
   _detachShadowZoom();
   try { if (map && map.getLayer && map.getLayer('shadow')) map.removeLayer('shadow'); } catch (e) {}
@@ -206,7 +283,7 @@ function disableShadows() {
    globe, drop the layer, show the "zoom in" hint. Called on toggle and on every
    zoom. */
 function updateShadowVisibility() {
-  if (!_shadowOn || !map || !mapReady) return;
+  if (!_shadowArmed || !map || !mapReady) return;
   if (isOffline()) { _hideShadowKeepArmed('off'); return; }
   if (map.getZoom() >= SHADOW_MIN_ZOOM) _showShadowNow();
   else                                  _hideShadowKeepArmed('hint');
@@ -216,14 +293,14 @@ function _showShadowNow() {
   try { map.setProjection({ type: 'mercator' }); } catch (e) {}
   if (!_shadowWin) {                        /* window still loading — defer */
     computeShadowWindow(selectedEntry).then(function (win) {
-      if (!_shadowOn || !win) return;
+      if (!_shadowArmed || !win) return;
       _shadowWin = win; _shadowWinKey = selectedEntry;
       if (map.getZoom() >= SHADOW_MIN_ZOOM) _showShadowNow();
     });
     return;
   }
   if (!_shadowLayer) {
-    _shadowLayer = createShadowLayer({ time: _shadowWin.curms, shadowColor: SHADOW_TINT });
+    _makeShadowLayer(_shadowWin.curms);
   }
   try {
     if (!map.getLayer('shadow')) map.addLayer(_shadowLayer);
@@ -246,6 +323,20 @@ function _attachShadowZoom() {
   if (_shadowZoomHandler || !map) return;
   _shadowZoomHandler = function () { updateShadowVisibility(); };
   map.on('zoom', _shadowZoomHandler);
+
+  /* A basemap swap (setStyle) wipes custom layers and resets the projection to
+     globe. If shadows are showing, rebuild the layer and reassert Mercator once
+     the new style loads. Attached once. */
+  if (!_shadowStyleHooked) {
+    _shadowStyleHooked = true;
+    map.on('style.load', function () {
+      if (!_shadowShowing) return;
+      try { map.setProjection({ type: 'mercator' }); } catch (e) {}
+      _makeShadowLayer(_shadowWin ? _shadowWin.curms : Date.now());
+      try { if (!map.getLayer('shadow')) map.addLayer(_shadowLayer); } catch (e) {}
+      if (_shadowWin) setShadowTime(_shadowWin.curms);
+    });
+  }
 }
 function _detachShadowZoom() {
   if (_shadowZoomHandler && map) { try { map.off('zoom', _shadowZoomHandler); } catch (e) {} }
@@ -254,24 +345,21 @@ function _detachShadowZoom() {
 
 function toggleShadows() {
   if (isOffline()) return;
-  if (_shadowOn) disableShadows(); else enableShadows();
+  if (_shadowArmed) disableShadows(); else enableShadows();
 }
 
-/* Called (via a one-line hook in map.js updateMapState) whenever the map
-   redraws for a selection. If shadows are on and the eclipse changed,
-   recompute the window and re-anchor at the new greatest-eclipse instant. */
 /* Called (via a one-line hook in map.js updateMapState) whenever the map
    redraws. Re-anchors the shadow time to the max — global, or LOCAL when an
    observer pin is set — whenever the eclipse OR the observer location changes.
    On unrelated redraws it leaves the user's scrubbed time alone. */
 function shadowOnEclipseChange(isNewEclipse) {
-  if (!_shadowOn) return;
+  if (!_shadowArmed) return;
   var coords  = (typeof parseCoords === 'function') ? parseCoords() : null;
   var locKey  = coords ? (coords.lat.toFixed(4) + ',' + coords.lon.toFixed(4)) : null;
   var changed = isNewEclipse || _shadowWinKey !== selectedEntry || locKey !== _shadowLocKey;
   if (!changed) return;
   computeShadowWindow(selectedEntry).then(function (win) {
-    if (!_shadowOn || !win) return;
+    if (!_shadowArmed || !win) return;
     _shadowWin    = win;
     _shadowWinKey = selectedEntry;
     _shadowLocKey = locKey;
@@ -289,12 +377,12 @@ function refreshShadowAvailability() {
       ? 'Terrain shadows need a connection (they stream elevation tiles) \u2014 unavailable offline'
       : 'Terrain shadows at the selected eclipse';
   }
-  if (off && _shadowOn) disableShadows();
+  if (off && _shadowArmed) disableShadows();
 }
 
 function _syncShadowButton() {
   var btn = _shadowBtnEl();
-  if (btn) btn.setAttribute('aria-pressed', _shadowOn ? 'true' : 'false');
+  if (btn) btn.setAttribute('aria-pressed', _shadowArmed ? 'true' : 'false');
 }
 
 /* Wire DOM once it exists. */
@@ -304,14 +392,39 @@ function initShadowUI() {
     btn._scWired = true;
     btn.addEventListener('click', toggleShadows);
   }
-  var sl = document.getElementById('shadow-slider');
-  if (sl && !sl._scWired) {
-    sl._scWired = true;
-    sl.addEventListener('input', function () {
-      if (_shadowSync || !_shadowWin) return;
-      var span = _shadowWin.t1ms - _shadowWin.t0ms;
-      setShadowTime(_shadowWin.t0ms + (parseInt(sl.value, 10) / 1000) * span);
+  var wrap = document.getElementById('shadow-ruler-wrap');
+  if (wrap && !wrap._scWired) {
+    wrap._scWired = true;
+    var msPerPx = 60000 / SHADOW_PX_PER_MIN;
+    var dragging = false, startX = 0, startMs = 0;
+    wrap.addEventListener('pointerdown', function (ev) {
+      if (!_shadowWin) return;
+      dragging = true; startX = ev.clientX; startMs = _shadowWin.curms;
+      try { wrap.setPointerCapture(ev.pointerId); } catch (e) {}
     });
+    wrap.addEventListener('pointermove', function (ev) {
+      if (!dragging || !_shadowWin) return;
+      setShadowTime(startMs - (ev.clientX - startX) * msPerPx);
+    });
+    function endDrag(ev) { dragging = false; try { wrap.releasePointerCapture(ev.pointerId); } catch (e) {} }
+    wrap.addEventListener('pointerup', endDrag);
+    wrap.addEventListener('pointercancel', endDrag);
+    wrap.addEventListener('wheel', function (ev) {
+      if (!_shadowWin) return;
+      ev.preventDefault();
+      setShadowTime(_shadowWin.curms + (ev.deltaY > 0 ? 1 : -1) * 5 * 60000);
+    }, { passive: false });
+    wrap.addEventListener('keydown', function (ev) {
+      if (!_shadowWin) return;
+      if (ev.key === 'ArrowLeft')  { setShadowTime(_shadowWin.curms - 60000); ev.preventDefault(); }
+      if (ev.key === 'ArrowRight') { setShadowTime(_shadowWin.curms + 60000); ev.preventDefault(); }
+    });
+  }
+  var op = document.getElementById('shadow-opacity');
+  if (op && !op._scWired) {
+    op._scWired = true;
+    op.value = Math.round(SHADOW_TINT[3] * 100);
+    op.addEventListener('input', function () { setShadowOpacity(parseInt(op.value, 10)); });
   }
   refreshShadowAvailability();
 }
@@ -319,6 +432,9 @@ function initShadowUI() {
 if (typeof window !== 'undefined') {
   window.addEventListener('online',  refreshShadowAvailability);
   window.addEventListener('offline', refreshShadowAvailability);
+  window.addEventListener('resize', function () {
+    if (_shadowShowing && _shadowWin) _positionRuler(_shadowWin.curms);
+  });
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initShadowUI);
   } else {
