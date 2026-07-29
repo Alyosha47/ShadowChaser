@@ -994,8 +994,13 @@
       user-select:   none;
       -webkit-user-select: none;
     }
-    .shadow-date { font-size: 0.6rem;  color: var(--text-dim); white-space: nowrap; }
-    .shadow-clock{ font-size: 0.72rem; color: var(--gold);     white-space: nowrap; }
+    /* Fixed width, or the ruler slides sideways under the static needle whenever
+       the text changes length ("local" is longer than "UTC"). Sized in ch — the
+       stack is genuinely monospace, so 1ch is one character. Both lines max out
+       at 11: "31 Dec 2026" and "14:32 local". Per-child min-width (rather than a
+       width on the parent) keeps this correct if either font-size changes. */
+    .shadow-date { font-size: 0.6rem;  color: var(--text-dim); white-space: nowrap; min-width: 11ch; }
+    .shadow-clock{ font-size: 0.72rem; color: var(--gold);     white-space: nowrap; min-width: 11ch; }
 
     .shadow-ruler-wrap {
       position:    relative;
@@ -1120,15 +1125,31 @@
        The observer is a DRAWN PIN (see pinImage() in js/map.js) whose TIP is the
        coordinate; the arrow is a separate co-located marker that rotates about
        that same point. (.observer-dot / .ge-dot retired with the Cesium build.) */
+    /* deck.gl's overlay is added with map.addControl(), so its canvas lives in a
+       .maplibregl-ctrl-* corner container — and MapLibre gives those z-index:2
+       while .maplibregl-marker gets none. Without this the eclipse paths draw
+       OVER the pin, arrow and GE diamond. Markers belong on top of the lines. */
+    .maplibregl-marker {
+      z-index: 3;
+    }
+    /* Same rule as .observer-pin-wrap: no `position` declaration. The absolute
+       positioning inherited from .maplibregl-marker is itself the containing
+       block .sun-arrow needs, and it keeps the wrapper out of normal flow. */
     .sun-arrow-wrap {
-      width:    44px;
-      height:   44px;
-      position: relative;
+      width:  44px;
+      height: 44px;
+    }
+    /* The wrapper is the MARKER element (MapLibre owns its transform); the
+       image inside carries the zoom scale. Size comes from PIN_W/PIN_H in
+       js/map.js, which also draw the artwork — one source, no drift.
+       Do NOT set `position` here: .maplibregl-marker is position:absolute, and
+       overriding it to relative drops the wrapper into normal flow, where a
+       preceding in-flow marker shifts it off the coordinate. */
+    .observer-pin-wrap {
+      pointer-events: none;
     }
     .observer-pin {
       display:           block;
-      width:             44px;
-      height:            66px;
       max-width:         none;
       max-height:        none;
       pointer-events:    none;
@@ -1381,10 +1402,32 @@
   100% { transform: translateX(555%); }
 }
 
-/* ── Hamburger throb: fresh local circumstances are waiting in Details ──────── */
+/* ── Hamburger throb: fresh local circumstances are waiting in Details ────────
+   Brightens as well as swells. `fill` carries the colour change (a brightness
+   multiply alone only shifts value, which reads as a wobble).
+
+   The filter list must hold the SAME functions in the SAME order at every stop:
+   CSS interpolates filter lists smoothly only when they match, and otherwise
+   falls back to discrete swapping, which snaps at the midpoint. So the glow is
+   always present and only its blur radius grows from 0, and brightness is always
+   present and only its factor rises. The base drop-shadow from .tab-icon-svg is
+   repeated here too, since a keyframe `filter` replaces the base one outright.
+   Raise brightness() for a hotter flash. */
 @keyframes tab-throb {
-  0%, 100% { transform: scale(1);    filter: brightness(1); }
-  50%      { transform: scale(1.18); filter: brightness(1.75) drop-shadow(0 0 4px var(--gold)); }
+  0%, 100% {
+    transform: scale(1);
+    fill:      var(--gold);
+    filter:    drop-shadow(0 1px 1px rgba(0,0,0,0.35))
+               drop-shadow(0 0 0 var(--gold2))
+               brightness(1);
+  }
+  50% {
+    transform: scale(1.18);
+    fill:      var(--gold2);
+    filter:    drop-shadow(0 1px 1px rgba(0,0,0,0.35))
+               drop-shadow(0 0 6px var(--gold2))
+               brightness(1.6);
+  }
 }
 @media (max-width: 899px) {
   .tab-btn.has-fresh .tab-icon-svg {

@@ -78,11 +78,14 @@ window._scSetBasemap = function (key) {
   try { map.setStyle(_basemapStyle(key)); } catch (e) {}
 };
 
-/* Force a recentre on the current selection (the fly-to is otherwise guarded by
-   isNewEclipse). Renderer-agnostic. */
+/* Force a recentre on the current selection (framing is otherwise done once per
+   eclipse). Clears only the CAMERA's bookkeeping — _lastEntry drives the shadow
+   hook and must not be re-fired. If the map is hidden right now, updateMapState
+   leaves the framing owed and performs it when the Map tab next opens.
+   Renderer-agnostic. */
 window._scRecenter = function () {
   if (typeof updateMapState !== 'function') return;
-  updateMapState._lastEntry = null;
+  updateMapState._framedEntry = null;
   updateMapState();
 };
 
@@ -293,14 +296,20 @@ function initMap() {
   });
 }
 
+/* Resting zoom for the globe. On narrow viewports start more zoomed-out so users
+   can see where on the globe they are; desktop starts at the usual level. Used
+   both at map creation and whenever a new eclipse re-frames the camera, so the
+   two can never disagree. */
+function defaultZoom() {
+  return window.matchMedia('(min-width: 900px)').matches ? 2 : 0.6;
+}
+
 function createMap(style, isOnline, localStyleFallback) {
   map = new maplibregl.Map({
     container: 'map',
     style: style,
-    /* On narrow viewports start more zoomed-out so users can see where on the
-       globe they are. Desktop starts at the usual zoom level. */
     center: [0, 30],
-    zoom: window.matchMedia('(min-width: 900px)').matches ? 2 : 0.6,
+    zoom: defaultZoom(),
     minZoom: 0.4, maxZoom: 18,
     maxPitch: 0,
     dragRotate: false,
@@ -440,17 +449,25 @@ function updateMapState() {
     drawEclipsePath(ep);
     setMapStatus(null);
 
-    /* Camera: centre on the greatest-eclipse point only when the eclipse
-       SELECTION itself changed, keeping the user's current zoom untouched
-       (easeTo with no zoom given pans/rotates at the current zoom). This
-       function also runs on map clicks (coords/localResult change, same
-       eclipse) — those are handled separately in onMapClick, not here, so a
-       click doesn't yank the camera back to GE. Partial eclipses have no GE,
-       so fall back to the path's mean position (longitudes unwrapped around the
-       first point so an antimeridian-crossing path averages to the correct side). */
-    if (isNewEclipse && !coords) {
+    /* CAMERA. A new eclipse re-frames the view: back out to the resting zoom so
+       the whole path is visible, centred on the pinned location if there is one,
+       otherwise on the eclipse itself (greatest-eclipse point, or the path's mean
+       position for partials, longitudes unwrapped around the first point so an
+       antimeridian-crossing path averages to the correct side).
+
+       _framedEntry — NOT _lastEntry — decides this, and it is only advanced once
+       the camera has actually moved on a VISIBLE map. On mobile a deep link can
+       select an eclipse while the Search tab is showing; framing then stays owed
+       until the user opens the Map tab, where the activeTab subscription re-runs
+       us. (Consuming the flag against a hidden container was the "map stays where
+       it was" bug.) Map clicks don't come through here — onMapClick owns those —
+       so clicking a location never yanks the camera back out. */
+    var needsFrame = (selectedEntry !== updateMapState._framedEntry);
+    if (needsFrame && isMapVisible()) {
       var ctr = null;
-      if (ep.ge && ep.ge[0] != null) {
+      if (coords) {
+        ctr = [coords.lon, coords.lat];
+      } else if (ep.ge && ep.ge[0] != null) {
         ctr = [ep.ge[0], ep.ge[1]];
       } else {
         var pts = [];
@@ -463,7 +480,10 @@ function updateMapState() {
           ctr = [lon / pts.length, lat / pts.length];
         }
       }
-      if (ctr) map.easeTo({ center: ctr, duration: 800 });
+      if (ctr) {
+        updateMapState._framedEntry = selectedEntry;
+        map.easeTo({ center: ctr, zoom: defaultZoom(), duration: 800 });
+      }
     }
   }).catch(function () { setMapStatus('Could not load path'); });
 
@@ -539,14 +559,20 @@ function clearPathMarkers() { pathMarkers.forEach(function(m){m.remove();}); pat
    coordinate. Canvas is drawn once and cached, then reused as the marker element. */
 var _pinImg = null;
 
+/* Pin geometry — ONE source of truth. The art is drawn from these, and the
+   marker is anchored from these, so the tip can never drift from the point.
+   PIN_TIP_Y is where the needle's point lands inside the canvas; the leftover
+   PIN_H - PIN_TIP_Y is the margin that keeps the contact dot from clipping. */
+var PIN_W = 44, PIN_H = 66, PIN_TIP_Y = 64;
+
 function pinImage() {
   if (_pinImg) return _pinImg;
-  var W = 44, H = 66, c = document.createElement('canvas');
+  var W = PIN_W, H = PIN_H, c = document.createElement('canvas');
   c.width = W; c.height = H;
   var x = c.getContext('2d');
   var cx = W / 2, headR = 12, headY = headR + 3;
   var neckY = headY + headR * 0.78;
-  var tipY  = H - 2;
+  var tipY  = PIN_TIP_Y;
 
   /* CONTACT DOT at the tip — marks the exact coordinate and plants the pin. */
   x.beginPath();
@@ -671,18 +697,34 @@ function addObserverMarker(lat, lon, sunAz) {
     mapMarkers.push(ma);
   }
 
+  /* The pin hangs inside a WRAPPER, exactly as the arrow does. MapLibre writes
+     its own `transform` onto whichever element it is handed, so the marker
+     element must stay untouched — the zoom scale goes on the inner <img>.
+     (Scaling the marker element itself erased MapLibre's translate and threw
+     the pin to the container's top-left corner until the next internal update.)
+     Anchoring: 'bottom' puts the element's bottom EDGE on the coordinate, but
+     the needle's point is PIN_TIP_Y, so the offset makes up the difference —
+     and with transform-origin on that same tip, it holds at every scale. */
+  var pinWrap = document.createElement('div');
+  pinWrap.className = 'observer-pin-wrap';
+  pinWrap.style.width  = PIN_W + 'px';
+  pinWrap.style.height = PIN_H + 'px';
+
   var pin = document.createElement('img');
   pin.src = pinImageURL();
   pin.className = 'observer-pin';
-  pin.width = 44; pin.height = 66;
-  pin.style.width = '44px'; pin.style.height = '66px';
-  pin.style.maxWidth = 'none'; pin.style.maxHeight = 'none';
-  pin.style.display = 'block';
-  pin.style.transformOrigin = '50% 100%';    /* scale about the TIP, so it stays on the point */
+  pin.width = PIN_W; pin.height = PIN_H;
+  pin.style.width = PIN_W + 'px'; pin.style.height = PIN_H + 'px';
+  pin.style.transformOrigin = '50% ' + PIN_TIP_Y + 'px';   /* scale about the TIP */
   pin.style.transform = 'scale(' + pinScale() + ')';
+  pinWrap.appendChild(pin);
   _pinEls.push(pin);
-  var m = new maplibregl.Marker({ element: pin, anchor: 'bottom' })
-    .setLngLat([lon, lat]).addTo(map);
+
+  var m = new maplibregl.Marker({
+      element: pinWrap,
+      anchor:  'bottom',
+      offset:  [0, PIN_H - PIN_TIP_Y]
+    }).setLngLat([lon, lat]).addTo(map);
   mapMarkers.push(m);
 }
 
@@ -730,9 +772,14 @@ function onMapClick(lat, lon) {
     /* On desktop (sidebar layout), if the user is on the Search sub-tab,
        swap to Details so the local circumstances appear. Otherwise leave
        the sidebar tab alone (they're already on Details or exploring overlays).
-       On mobile, stay on the map so the user can see the pin they placed. */
+       On mobile, stay on the map so the user can see the pin they placed —
+       and throb the Details tab instead, so it's clear fresh circumstances
+       are waiting there. (scFlagFreshDetails is defined in index.html; the
+       animation itself is gated to narrow viewports in app.css.) */
     if (window.matchMedia('(min-width: 900px)').matches) {
       if (sidebarTab === 'search') sidebarTab = 'eclipse';
+    } else if (typeof window.scFlagFreshDetails === 'function') {
+      window.scFlagFreshDetails();
     }
   });
 }

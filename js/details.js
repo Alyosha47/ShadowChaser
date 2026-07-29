@@ -10,6 +10,8 @@ function setTimeMode(m) {
   _timeMode = (m === 'ut') ? 'ut' : 'local';
   try { localStorage.setItem('sc.timeMode', _timeMode); } catch (e) {}
   renderData();
+  /* The shadow scrubber shows the same clock, so it flips with us. */
+  if (typeof shadowOnTimeModeChange === 'function') shadowOnTimeModeChange();
 }
 
 function buildContactRows(rec, res, lbl, tz) {

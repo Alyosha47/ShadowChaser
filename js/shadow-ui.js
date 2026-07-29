@@ -132,16 +132,28 @@ function computeShadowWindow(entry) {
   });
 }
 
-/* Readout: date line + time line (UTC — unambiguous and location-independent;
-   SUNTRACK handles local time at a pin). */
+/* Readout: date line + time line. Follows the SAME local/UT choice as the
+   contact table and SUNTRACK — details.js owns _timeMode, tabs.js owns the
+   offset (device zone, or an explicit pick in Settings), so all three agree and
+   none of them needs an observer pin to show local time. */
 var _SC_MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function _shadowTzMode() {
+  return (window._timeMode !== 'ut' && typeof getTzOffset === 'function') ? 'local' : 'ut';
+}
+/* Whole-ms shift applied for DISPLAY only; shadow time itself stays absolute. */
+function _shadowTzShift() {
+  if (_shadowTzMode() === 'ut') return 0;
+  var off = getTzOffset();
+  return (typeof off === 'number' && isFinite(off)) ? off * 3600000 : 0;
+}
 function _fmtShadowDate(ms) {
-  var d = new Date(ms);
+  var d = new Date(ms + _shadowTzShift());
   return d.getUTCDate() + ' ' + _SC_MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
 }
 function _fmtShadowTime(ms) {
-  var d = new Date(ms);
-  return _p2(d.getUTCHours()) + ':' + _p2(d.getUTCMinutes()) + ' UTC';
+  var d = new Date(ms + _shadowTzShift());
+  return _p2(d.getUTCHours()) + ':' + _p2(d.getUTCMinutes())
+       + (_shadowTzMode() === 'ut' ? ' UTC' : ' local');
 }
 
 /* THE single owner of shadow time. Clamps to the window, updates the engine,
@@ -156,7 +168,7 @@ function setShadowTime(ms) {
 
   /* Position the scrubber ruler: the time strip slides so the current instant
      sits under the fixed centre needle. */
-  var winKey = _shadowWin.t0ms + '_' + _shadowWin.t1ms;
+  var winKey = _shadowWin.t0ms + '_' + _shadowWin.t1ms + '_' + _shadowTzShift();
   if (_rulerWinKey !== winKey) _renderRulerTicks();
   _positionRuler(ms);
 
@@ -199,22 +211,27 @@ function _renderRulerTicks() {
   if (!ruler || !_shadowWin) return;
   var t0 = _shadowWin.t0ms, t1 = _shadowWin.t1ms;
   ruler.style.width = ((t1 - t0) / 60000 * SHADOW_PX_PER_MIN) + 'px';
-  var startMin = Math.ceil(t0 / 60000 / 5) * 5;
-  var endMin   = Math.floor(t1 / 60000);
+  /* Tick BOUNDARIES are found in the displayed timescale, so labels land on
+     clean 5-minute local marks even in a :30 or :45 zone. Positions are a
+     difference, so the shift cancels and the geometry is unchanged. */
+  var sh = _shadowTzShift();
+  var d0 = t0 + sh, d1 = t1 + sh;
+  var startMin = Math.ceil(d0 / 60000 / 5) * 5;
+  var endMin   = Math.floor(d1 / 60000);
   var html = '';
   for (var m = startMin; m <= endMin; m += 5) {
-    var ms = m * 60000;
-    var x  = (ms - t0) / 60000 * SHADOW_PX_PER_MIN;
+    var dms = m * 60000;
+    var x   = (dms - d0) / 60000 * SHADOW_PX_PER_MIN;
     var major = (m % 15 === 0);
     html += '<div class="shadow-tick' + (major ? ' major' : '') + '" style="left:' + x.toFixed(1) + 'px"></div>';
     if (major) {
-      var d = new Date(ms);
+      var d = new Date(dms);
       html += '<div class="shadow-tick-label" style="left:' + x.toFixed(1) + 'px">'
             + _p2(d.getUTCHours()) + ':' + _p2(d.getUTCMinutes()) + '</div>';
     }
   }
   ruler.innerHTML = html;
-  _rulerWinKey = t0 + '_' + t1;
+  _rulerWinKey = t0 + '_' + t1 + '_' + sh;
 }
 
 /* Slide the strip so `ms` sits under the centre needle. */
@@ -349,15 +366,21 @@ function toggleShadows() {
 }
 
 /* Called (via a one-line hook in map.js updateMapState) whenever the map
-   redraws. Re-anchors the shadow time to the max — global, or LOCAL when an
-   observer pin is set — whenever the eclipse OR the observer location changes.
-   On unrelated redraws it leaves the user's scrubbed time alone. */
+   redraws. A NEW ECLIPSE disarms shadows outright; an observer-location change
+   re-anchors the shadow time to the local max. On unrelated redraws it leaves
+   the user's scrubbed time alone. */
 function shadowOnEclipseChange(isNewEclipse) {
   if (!_shadowArmed) return;
+  /* A different eclipse is a different part of the world on a different date at
+     a different time — the shadows on screen belong to the old one. The camera
+     is also pulling back to the resting zoom, which is below SHADOW_MIN_ZOOM, so
+     staying armed would only leave a "zoom in to reveal" hint nobody asked for.
+     Disarm cleanly (this also restores the globe projection); the Shadows button
+     puts them back in one tap. */
+  if (isNewEclipse) { disableShadows(); return; }
   var coords  = (typeof parseCoords === 'function') ? parseCoords() : null;
   var locKey  = coords ? (coords.lat.toFixed(4) + ',' + coords.lon.toFixed(4)) : null;
-  var changed = isNewEclipse || _shadowWinKey !== selectedEntry || locKey !== _shadowLocKey;
-  if (!changed) return;
+  if (_shadowWinKey === selectedEntry && locKey === _shadowLocKey) return;
   computeShadowWindow(selectedEntry).then(function (win) {
     if (!_shadowArmed || !win) return;
     _shadowWin    = win;
@@ -365,6 +388,15 @@ function shadowOnEclipseChange(isNewEclipse) {
     _shadowLocKey = locKey;
     if (_shadowShowing) setShadowTime(win.maxms);
   });
+}
+
+/* Called from setTimeMode() in details.js when the user flips local/UT. Shadow
+   time is absolute and doesn't move — only its presentation does — so replaying
+   the current instant through the single owner refreshes the readout, and the
+   shift now in the ruler cache key makes it rebuild the tick labels too. */
+function shadowOnTimeModeChange() {
+  if (!_shadowWin || _shadowWin.curms == null) return;
+  setShadowTime(_shadowWin.curms);
 }
 
 /* Button + availability. Offline greys the toggle (and drops any live layer). */
