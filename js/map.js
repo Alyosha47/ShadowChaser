@@ -137,13 +137,49 @@ function loadBasemapData() {
    meridian lines crossing land and a small circle at the pole. We rebuild the
    outlines as lines, breaking the path wherever an edge lies on the seam or
    the polar cap so those artifact edges are never drawn. Fill is unaffected. */
-function seamFreeLines(fc) {
+/* Polygon rings → LineStrings, minus the edges that aren't real.
+
+   Two kinds of fake edge get suppressed:
+
+   1. SEAM/POLE cuts, from splitting geometry at the antimeridian and poles.
+
+   2. CELL cuts. land.geojson ships pre-clipped into a 5° grid — 3,350 polygons,
+      10% of whose vertices sit exactly on a 5° line. The fill layer hides those
+      internal boundaries (adjacent cells abut), but extracting ring edges as
+      coastline exposed every one of them: a graticule drawn across every
+      continent. An artificial cut is shared by the two cells either side, so it
+      appears TWICE in the data, while genuine coastline appears once. Dropping
+      duplicated segments removes exactly the 2,756 cut edges and nothing else —
+      verified: every duplicated segment lies on a 5° line, and the only
+      grid-aligned singletons are at ±180, already caught by isCut().
+
+   dropShared MUST stay off for countries: adjacent nations legitimately share
+   19,099 border segments (none grid-aligned), and dropping those would erase
+   every internal border, leaving only coastal outlines. */
+function seamFreeLines(fc, dropShared) {
   if (!fc || !fc.features) return fc;
   var SEAM = 179.9, POLE = 89.9, feats = [];
+
+  /* Pass 1: count segments, so pass 2 can tell a shared cut from real line. */
+  var seen = null;
+  if (dropShared) {
+    seen = Object.create(null);
+    eachRing(function (ring) {
+      for (var i = 1; i < ring.length; i++) {
+        var k = segKey(ring[i - 1], ring[i]);
+        seen[k] = (seen[k] || 0) + 1;
+      }
+    });
+  }
+  function segKey(a, b) {
+    var p = a[0] + ',' + a[1], q = b[0] + ',' + b[1];
+    return p <= q ? p + '|' + q : q + '|' + p;   /* undirected */
+  }
   function isCut(a, b) {
     var seam = Math.abs(a[0]) >= SEAM && Math.abs(b[0]) >= SEAM && (a[0] > 0) === (b[0] > 0);
     var pole = Math.abs(a[1]) >= POLE && Math.abs(b[1]) >= POLE;
-    return seam || pole;
+    if (seam || pole) return true;
+    return !!(seen && seen[segKey(a, b)] > 1);
   }
   function emit(run) {
     if (run.length > 1) feats.push({ type: 'Feature', properties: {},
@@ -157,12 +193,15 @@ function seamFreeLines(fc) {
     }
     emit(run);
   }
-  fc.features.forEach(function (f) {
-    var g = f.geometry; if (!g) return;
-    var polys = g.type === 'Polygon' ? [g.coordinates]
-              : g.type === 'MultiPolygon' ? g.coordinates : [];
-    polys.forEach(function (poly) { poly.forEach(addRing); });
-  });
+  function eachRing(fn) {
+    fc.features.forEach(function (f) {
+      var g = f.geometry; if (!g) return;
+      var polys = g.type === 'Polygon' ? [g.coordinates]
+                : g.type === 'MultiPolygon' ? g.coordinates : [];
+      polys.forEach(function (poly) { poly.forEach(fn); });
+    });
+  }
+  eachRing(addRing);
   return { type: 'FeatureCollection', features: feats };
 }
 
@@ -170,8 +209,12 @@ function seamFreeLines(fc) {
    Colours match the existing dark theme.
 
    Layer order:
-     background (ocean colour) → land fill → coastline → country lines
-     → lakes → rivers → cities
+     background (ocean colour) → land fill → lakes → NE2 relief raster
+     → coastline → country lines → rivers → cities
+
+   Fills sit BELOW the relief purely as a fallback: if ne2_mercator.jpg is
+   missing the globe degrades to flat vector fill rather than going blank.
+   Lines sit ABOVE it so they stay legible against the imagery.
 
    The background colour is the ocean; there is no separate ocean layer. */
 function buildLocalStyle(data) {
@@ -191,10 +234,64 @@ function buildLocalStyle(data) {
      needed here. */
   if (data.land) {
     sources.land = { type: 'geojson', data: data.land, tolerance: 0.5 };
-    sources.coast = { type: 'geojson', data: seamFreeLines(data.land), tolerance: 0.5 };
+    sources.coast = { type: 'geojson', data: seamFreeLines(data.land, true), tolerance: 0.5 };
     layers.push({ id: 'land-fill', type: 'fill', source: 'land',
       maxzoom: 22,
       paint: { 'fill-color': LAND, 'fill-opacity': 1, 'fill-antialias': true } });
+  }
+
+  /* Lake fill belongs with the land fill, BELOW the relief — NE2 already draws
+     lakes, and painting flat ocean-blue over it would erase that detail. It
+     stays in the style so the no-relief fallback still shows lakes. */
+  if (data.lakes) {
+    sources.lakes = { type: 'geojson', data: data.lakes, tolerance: 0.5 };
+    layers.push({ id: 'lakes-fill', type: 'fill', source: 'lakes',
+      paint: { 'fill-color': LAKE, 'fill-opacity': 1 } });
+  }
+
+  /* NE2 shaded relief. This is the offline basemap proper; the vector land/lake
+     fills below stay in the style deliberately, so that if the image is missing
+     or fails to decode we degrade to the flat-fill globe instead of a blank one.
+     The cost is a little overdraw, which is cheap and bounded.
+
+     The file MUST be the Web-Mercator reprojection (ne2_mercator.jpg), not the
+     4096x2048 equirectangular original: an `image` source maps its four corners
+     linearly in MERCATOR space, so feeding it a plate-carrée image would slide
+     every latitude off — subtly near the equator, grossly toward the poles.
+     ±85.0511° is the Mercator limit, which is why the source is square. */
+  if (data.relief !== false) {
+    sources.relief = {
+      type: 'image',
+      url: DATA_BASE + '/basemap/ne2_mercator.jpg?v=' + BUILD,
+      coordinates: [[-180, 85.0511], [180, 85.0511], [180, -85.0511], [-180, -85.0511]]
+    };
+    layers.push({ id: 'relief', type: 'raster', source: 'relief',
+      paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 } });
+
+    /* POLAR CAPS. Web Mercator is undefined at the poles, so the relief image
+       stops at ±85.0511° and beyond it you saw straight through to whatever
+       was underneath — green land-fill over Antarctica, blue background over
+       the Arctic — as two hard-edged discs. NE2 renders both as ice, so we
+       cap them in the same near-white. Drawn just above the relief and below
+       the coastlines, so outlines still read on top. */
+    var ICE = '#eef2f4';
+    function cap(id, latFrom, latTo) {
+      var ring = [];
+      for (var lon = -180; lon <= 180; lon += 5) ring.push([lon, latFrom]);
+      for (var lon2 = 180; lon2 >= -180; lon2 -= 5) ring.push([lon2, latTo]);
+      ring.push([-180, latFrom]);
+      sources[id] = { type: 'geojson', data: {
+        type: 'Feature', properties: {},
+        geometry: { type: 'Polygon', coordinates: [ring] } } };
+      layers.push({ id: id, type: 'fill', source: id,
+        paint: { 'fill-color': ICE, 'fill-opacity': 1, 'fill-antialias': false } });
+    }
+    cap('cap-n',  85.0511,  90);
+    cap('cap-s', -85.0511, -90);
+  }
+
+  /* Lines go ABOVE the relief so they stay legible against the imagery. */
+  if (data.land) {
     layers.push({ id: 'coast-line', type: 'line', source: 'coast',
       paint: { 'line-color': COAST, 'line-width': 0.8, 'line-opacity': 0.9 } });
   }
@@ -203,12 +300,6 @@ function buildLocalStyle(data) {
     sources.countries = { type: 'geojson', data: seamFreeLines(data.countries), tolerance: 0.5 };
     layers.push({ id: 'countries-line', type: 'line', source: 'countries',
       paint: { 'line-color': BORDER, 'line-width': 0.6, 'line-opacity': 0.8 } });
-  }
-
-  if (data.lakes) {
-    sources.lakes = { type: 'geojson', data: data.lakes, tolerance: 0.5 };
-    layers.push({ id: 'lakes-fill', type: 'fill', source: 'lakes',
-      paint: { 'fill-color': LAKE, 'fill-opacity': 1 } });
   }
 
   if (data.rivers) {
@@ -248,27 +339,123 @@ function buildLocalStyle(data) {
   };
 }
 
-/* Probe the network with a short-timeout HEAD against the online style.
-   Resolves true if reachable, false otherwise. */
-
-
-/* ── Map init (globe-only, local basemap with online upgrade) ────────── */
+/* ── Connectivity ─────────────────────────────────────────────────────────
+   ONE source of truth: `_online`. Ported from the cesium branch, where this was
+   worked out the hard way. We never trust navigator.onLine as a POSITIVE (it
+   reports "online" in DevTools-offline and after some iOS transitions) and never
+   depend on the 'offline' EVENT firing (iOS Safari frequently doesn't fire it on
+   airplane mode — that was the mobile "won't switch" bug). Instead an active
+   probe confirms real reachability. A negative from navigator.onLine IS
+   trustworthy, so that one is acted on immediately. */
 
 var _forceOffline = false;
-function forceOfflineMap(on) {
-  _forceOffline = on;
-  initMap();
+var _online       = (navigator.onLine !== false);   /* optimistic; the probe corrects it */
+
+/* Single source of truth for "are we offline?" — consulted by the basemap swap
+   and by any feature that would otherwise fire a doomed network request (e.g.
+   elevation lookup). */
+function isOffline() { return _forceOffline || !_online; }
+
+/* Probe the real tile origin. Two iOS-specific defences, both load-bearing:
+     • TIMEOUT — an offline fetch on iOS Safari HANGS rather than rejecting. With
+       no timeout the in-flight guard below would latch forever and the app could
+       never flip to offline. A timeout is the only reliable "no network" signal.
+     • CACHE-BUST — iOS ignores cache:'no-store' for no-cors requests and answers
+       from its HTTP cache, so a cached tile made the probe report "online" while
+       in airplane mode. A unique query param forces a real network attempt. */
+var PROBE_URL     = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/0/0/0';
+var PROBE_TIMEOUT = 3000;
+var _probing   = false;
+var _negProbes = 0;                    /* consecutive failed probes */
+var NEG_PROBES_TO_GO_OFFLINE = 2;      /* need two in a row before declaring offline */
+
+function probeConnectivity() {
+  if (_probing) return;                                          /* one in flight */
+  if (navigator.onLine === false) {                              /* trustworthy negative: immediate */
+    _negProbes = NEG_PROBES_TO_GO_OFFLINE; setOnline(false); return;
+  }
+  _probing = true;
+
+  var settled = false;
+  function finish(up) {
+    if (settled) return;
+    settled = true; _probing = false;   /* ALWAYS unlocks — no deadlock path */
+    /* DEBOUNCE the negative. A single timed-out probe is NOT proof of offline:
+       during a heavy first load (service-worker precache saturating the
+       connection) the probe can hang past its budget while the network is
+       perfectly fine. Acting on that one failure flipped the app offline and
+       back on the next probe — an oscillation that tore the basemap down and
+       rebuilt it repeatedly. A positive is trusted instantly; a negative must
+       repeat before we believe it. */
+    if (up) { _negProbes = 0; setOnline(true); return; }
+    _negProbes++;
+    if (_negProbes >= NEG_PROBES_TO_GO_OFFLINE) setOnline(false);
+  }
+
+  var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  setTimeout(function () {
+    if (ctl) { try { ctl.abort(); } catch (e) {} }
+    finish(false);                       /* hung fetch ⇒ offline */
+  }, PROBE_TIMEOUT);
+
+  fetch(PROBE_URL + '?_=' + Date.now(), {
+    mode: 'no-cors', cache: 'no-store', signal: ctl ? ctl.signal : undefined
+  }).then(function () { finish(true); }, function () { finish(false); });
 }
 
-/* Single source of truth for "are we offline?" — consulted by the map
-   connectivity probe and by any feature that would otherwise fire a doomed
-   network request (e.g. elevation lookup). Conservative: true only when we
-   KNOW we're offline (force-offline toggle, or the device reports no
-   connection). A device that claims online still gets the active probe below,
-   so this never produces a false "online". */
-function isOffline() {
-  return _forceOffline || navigator.onLine === false;
+function setOnline(v) {
+  if (v === _online) return;      /* no change → no work, no churn while stable */
+  _online = v;
+  applyOnlineState();
 }
+
+/* Which style is actually mounted: 'online' | 'local' | null (not yet built).
+   Kept in step with every setStyle so applyOnlineState can no-op when the map is
+   already showing the right thing. */
+var _styleMode  = null;
+var _localStyle = null;   /* the bundled offline style, kept for live swapping */
+
+/* Apply current on/offline state to the map. Idempotent — safe to call at init,
+   on a probe change, or from the force toggle. Cesium did this by hiding an
+   imagery layer; MapLibre's equivalent is setStyle, which is already an
+   exercised path here (Settings → Online map uses it, map-level listeners are
+   guarded by _mapEventsWired, and shadow-ui reattaches on style.load). */
+function applyOnlineState() {
+  if (!map || !_localStyle) return;
+  var want = isOffline() ? 'local' : 'online';
+  if (want === _styleMode) return;
+  _styleMode = want;
+  try {
+    map.setStyle(want === 'local' ? _localStyle : _basemapStyle(_basemapKey()));
+  } catch (e) {}
+  redrawIfMapVisible();   /* repaint paths in the palette matching the active base */
+  /* shadow-ui greys its toggle offline, but it listens to the raw online/offline
+     events — the signal iOS doesn't reliably fire. Drive it from the truth. */
+  if (typeof refreshShadowAvailability === 'function') refreshShadowAvailability();
+}
+
+/* Settings → "force offline". Routed through applyOnlineState rather than a full
+   initMap() teardown, so the camera, markers and layers survive the flip and a
+   forced switch takes exactly the same path as a real one. */
+function forceOfflineMap(on) {
+  _forceOffline = on;
+  applyOnlineState();
+  if (!on) probeConnectivity();   /* releasing the toggle → re-confirm the real state */
+}
+
+/* Wire the connectivity signals once. The events are the fast path; the interval
+   is the guarantee that covers iOS airplane mode, which fires no event at all.
+   All of them just call the probe — none of them assumes a state. */
+if (!window._scConnHook) { window._scConnHook = true;
+  addEventListener('online',  probeConnectivity);
+  addEventListener('offline', probeConnectivity);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) probeConnectivity();
+  });
+  setInterval(function () { if (!document.hidden) probeConnectivity(); }, 15000);
+}
+
+/* ── Map init (globe-only, local basemap with online upgrade) ────────── */
 
 function initMap() {
   if (map) {
@@ -280,19 +467,22 @@ function initMap() {
     deckOverlay = null;
   }
 
-  /* Choose the basemap from the device's own online state — NOT a third-party
-     ping (Brave and ad/privacy blockers block connectivitycheck.gstatic.com,
-     which made the probe falsely report "offline" and show the local style while
-     actually online). If we're online but the online tiles fail to load, the
-     style.load error handler below still falls back to local. */
+  /* Choose the opening basemap from the device's own online state. It is only a
+     starting guess: probeConnectivity() below corrects it within a few seconds,
+     and applyOnlineState() no-ops if the guess was already right. Keeping the
+     local style in _localStyle is what lets us swap live later instead of
+     rebuilding the map. */
   loadBasemapData().then(function (data) {
-    var online     = (navigator.onLine !== false) && !_forceOffline;
-    var localStyle = buildLocalStyle(data);
-    createMap(online ? _basemapStyle(_basemapKey()) : localStyle, online, localStyle);
+    var online = !isOffline();
+    _localStyle = buildLocalStyle(data);
+    _styleMode  = online ? 'online' : 'local';
+    createMap(online ? _basemapStyle(_basemapKey()) : _localStyle);
     var sel = document.getElementById('basemap');
     if (sel) sel.value = _basemapKey();
+    probeConnectivity();          /* correct the optimistic default */
   }).catch(function () {
-    createMap(_basemapStyle(_basemapKey()), true, null);
+    _styleMode = 'online';
+    createMap(_basemapStyle(_basemapKey()));
   });
 }
 
@@ -304,11 +494,16 @@ function defaultZoom() {
   return window.matchMedia('(min-width: 900px)').matches ? 2 : 0.6;
 }
 
-function createMap(style, isOnline, localStyleFallback) {
+function createMap(style) {
   map = new maplibregl.Map({
     container: 'map',
     style: style,
     center: [0, 30],
+    /* Compact attribution: credit collapses behind an (i) that expands on tap.
+       MapLibre otherwise decides this from container width and leaves the full
+       text inline on a phone, where it eats a strip of the map. Nothing is
+       removed — it's one tap away, and CSS keeps desktop showing it inline. */
+    attributionControl: { compact: true },
     zoom: defaultZoom(),
     minZoom: 0.4, maxZoom: 18,
     maxPitch: 0,
@@ -352,8 +547,12 @@ function createMap(style, isOnline, localStyleFallback) {
     }
 
     /* Tint the OpenFreeMap style to match our palette. Local style is
-       already correctly coloured so we skip tinting for it. */
-    if (isOnline) {
+       already correctly coloured so we skip tinting for it. Keyed off
+       _styleMode, NOT a flag captured at map creation — styles now swap live
+       with connectivity, so a creation-time constant would go stale in both
+       directions (no tint after an offline→online swap; a doomed attempt to
+       tint the local style after online→offline). */
+    if (_styleMode === 'online') {
       map.getStyle().layers.forEach(function (layer) {
         try {
           if (layer.id === 'background') {
@@ -375,16 +574,27 @@ function createMap(style, isOnline, localStyleFallback) {
     mapReady = true;
   });
 
-  /* If online style fails, fall back to local */
-  if (isOnline && localStyleFallback) {
-    map.on('error', function (e) {
-      var msg = (e && e.error && e.error.message) || '';
-      if (/style|source/i.test(msg)) {
-        console.warn('Online basemap failed, using local:', msg);
-        try { map.setStyle(localStyleFallback); } catch (err) {}
-      }
-    });
-  }
+  /* Any map error while the ONLINE basemap is mounted is a reason to re-check the
+     network — a tile failing mid-pan is how a connection drop announces itself
+     fastest, and the probe is self-guarding so calling it liberally is cheap.
+     A style/source failure additionally drops straight to local. Recording
+     _styleMode is what stops applyOnlineState from later deciding the map is
+     "already online" and leaving us stranded. This cannot flap: if we really are
+     offline the probe flips _online and applyOnlineState finds local already
+     mounted (no-op); if the network is fine and only this style is broken,
+     _online never changes, so nothing calls applyOnlineState and we stay local
+     until connectivity genuinely changes. Map-level listener — survives
+     setStyle, so it is attached once and covers every later swap. */
+  map.on('error', function (e) {
+    if (_styleMode !== 'online') return;
+    probeConnectivity();
+    var msg = (e && e.error && e.error.message) || '';
+    if (/style|source/i.test(msg) && _localStyle) {
+      console.warn('Online basemap failed, using local:', msg);
+      _styleMode = 'local';
+      try { map.setStyle(_localStyle); } catch (err) {}
+    }
+  });
 
   map.on('click', function (e) {
     /* In globe mode a click in empty space still returns a lngLat clamped to the

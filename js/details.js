@@ -200,7 +200,7 @@ function renderData(rec, _tz, _lat, _lon) {
        +   row('Sun alt / az at GE',    fmtAng(selectedEntry.sun_alt) + ' / ' + fmtAng(selectedEntry.sun_azm))
        +   row('Magnitude',             selectedEntry.magnitude != null ? selectedEntry.magnitude.toFixed(4) : '--')
        +   (selectedEntry.path_width      ? row('Path width',   selectedEntry.path_width.toFixed(0) + '\u2009km') : '')
-       +   (selectedEntry.central_duration? row('Max duration', selectedEntry.central_duration) : '')
+       +   maxDurationRows(selectedEntry)
        +   row('Saros', selectedEntry.saros
                        + (selectedEntry.nSeq && selectedEntry.nSer
                           ? ': ' + selectedEntry.nSeq + '/' + selectedEntry.nSer : ''))
@@ -212,6 +212,32 @@ function renderData(rec, _tz, _lat, _lon) {
   if (coords && localResult && localResult.visible && rec) {
     buildSunTrack(rec, coords.lat, coords.lon, alt, localResult, tz);
   }
+}
+
+
+/* Espenak's `central_duration` is the duration ON THE CENTRAL LINE. 94 eclipses
+   in the catalogue have no central line at all — the shadow axis misses the Earth
+   (|gamma| > 1) while the cone's edge still clips the limb — so the field is
+   structurally undefined and the canon serialises it as "00m00s". Rendering that
+   as a duration is simply wrong: those eclipses DO have totality, sometimes for
+   minutes, just nowhere near an axis. (Jubier shows 0 for the same reason: same
+   catalogue, same definition.)
+
+   tools/noncentral_durations.py precomputes the real figure into index.json for
+   exactly those records. The patch is sparse — a record without the field means
+   "use the catalogue value" — so this helper is also the feature detector.
+
+   NOTE: greatest eclipse and greatest DURATION are different points on ordinary
+   eclipses too, occasionally by a minute and thousands of km. We don't surface
+   that yet; see docs/GREATEST-DURATION.md. Keep this row's label honest about
+   which of the two it means. */
+function maxDurationRows(e) {
+  if (e.max_duration_secs != null) {
+    return row('Central line', '\u2013:\u2013\u2013')
+         + row('Longest totality', fmtDur(e.max_duration_secs) + ' \u00b7 computed')
+         + row('Longest at', coordStr(e.max_duration_lat, e.max_duration_lon));
+  }
+  return e.central_duration ? row('Max duration', e.central_duration) : '';
 }
 
 

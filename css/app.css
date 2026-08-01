@@ -1080,6 +1080,24 @@
     }
     .maplibregl-ctrl-attrib a { color: var(--text-dim) !important; }
 
+    /* On phones the expanded attribution eats a whole strip of the map. MapLibre
+       already ships a collapsed mode — the compact class plus its (i) toggle —
+       but only applies it at its own breakpoint. Force it below 900px: the text
+       hides behind the (i) and reappears when tapped, so credit is still one tap
+       away and nothing is removed. Desktop keeps the inline text. */
+    @media (max-width: 899px) {
+      .maplibregl-ctrl-attrib.maplibregl-compact {
+        min-height:    24px;
+        padding:       0;
+        margin:        0 8px 8px 0;
+        border-radius: 12px;
+      }
+      .maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show)
+        .maplibregl-ctrl-attrib-inner { display: none; }
+      .maplibregl-ctrl-attrib.maplibregl-compact-show
+        .maplibregl-ctrl-attrib-inner { display: block; }
+    }
+
     /* Click-result popup */
     .map-popup {
       position:      absolute;
@@ -1135,6 +1153,19 @@
     /* Same rule as .observer-pin-wrap: no `position` declaration. The absolute
        positioning inherited from .maplibregl-marker is itself the containing
        block .sun-arrow needs, and it keeps the wrapper out of normal flow. */
+    /* Separates the map-overlays block at the end of Instructions. A rule read
+       as a hard structural break; an ornament reads as a breath. Sun, moon and
+       star — dimmed and letter-spaced so it decorates rather than announces. */
+    .instructions-ornament {
+      margin:         1.4rem 0 1.1rem;
+      text-align:     center;
+      color:          var(--gold-dim);
+      font-size:      0.8rem;
+      letter-spacing: 0.35em;
+      line-height:    1;
+      user-select:    none;
+    }
+
     .sun-arrow-wrap {
       width:  44px;
       height: 44px;

@@ -352,6 +352,23 @@ generalizes that into a saved, catalog-wide report.
   positioned for the selected eclipse.
 
 ## FEATURES — HARD
+- **Greatest duration for ALL eclipses (not just the 94).** ⇒ **Handoff exists:
+  `docs/GREATEST-DURATION.md` — read it first, don't re-derive any of this.**
+  Greatest eclipse ≠ greatest duration: GE is where the axis passes closest to the Earth's
+  *centre*; longest totality is elsewhere. Espenak's `duration_secs` is the duration at GE,
+  not the maximum. Measured on 25 modern eclipses: median +0.07 s (negligible) but max
+  +49.8 s and up to 10,686 km away (2002-06: GE 22.8 s → 72.6 s). So "where and when is this
+  eclipse at its longest" is a real, unanswered question, and not one click away on Jubier.
+  DONE already: the 94 eclipses with *no central line* (`tools/noncentral_durations.py`,
+  surfaced by `details.js:maxDurationRows()`). This item is the general case.
+  The hard part is NOT the astronomy — `totality_seconds()` already gives duration at a
+  point, validated to 40 ms against Espenak on observed-ΔT eclipses. The hard part is a
+  trustworthy *global search*: the duration surface is a long curved ridge along the central
+  line, and the hill climb used for the 94 can stall on it or wander. Handoff §5 proposes
+  parametrising by time along the central line (1-D scan) instead of searching lat/lon (2-D).
+  Also decide storage: 3 fields × 11,900 records ≈ 400 KB on an index.json that already
+  loads at startup — may belong in the Besselian chunks instead. Budget hours, make it
+  resumable, and spot-check 2017-08-21 / 2024-04-08 against published values first.
 - **Path unification — all curves on one implicit-field engine (architectural vision).** Every
   path = the zero level set of a scalar field evaluated at each ground point's own moment of
   greatest eclipse, traced by one shared predictor–corrector:

@@ -24,7 +24,7 @@ const CORE = [
   'vendor/cesium-1.121/Build/Cesium/Widgets/widgets.css',
   ...['CormorantGaramond-Light','JetBrainsMono-Regular'].map(n => `fonts/${n}.woff2`),
   // Basemap: single offline NE II image + vector line overlays (coast/rivers/borders/cities).
-  'data/basemap/ne2.jpg',
+  'data/basemap/ne2_mercator.jpg',
   'data/basemap/countries.geojson.gz',
   'data/basemap/cities.geojson.gz',
   'data/basemap/lakes.geojson.gz',
