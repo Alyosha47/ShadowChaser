@@ -144,19 +144,10 @@ document.querySelectorAll('#tab-settings details.settings-group').forEach(functi
   });
 });
 
-/* ── Online basemap picker ─────────────────────────────────────────────────
-   Swaps the online tile source live (no reload). Offline basemap is untouched. */
-(function () {
-  var sel = document.getElementById('basemap');
-  if (!sel) return;
-  try {
-    var saved = localStorage.getItem('sc_basemap');
-    if (saved) sel.value = saved;
-  } catch (e) {}
-  sel.addEventListener('change', function () {
-    if (window._scSetBasemap) window._scSetBasemap(sel.value);
-  });
-})();
+/* The online basemap picker used to live here, driving a <select> in Settings.
+   It now sits on the map itself (top right) as live tile thumbnails — see
+   renderBasemapPicker() in js/map.js. _scSetBasemap() is still the single entry
+   point for changing basemap, so anything else that needs to should call it. */
 
 /* ── About-text deep links ─────────────────────────────────────────────────
    Links like #e=9408&q=… already apply via the hashchange handler, but the user is

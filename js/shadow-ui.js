@@ -244,6 +244,21 @@ function _positionRuler(ms) {
 }
 
 function _shadowTimelineEl()  { return document.getElementById('shadow-timeline'); }
+/* Cloud-cover overlay — PLACEHOLDER. The button is in the layout so the pair of
+   overlay toggles can be seen and judged together, but there is no cloud layer
+   yet. It stays visibly inert (dimmed, aria-disabled) rather than silently doing
+   nothing, so nobody mistakes it for broken. Replace this whole block when the
+   real overlay lands; the button id and CSS class are already correct. */
+(function () {
+  var b = document.getElementById('btn-cloud');
+  if (!b) return;
+  b.setAttribute('aria-disabled', 'true');
+  b.addEventListener('click', function (e) {
+    e.preventDefault();
+    b.title = 'Cloud cover — not yet available';
+  });
+})();
+
 function _shadowBtnEl()       { return document.getElementById('btn-shadow'); }
 
 /* Timeline has three modes: 'off' (hidden), 'show' (readout + ruler), and
@@ -341,9 +356,11 @@ function _attachShadowZoom() {
   _shadowZoomHandler = function () { updateShadowVisibility(); };
   map.on('zoom', _shadowZoomHandler);
 
-  /* A basemap swap (setStyle) wipes custom layers and resets the projection to
-     globe. If shadows are showing, rebuild the layer and reassert Mercator once
-     the new style loads. Attached once. */
+  /* Kept as a safety net. The style is now built once and never replaced —
+     going offline hides a layer, changing basemap retargets a source — so
+     style.load should fire only at startup, when shadows can't be showing.
+     If anything ever does rebuild the style, this restores the shadow layer and
+     Mercator rather than leaving them silently dropped. Attached once. */
   if (!_shadowStyleHooked) {
     _shadowStyleHooked = true;
     map.on('style.load', function () {

@@ -35,47 +35,146 @@ var _deckLayers = null; /* last layers array pushed to the overlay */
      lakes   : no properties needed
 */
 
-var ONLINE_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
-
-/* Selectable online basemaps (Settings → Online map). 'osm' keeps the default
-   OpenFreeMap vector style (OSM data, our tinted cartography); the rest are
-   raster tile overrides. Tile URL order is provider-native and matches
+/* Online basemaps. All RASTER — that is what lets the online and local layers
+   live in one style, with going offline hiding a layer instead of swapping the
+   whole thing. Adding a VECTOR style here would break that, and would need the
+   old style-swap machinery back. Only the three in PICKER_KEYS are reachable;
+   the rest are kept because they cost nothing and may be offered again.
+   ('osm' now names a raster OSM tile source, not the old vector style.)
+   Tile URL order is provider-native and matches
    MapLibre's {z}/{x}/{y} (row = {y}) substitution: ArcGIS uses {z}/{y}/{x}. */
 var BASEMAPS = {
   esri_street:  { name: 'Esri Street',      attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}' },
-  esri_imagery: { name: 'Esri Satellite',   attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' },
+  esri_imagery: { name: 'Esri Satellite',   attr: 'Esri', max: 19, dark: true, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' },
   esri_topo:    { name: 'Esri Topographic', attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}' },
-  esri_terrain: { name: 'Esri Terrain',     attr: 'Esri', max: 13, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}' },
+  esri_terrain: { name: 'Esri Terrain',     attr: 'Esri', max: 13, dark: false, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}' },
   esri_gray:    { name: 'Esri Light Gray',  attr: 'Esri', max: 16, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}' },
-  opentopo:     { name: 'OpenTopoMap',      attr: '\u00a9 OpenTopoMap (CC-BY-SA)',       max: 17, url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png' },
+  /* Topographic is TWO sources with a handover at TOPO_SPLIT. OpenTopoMap is
+     really two maps in one: a saturated shaded-relief globe at low zoom, then an
+     abrupt switch to a classic paper topo sheet (white ground, green forest,
+     brown contours) higher up. The paper sheet is the beautiful part and the
+     reason to use it on the ground; the low-zoom relief clashes with everything
+     around it. So we fly over Esri Topographic and land on OpenTopoMap. */
+  /* Topographic is TWO sources with a handover at `nearFrom`. OpenTopoMap is
+     really two maps in one: a saturated shaded-relief globe at low zoom, then an
+     abrupt switch to a classic paper topo sheet (white ground, green forest,
+     brown contours) higher up. The paper sheet is the beautiful part and the
+     reason to use it on the ground; the low-zoom relief clashes with everything
+     around it. So we fly over Esri Topographic and land on OpenTopoMap. Any
+     basemap may do this — it is a general `near*` facility, not a topo hack.
+     nearFrom is 9.5, not 9: OpenTopoMap switches to its paper sheet at 9.45, so
+     handing over any earlier exposes a band of its saturated relief style, which
+     is the thing we are avoiding. Layer zoom ranges take fractions, so the
+     handover can sit just past their break rather than on a round number. */
+  opentopo:     { name: 'Topographic',      attr: 'Esri', max: 19,
+                  url:      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+                  nearFrom: 9.5,
+                  nearMax:  17,
+                  nearAttr: '\u00a9 OpenTopoMap (CC-BY-SA)',
+                  nearUrl:  'https://tile.opentopomap.org/{z}/{x}/{y}.png' },
   osm:          { name: 'OpenStreetMap',    attr: '\u00a9 OpenStreetMap contributors',   max: 19, url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' }
 };
 
+/* The three basemaps offered on the map itself; this array is the picker order.
+   BASEMAPS still holds the others — they are simply no longer exposed, now that
+   the Settings pulldown is gone. */
+var PICKER_KEYS  = ['esri_street', 'opentopo', 'esri_imagery'];
+var PICKER_LABEL = { esri_street: 'Street', opentopo: 'Topo', esri_imagery: 'Sat' };
+
+/* Swatches: small hand-drawn map fragments, not photographs and not icons.
+   Live provider tiles were tried first — at 44px a zoomed-out topo tile and a
+   street tile both reduce to pale mush, so the control taught you nothing. These
+   are drawn to read at a glance: a street grid with a park and a bay, a hill in
+   contour lines with a stream, and terrain from orbit with a river. Un-branded
+   on purpose, so they stay honest if a provider is ever swapped out. */
+var PICKER_SWATCH = {
+  esri_street:
+    '<svg viewBox="0 0 48 48" preserveAspectRatio="none" aria-hidden="true">' +
+    '<rect width="48" height="48" fill="#f7f4ed"/>' +
+    '<path d="M3 3h15v13H3z" fill="#d6e6c6"/>' +
+    '<g fill="none" stroke="#e6e0d5" stroke-width="5.5">' +
+    '<path d="M-1 21h50M-1 38h50M18 -1v50M35 -1v50"/></g>' +
+    '<g fill="none" stroke="#fff" stroke-width="3.6">' +
+    '<path d="M-1 21h50M-1 38h50M18 -1v50M35 -1v50"/></g>' +
+    '<path d="M-1 9h50" stroke="#eccf94" stroke-width="4.4"/>' +
+    '<path d="M-1 9h50" stroke="#fbeac4" stroke-width="2.6"/>' +
+    '<path d="M48 30c-10 1-15 8-19 18h19z" fill="#a9cfe3"/></svg>',
+  opentopo:
+    '<svg viewBox="0 0 48 48" preserveAspectRatio="none" aria-hidden="true">' +
+    '<rect width="48" height="48" fill="#f5edd9"/>' +
+    '<g fill="none" stroke="#c9a273" stroke-width="1.1">' +
+    '<path d="M2 33c-1-10 7-18 18-18s21 6 22 15-9 16-20 16S3 43 2 33z"/>' +
+    '<path d="M9 32c-1-7 5-13 12-13s15 4 16 11-6 11-14 11-13-4-14-9z"/>' +
+    '<path d="M16 31c0-4 3-8 8-8s9 3 9 7-4 7-9 7-8-3-8-6z"/></g>' +
+    '<path d="M22 30c1-3 4-3 5-1" fill="none" stroke="#c9a273" stroke-width="1.1"/>' +
+    '<path d="M0 9c9 3 15-3 24-1s15 6 24 2" fill="none" stroke="#8fbdd8" stroke-width="1.7"/></svg>',
+  esri_imagery:
+    '<svg viewBox="0 0 48 48" preserveAspectRatio="none" aria-hidden="true">' +
+    '<rect width="48" height="48" fill="#3d5733"/>' +
+    '<path d="M0 0h48v13c-9 6-16 2-25 6S7 27 0 23z" fill="#516d3c"/>' +
+    '<path d="M0 23c7 4 14-1 23-5s16 0 25-6v13c-9 6-16 2-25 5S8 34 0 31z" fill="#77804a"/>' +
+    '<path d="M0 31c8 3 15 0 24-3s16 1 24-5v25H0z" fill="#2c4527"/>' +
+    '<path d="M13 48c1-9 7-13 9-21s-2-12 1-19" fill="none" stroke="#2a5570" stroke-width="3.2"/>' +
+    '<path d="M31 0c-1 8 3 11 7 14s7 2 10 0" fill="none" stroke="#2a5570" stroke-width="2.4"/></svg>'
+};
+
 function _basemapKey() {
-  try { return localStorage.getItem('sc_basemap') || 'osm'; } catch (e) { return 'osm'; }
+  var k = null;
+  try { k = localStorage.getItem('sc_basemap'); } catch (e) {}
+  /* Anything not on the picker — including the old 'osm' default and the four
+     Esri styles the pulldown used to reach — resolves to Esri Street, the
+     closest equivalent to the vector street map that used to be the default.
+     Without this the stored key could name a basemap with no lit segment. */
+  return (PICKER_KEYS.indexOf(k) >= 0) ? k : 'esri_street';
 }
 
-/* A MapLibre style for a basemap key. 'osm'/default → the vector style we
-   already ship; any other key → a single raster layer. */
-function _basemapStyle(key) {
-  var bm = BASEMAPS[key];
-  if (!bm || key === 'osm') return ONLINE_STYLE_URL;
-  return {
-    version: 8,
-    sources: { basemap: { type: 'raster', tiles: [bm.url], tileSize: 256, maxzoom: bm.max, attribution: bm.attr } },
-    layers:  [{ id: 'basemap', type: 'raster', source: 'basemap' }]
-  };
+/* Build the picker once, then keep its lit segment in step with the stored key.
+   Offline it greys out and stops responding, exactly as the Shadows button does
+   — every option here is a network basemap. */
+function renderBasemapPicker() {
+  var host = document.getElementById('basemap-picker');
+  if (!host) return;
+  var cur = _basemapKey(), off = isOffline();
+  if (!host.dataset.built) {
+    host.innerHTML = PICKER_KEYS.map(function (k) {
+      return '<button class="basemap-opt" data-key="' + k + '" title="' +
+             (BASEMAPS[k] ? BASEMAPS[k].name : k) + '">' +
+             '<span class="basemap-swatch">' + PICKER_SWATCH[k] + '</span></button>';
+    }).join('');
+    host.dataset.built = '1';
+    host.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest ? e.target.closest('.basemap-opt') : null;
+      if (b && !isOffline()) window._scSetBasemap(b.dataset.key);
+    });
+  }
+  host.classList.toggle('is-offline', off);
+  Array.prototype.forEach.call(host.querySelectorAll('.basemap-opt'), function (b) {
+    b.classList.toggle('active', b.dataset.key === cur);
+    b.disabled = off;
+  });
 }
 
-/* Swap the online basemap live from Settings. Raster/vector swap via setStyle;
-   the style.load handler re-applies projection, fog and tint, and the deck.gl
-   overlay (a control) plus terrain shadows re-attach themselves. Offline uses
-   the bundled local style, so we only persist the choice until back online. */
+
+/* Change the online basemap. The choice is persisted even while offline — it
+   just doesn't take effect until we're back, since every option here is a
+   network basemap. */
 window._scSetBasemap = function (key) {
-  if (key !== 'osm' && !BASEMAPS[key]) return;
+  var bm = BASEMAPS[key];
+  if (!bm) return;
   try { localStorage.setItem('sc_basemap', key); } catch (e) {}
-  if (!map || isOffline()) return;
-  try { map.setStyle(_basemapStyle(key)); } catch (e) {}
+  renderBasemapPicker();
+  /* Retarget the existing raster source rather than rebuilding the style — same
+     reason as applyOnlineState. The choice is persisted even while offline; it
+     simply isn't visible until the layer is shown again. */
+  if (!map || !map.getSource) return;
+  var far  = map.getSource('basemap-far');
+  var near = map.getSource('basemap-near');
+  try {
+    if (far  && far.setTiles)  far.setTiles([bm.url]);
+    if (near && near.setTiles) near.setTiles([bm.nearUrl || bm.url]);
+  } catch (e) {}
+  syncBasemapLayers();
+  redrawIfMapVisible();   /* path colours follow the base — see pathPalette() */
 };
 
 /* Force a recentre on the current selection (framing is otherwise done once per
@@ -275,20 +374,37 @@ function buildLocalStyle(data) {
        cap them in the same near-white. Drawn just above the relief and below
        the coastlines, so outlines still read on top. */
     var ICE = '#eef2f4';
+    /* Each cap is TWO half-rings, split at longitude 0, never one ring spanning
+       -180..180. A single ring around a pole encloses the antimeridian, and
+       MapLibre — which splits geometry at ±180 — then can't tell which side the
+       interior is on, so it filled only half the cap, and which half changed
+       with the globe's rotation.
+       Latitudes stop at ±89.999, NOT ±90: 90 is infinity in Mercator, and a ring
+       touching it projects to invalid geometry that silently fails to draw.
+       (land.geojson uses 89.999 for Antarctica, for the same reason.) The inner
+       edge overlaps the relief slightly so no hairline seam shows at the join. */
+    function capRing(lonA, lonB, latFrom, latTo) {
+      var ring = [], lon;
+      for (lon = lonA; lon <= lonB; lon += 5)  ring.push([lon, latFrom]);
+      ring.push([lonB, latTo]);
+      for (lon = lonB; lon >= lonA; lon -= 5)  ring.push([lon, latTo]);
+      ring.push([lonA, latFrom]);
+      return [ring];
+    }
     function cap(id, latFrom, latTo) {
-      var ring = [];
-      for (var lon = -180; lon <= 180; lon += 5) ring.push([lon, latFrom]);
-      for (var lon2 = 180; lon2 >= -180; lon2 -= 5) ring.push([lon2, latTo]);
-      ring.push([-180, latFrom]);
       sources[id] = { type: 'geojson', data: {
         type: 'Feature', properties: {},
-        geometry: { type: 'Polygon', coordinates: [ring] } } };
+        geometry: { type: 'MultiPolygon', coordinates: [
+          capRing(-180, 0, latFrom, latTo),
+          capRing(0, 180, latFrom, latTo)
+        ] } } };
       layers.push({ id: id, type: 'fill', source: id,
         paint: { 'fill-color': ICE, 'fill-opacity': 1, 'fill-antialias': false } });
     }
-    cap('cap-n',  85.0511,  90);
-    cap('cap-s', -85.0511, -90);
+    cap('cap-n',  85.00,  89.999);
+    cap('cap-s', -85.00, -89.999);
   }
+
 
   /* Lines go ABOVE the relief so they stay legible against the imagery. */
   if (data.land) {
@@ -329,6 +445,36 @@ function buildLocalStyle(data) {
     layers.push({ id: 'cities-r4', type: 'circle', source: 'cities',
       minzoom: 5, filter: ['==', ['get', 'rank'], 4], paint: cityPaint(1.1) });
 
+  }
+
+  /* ONLINE BASEMAP, in the SAME style, on top of everything local. Going online
+     or offline only toggles this layer's visibility — the style itself is never
+     swapped. That is what the cesium branch did (it hid an imagery layer), and
+     it is the reason this is now possible here: with the Settings pulldown gone,
+     all three offered basemaps are RASTER, so there is no vector style that
+     would have to be swapped in wholesale.
+     setStyle is the thing to avoid: a full rebuild costs the deck.gl overlay its
+     globe state, and the eclipse paths then draw straight through the planet;
+     a diffed rebuild of this many sources at once left the map blank instead.
+     Toggling one layer has neither failure mode. */
+  var bm = BASEMAPS[_basemapKey()];
+  if (bm) {
+    /* TWO layers, always present: a far one and a near one. A single-source
+       basemap simply leaves the near layer hidden. Their tiles, zoom ranges and
+       visibility are all set afterwards by syncBasemapLayers(), which is the one
+       place that knows the current basemap — so the style itself never needs
+       rebuilding when the choice changes. */
+    sources['basemap-far'] = { type: 'raster', tiles: [bm.url], tileSize: 256,
+                               maxzoom: bm.max, attribution: bm.attr };
+    layers.push({ id: 'basemap-far', type: 'raster', source: 'basemap-far',
+      paint: { 'raster-fade-duration': 0 } });
+
+    sources['basemap-near'] = { type: 'raster',
+                                tiles: [bm.nearUrl || bm.url], tileSize: 256,
+                                maxzoom: bm.nearMax || bm.max,
+                                attribution: bm.nearAttr || bm.attr };
+    layers.push({ id: 'basemap-near', type: 'raster', source: 'basemap-near',
+      paint: { 'raster-fade-duration': 0 } });
   }
 
   return {
@@ -389,7 +535,12 @@ function probeConnectivity() {
        repeat before we believe it. */
     if (up) { _negProbes = 0; setOnline(true); return; }
     _negProbes++;
-    if (_negProbes >= NEG_PROBES_TO_GO_OFFLINE) setOnline(false);
+    if (_negProbes >= NEG_PROBES_TO_GO_OFFLINE) { setOnline(false); return; }
+    /* First failure while still believed online: re-probe SOON rather than
+       waiting a whole interval. Two strikes at 15s apart meant a real
+       disconnection took up to 30s to show. This confirms in ~3s while keeping
+       the two-strike rule that stops precache-induced flapping. */
+    if (_online) setTimeout(probeConnectivity, 3000);
   }
 
   var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -413,25 +564,66 @@ function setOnline(v) {
    Kept in step with every setStyle so applyOnlineState can no-op when the map is
    already showing the right thing. */
 var _styleMode  = null;
-var _localStyle = null;   /* the bundled offline style, kept for live swapping */
 
-/* Apply current on/offline state to the map. Idempotent — safe to call at init,
-   on a probe change, or from the force toggle. Cesium did this by hiding an
-   imagery layer; MapLibre's equivalent is setStyle, which is already an
-   exercised path here (Settings → Online map uses it, map-level listeners are
-   guarded by _mapEventsWired, and shadow-ui reattaches on style.load). */
-function applyOnlineState() {
-  if (!map || !_localStyle) return;
-  var want = isOffline() ? 'local' : 'online';
-  if (want === _styleMode) return;
-  _styleMode = want;
+/* THE one place that knows what the online basemap should currently be: which
+   tiles each layer draws, over which zoom range, and whether either is visible
+   at all. Everything else — going offline, picking a basemap — just changes the
+   inputs and calls this. No style rebuild, so the deck.gl overlay and every
+   local layer stay exactly as they are.
+
+   A basemap with `nearUrl` hands over at `nearFrom`.
+
+   The handover is done with OPACITY, not with layer zoom ranges. MapLibre tests
+   a layer's zoom range against each TILE's own zoom, and on a globe the tiles on
+   screen are not all at the same zoom — those near the centre of the disc are
+   finer than those toward the limb. With ranges, tiles either side of the
+   boundary passed different tests and both maps drew at once, in patches. An
+   opacity expression on ['zoom'] reads the map's single scalar zoom, so the
+   whole sphere switches together. `step` rather than `interpolate`: these are
+   two different maps, and cross-fading them just looks like a mistake.
+
+   Zoom ranges are still set, one level wider than the handover on each side, so
+   neither provider is asked for tiles far outside where it's used — that keeps
+   us off OpenTopoMap's servers at global zoom, which their usage policy asks.
+
+   Without `nearUrl` the far layer covers everything and the near layer is
+   simply hidden. */
+function syncBasemapLayers() {
+  if (!map || !map.getLayer || !map.getLayer('basemap-far')) return;
+  var bm    = BASEMAPS[_basemapKey()];
+  var off   = isOffline();
+  var split = (bm && bm.nearUrl) ? bm.nearFrom : null;
   try {
-    map.setStyle(want === 'local' ? _localStyle : _basemapStyle(_basemapKey()));
+    map.setLayoutProperty('basemap-far', 'visibility', off ? 'none' : 'visible');
+    map.setLayoutProperty('basemap-near', 'visibility',
+                          (off || split == null) ? 'none' : 'visible');
+    if (split == null) {
+      map.setLayerZoomRange('basemap-far', 0, 24);
+      map.setPaintProperty('basemap-far', 'raster-opacity', 1);
+    } else {
+      map.setLayerZoomRange('basemap-far',  0, Math.ceil(split) + 1);
+      map.setLayerZoomRange('basemap-near', Math.floor(split) - 1, 24);
+      map.setPaintProperty('basemap-far',  'raster-opacity',
+        ['step', ['zoom'], 1, split, 0]);
+      map.setPaintProperty('basemap-near', 'raster-opacity',
+        ['step', ['zoom'], 0, split, 1]);
+    }
   } catch (e) {}
+}
+
+/* Reflect the current on/offline state. Idempotent — safe at init, on a probe
+   change, or from the force toggle. */
+function applyOnlineState() {
+  if (!map || !map.getLayer || !map.getLayer('basemap-far')) return;
+  var off = isOffline();
+  if (off === (_styleMode === 'local')) return;      /* already correct */
+  _styleMode = off ? 'local' : 'online';
+  syncBasemapLayers();
   redrawIfMapVisible();   /* repaint paths in the palette matching the active base */
   /* shadow-ui greys its toggle offline, but it listens to the raw online/offline
      events — the signal iOS doesn't reliably fire. Drive it from the truth. */
   if (typeof refreshShadowAvailability === 'function') refreshShadowAvailability();
+  renderBasemapPicker();
 }
 
 /* Settings → "force offline". Routed through applyOnlineState rather than a full
@@ -467,22 +659,19 @@ function initMap() {
     deckOverlay = null;
   }
 
-  /* Choose the opening basemap from the device's own online state. It is only a
-     starting guess: probeConnectivity() below corrects it within a few seconds,
-     and applyOnlineState() no-ops if the guess was already right. Keeping the
-     local style in _localStyle is what lets us swap live later instead of
-     rebuilding the map. */
+  /* ONE style, containing both the local layers and the online basemap on top.
+     Its initial visibility follows the device's own online state — a starting
+     guess that probeConnectivity() corrects within a few seconds, and which
+     applyOnlineState() no-ops on if it was already right. */
   loadBasemapData().then(function (data) {
-    var online = !isOffline();
-    _localStyle = buildLocalStyle(data);
-    _styleMode  = online ? 'online' : 'local';
-    createMap(online ? _basemapStyle(_basemapKey()) : _localStyle);
-    var sel = document.getElementById('basemap');
-    if (sel) sel.value = _basemapKey();
-    probeConnectivity();          /* correct the optimistic default */
+    _styleMode = isOffline() ? 'local' : 'online';
+    createMap(buildLocalStyle(data));
+    renderBasemapPicker();
+    probeConnectivity();
   }).catch(function () {
+    /* No local data — the online raster alone still gives a usable map. */
     _styleMode = 'online';
-    createMap(_basemapStyle(_basemapKey()));
+    createMap(buildLocalStyle({}));
   });
 }
 
@@ -546,53 +735,33 @@ function createMap(style) {
       }
     }
 
-    /* Tint the OpenFreeMap style to match our palette. Local style is
-       already correctly coloured so we skip tinting for it. Keyed off
-       _styleMode, NOT a flag captured at map creation — styles now swap live
-       with connectivity, so a creation-time constant would go stale in both
-       directions (no tint after an offline→online swap; a doomed attempt to
-       tint the local style after online→offline). */
-    if (_styleMode === 'online') {
-      map.getStyle().layers.forEach(function (layer) {
-        try {
-          if (layer.id === 'background') {
-            map.setPaintProperty(layer.id, 'background-color', '#e8e0d8');
-          } else if (layer.type === 'fill') {
-            if (/water/.test(layer.id)) {
-              map.setPaintProperty(layer.id, 'fill-color', '#b8d0e8');
-            } else if (/land|cover|park|grass|wood|sand|scrub/.test(layer.id)) {
-              map.setPaintProperty(layer.id, 'fill-color', '#d4e8c8');
-              map.setPaintProperty(layer.id, 'fill-opacity', 0.8);
-            }
-          } else if (layer.type === 'line' && /water/.test(layer.id)) {
-            map.setPaintProperty(layer.id, 'line-color', '#a0c0dc');
-          }
-        } catch (e) {}
-      });
-    }
+    /* (The OpenFreeMap tint that used to live here is gone with the vector
+       style it existed for. Every basemap is now raster, drawn over our own
+       correctly-coloured local layers, so there is nothing to recolour.) */
+
+    /* The style declares both basemap layers plainly; this is what gives them
+       their zoom ranges and initial visibility. Must run before mapReady, so
+       nothing ever sees both layers drawing at once. */
+    syncBasemapLayers();
 
     mapReady = true;
   });
 
-  /* Any map error while the ONLINE basemap is mounted is a reason to re-check the
+  /* Any map error while the online basemap is SHOWING is a reason to re-check the
      network — a tile failing mid-pan is how a connection drop announces itself
-     fastest, and the probe is self-guarding so calling it liberally is cheap.
-     A style/source failure additionally drops straight to local. Recording
-     _styleMode is what stops applyOnlineState from later deciding the map is
-     "already online" and leaving us stranded. This cannot flap: if we really are
-     offline the probe flips _online and applyOnlineState finds local already
-     mounted (no-op); if the network is fine and only this style is broken,
-     _online never changes, so nothing calls applyOnlineState and we stay local
-     until connectivity genuinely changes. Map-level listener — survives
-     setStyle, so it is attached once and covers every later swap. */
+     fastest, and the probe is self-guarding, so calling it liberally is cheap.
+     A source failure additionally hides the online layer straight away rather
+     than waiting for the probe. Map-level listener: it survives everything,
+     since the style is now built once and never replaced. */
   map.on('error', function (e) {
     if (_styleMode !== 'online') return;
     probeConnectivity();
     var msg = (e && e.error && e.error.message) || '';
-    if (/style|source/i.test(msg) && _localStyle) {
-      console.warn('Online basemap failed, using local:', msg);
-      _styleMode = 'local';
-      try { map.setStyle(_localStyle); } catch (err) {}
+    if (/style|source/i.test(msg)) {
+      console.warn('Online basemap failed, falling back to local:', msg);
+      _styleMode = 'online';        /* force applyOnlineState to act */
+      _online = false;
+      applyOnlineState();
     }
   });
 
@@ -1193,6 +1362,39 @@ function updateOvalVisibility() {
   if (changed) setDeckLayers(next);
 }
 
+/* Path colours follow whatever is underneath. Satellite imagery is dark, so the
+   deep blues and greens that read well on street, topo and NE2 sink into it; on
+   a dark base the same paths need high-luminance versions instead. Each basemap
+   declares its own tone (`dark` in BASEMAPS) rather than this function testing
+   for particular keys, so adding a basemap means adding one flag, not editing
+   this. Offline is always the light case — NE2 is pale.
+
+   ONE definition, read by every layer. The colours used to be RGB literals at
+   four separate call sites, which is how they drifted out of step in the first
+   place. */
+function pathPalette() {
+  var bm = (_styleMode === 'online') ? BASEMAPS[_basemapKey()] : null;
+  if (bm && bm.dark) return {
+    penumbra:    [130, 205, 255, 225],
+    umbraTotal:  [255, 176,  64],
+    umbraAnnfmt: [140, 200, 255],
+    centreline:  [255,  96,  72, 255],
+    green:       [170, 255,  90, 255],
+    /* Outline the umbra ovals rather than filling them. A translucent amber
+       wash over dark green imagery reads as a stain, not as shading; the
+       outline alone carries the same information cleanly. */
+    ovalFillAlpha: 0
+  };
+  return {
+    penumbra:    [ 42,  90, 140, 200],
+    umbraTotal:  [139,  74,   0],
+    umbraAnnfmt: [ 26,  74, 122],
+    centreline:  [204,  34,   0, 255],
+    green:       [  0, 160,   0, 255],
+    ovalFillAlpha: 60      /* a light base takes the soft fill well */
+  };
+}
+
 /* Flatten segments into a single array of paths for PathLayer */
 function wrapContinuous(pts) {
   if (!pts || !pts.length) return pts;
@@ -1266,7 +1468,8 @@ function drawEclipsePath(ep) {
   clearMapLayers();
   var isCentral = /[TAH]/.test(ep.type||'');
   var isTotal   = /[TH]/.test(ep.type||'');
-  var uc        = isTotal ? [139,74,0] : [26,74,122];
+  var PAL       = pathPalette();
+  var uc        = isTotal ? PAL.umbraTotal : PAL.umbraAnnfmt;
   var layers    = [];
 
   /* Polygon offset pushes all deck.gl geometry just above the globe surface
@@ -1288,7 +1491,7 @@ function drawEclipsePath(ep) {
       id: 'penumbra-lines',
       data: penPaths,
       getPath: function(d) { return d.path; },
-      getColor: [42,90,140,200],
+      getColor: PAL.penumbra,
       getWidth: 1.5,
       widthUnits: 'pixels',
       widthMinPixels: 1,
@@ -1319,8 +1522,11 @@ function drawEclipsePath(ep) {
 
   /* ── Umbra ovals ───────────────────────────────────────────────────── */
   if (/[TAH]/.test(ep.type||'') && ep.umbra_ovals && ep.umbra_ovals.length) {
-    var ovalFill = /[TH]/.test(ep.type||'') ? [139,74,0,60]   : [26,74,122,60];
-    var ovalLine = /[TH]/.test(ep.type||'') ? [180,120,20,200] : [42,90,180,200];
+    /* Derived from the same palette as everything else, so the ovals can't drift
+       out of step with the umbra path they belong to. */
+    var ovalBase = /[TH]/.test(ep.type||'') ? PAL.umbraTotal : PAL.umbraAnnfmt;
+    var ovalFill = ovalBase.concat([PAL.ovalFillAlpha]);
+    var ovalLine = ovalBase.map(function (c) { return Math.min(255, c + 45); }).concat([200]);
     var ovalData = ep.umbra_ovals
       .filter(function(r) { return r && r.length >= 3; })
       .map(function(r, i) {
@@ -1345,7 +1551,7 @@ function drawEclipsePath(ep) {
         getFillColor:       ovalFill,
         getLineColor:       ovalLine,
         stroked:            true,
-        filled:             true,
+        filled:             PAL.ovalFillAlpha > 0,   /* outline-only on dark bases */
         lineWidthMinPixels: 1,
       }));
     }
@@ -1357,7 +1563,7 @@ function drawEclipsePath(ep) {
       id: 'centreline',
       data: segsToPathData(ep.centreline, 'cl'),
       getPath: function(d) { return d.path; },
-      getColor: [204,34,0,255],
+      getColor: PAL.centreline,
       getWidth: 1.5,
       widthUnits: 'pixels',
       widthMinPixels: 1,
@@ -1389,7 +1595,7 @@ function drawEclipsePath(ep) {
       id: 'green_curve',
       data: gsegs.map(function(s){ return { path: s }; }),
       getPath: function(d) { return d.path; },
-      getColor: [0,160,0,255],
+      getColor: PAL.green,
       getWidth: 1.5,
       widthUnits: 'pixels',
       widthMinPixels: 1,

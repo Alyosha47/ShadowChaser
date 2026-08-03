@@ -942,26 +942,92 @@
     }
 
     /* Terrain-shadow toggle — top-left overlay button */
-    .map-shadow-btn {
-      position:        absolute;
-      top:             0.6rem;
-      left:            0.6rem;
-      z-index:         200;
+    /* ── On-map controls ──────────────────────────────────────────────────
+       Overlays (toggles, independent) sit top LEFT; the basemap choice
+       (exclusive, one of three) sits top RIGHT. Opposite corners so the two
+       kinds of control are never mistaken for one another, and the bottom edge
+       stays clear for the scrubber and the tab bar. */
+    .map-overlay-btns {
+      position: absolute;
+      top:      0.6rem;
+      left:     0.6rem;
+      z-index:  200;
+      display:  flex;
+      gap:      0.4rem;
+    }
+    /* Icon-only. The glyphs carry the meaning: a hard-edged half-lit circle
+       (terrain shadow) beside a soft cloud outline — different silhouettes, so
+       they separate at a glance where two words would just be two words. */
+    .map-overlay-btn {
+      width:           2.1rem;
+      height:          2.1rem;
+      display:         flex;
+      align-items:     center;
+      justify-content: center;
       background:      rgba(10,12,15,0.88);
       border:          1px solid var(--border2);
       border-radius:   var(--radius);
-      padding:         0.35rem 0.7rem;
-      color:           var(--text);
-      font-family:     var(--mono);
-      font-size:       0.72rem;
-      letter-spacing:  0.04em;
+      color:           var(--text-dim);
+      font-size:       1.15rem;
+      line-height:     1;
       cursor:          pointer;
       backdrop-filter: blur(4px);
       pointer-events:  auto;
     }
-    .map-shadow-btn:hover                  { border-color: var(--gold-dim); }
-    .map-shadow-btn[aria-pressed="true"]   { border-color: var(--gold); color: var(--gold2); }
-    .map-shadow-btn:disabled               { opacity: 0.4; cursor: not-allowed; }
+    .map-overlay-btn:hover                { border-color: var(--gold-dim); color: var(--text); }
+    .map-overlay-btn[aria-pressed="true"] { border-color: var(--gold); color: var(--gold2); }
+    .map-overlay-btn:disabled,
+    .map-overlay-btn[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+
+    /* Basemap picker: three small drawn map fragments, no words. Live provider
+       tiles were tried first — at 44px a zoomed-out topo tile is
+       indistinguishable from a street one. The swatches are inline SVG (see
+       PICKER_SWATCH in js/map.js), so nothing is fetched: no pop-in, and the
+       control looks the same offline as on. */
+    .basemap-picker {
+      position: absolute;
+      top:      0.6rem;
+      right:    0.6rem;
+      z-index:  200;
+      display:  inline-flex;
+      gap:      0.3rem;
+      padding:  0.3rem;
+      background:      rgba(10,12,15,0.88);
+      border:          1px solid var(--border2);
+      border-radius:   var(--radius);
+      backdrop-filter: blur(4px);
+      pointer-events:  auto;
+    }
+    .basemap-picker.is-offline { opacity: 0.4; }
+    .basemap-opt {
+      width:         2.6rem;
+      height:        2.6rem;
+      padding:       0;
+      background:    none;
+      border:        1.5px solid transparent;
+      border-radius: 5px;
+      cursor:        pointer;
+      overflow:      hidden;
+      opacity:       0.72;
+      transition:    opacity 0.12s, border-color 0.12s;
+    }
+    .basemap-swatch, .basemap-swatch svg {
+      display: block;
+      width:   100%;
+      height:  100%;
+    }
+    .basemap-swatch { border-radius: 3.5px; overflow: hidden; }
+    .basemap-opt:hover    { opacity: 1; border-color: var(--gold-dim); }
+    /* The active one is simply the bright, ringed one — no tick, no label. */
+    .basemap-opt.active   { opacity: 1; border-color: var(--gold);
+                            box-shadow: 0 0 0 1px rgba(200,169,110,0.35); }
+    .basemap-opt:disabled { cursor: not-allowed; }
+
+    /* Phones: shrink rather than hide — the picker is the only way to change
+       basemap now that the Settings pulldown is gone. */
+    @media (max-width: 899px) {
+      .basemap-opt { width: 2.15rem; height: 2.15rem; }
+    }
 
     /* Terrain-shadow time scrubber — flush full-width bar at the bottom. Left:
        selected date/time on two lines. Right: a ruler whose strip slides past a
@@ -1159,8 +1225,8 @@
     .instructions-ornament {
       margin:         1.4rem 0 1.1rem;
       text-align:     center;
-      color:          var(--gold-dim);
-      font-size:      0.8rem;
+      color:          var(--gold);
+      font-size:      0.95rem;
       letter-spacing: 0.35em;
       line-height:    1;
       user-select:    none;
