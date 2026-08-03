@@ -14,15 +14,11 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-07-28 — **Terrain-shadow module WIRED INTO THE APP and finished**
-(BUILD `2026-07-27r`; full detail in HANDOFF §4). New file `js/shadow-ui.js` owns the
-integration: on-map toggle, ruler scrubber, three-way time sync (SUNTRACK + contact
-rows + Rise/Set), location-aware max time, Settings shadow-strength, online-only
-gating, and the Mercator-flip + supersampling machinery. Also restored the
-never-ported basemap picker (`_scSetBasemap`/`_scRecenter`) and fixed a latent
-listener-stacking bug in `map.js`. Shadow work is CLOSED. What's newly open: the
-**observer-pin cluster (#P1)** and **paths-through-the-planet (#P2)** below, both
-deck.gl draw-order/occlusion issues surfaced (not caused) during the shadow work.
+Last touched: 2026-07-29 — basemap/connectivity rewrite (one raster style, live
+online/offline swap, on-map basemap picker) + non-central eclipse durations shipped
+(full detail HANDOFF §13). Pin cluster (#P1: draw order, zoom drift, tip anchor, commit
+f25ff90/HANDOFF §13.6) and paths-through-the-planet (#P2) both resolved — the whole
+deck.gl draw-order/occlusion batch from the 2026-07-28 shadow work is now closed.
 
 Prior note (2026-07-11): Cesium migration landed and mobile offline works; map.js
 consolidated to one `PROFILE`. (Superseded — the app reverted to MapLibre; see
@@ -34,45 +30,20 @@ HANDOFF §2. Kept for history.)
 *(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. Terrain
 shadows are DONE and wired in (HANDOFF §4). Priorities are the USER's to set — this is a
 suggestion.)*
-1. **Observer-pin cluster (#P1) + paths-through-the-planet (#P2)** — visible map bugs, see
-   "OPEN BUGS — MAP (deck.gl draw order / globe occlusion)" below. Batch them; likely one
-   root cause. #P2 was fixed once before (regression).
-2. **Mercator/globe toggle in Settings** — new, small (the shadow feature already flips
-   projection via `map.setProjection`; expose a user preference). See OPEN — UI / COPY.
-3. **Label-free basemaps + our own labels** — one change that fixes the truncated tile labels
-   ("MAD"/"LON"), the patchy per-tile detail, AND placename language. See OPEN — UI / COPY.
-4. **Full-catalog audit — the pre-ship GATE** (see PRE-SHIP GATE). The real blocker to shipping;
-   the 2028/2041 regression proved spot-checks insufficient.
-5. **On-map control strip** (basemap / clouds / shadows) — decide the model before building; it
-   likely makes the desktop Map panel redundant. *Partly realized already: shadows now have an
-   on-map toggle button; use it as the pattern.*
-6. **Search temporal tokens** — needs a design decision before any code.
-7. **Mobile UX / layout pass** (interdependent — one sitting).
-8. Remaining open bugs → UX deliberations → Features.
+1. **Full-catalog audit — the pre-ship GATE** (see PRE-SHIP GATE below). Build all ~11,898
+   eclipses and flag central eclipses with empty/stub umbra limbs, gross limb asymmetry, or
+   wild interior turns — a systematic sweep, because the 2028/2041 regressions proved
+   spot-checks miss things. The real blocker to shipping.
+2. **Search temporal tokens** — needs a design decision before any code (low priority; not
+   currently bothering the user).
+3. Remaining open bugs → UX deliberations → Features.
 
 ---
 
 ## OPEN BUGS — MAP (deck.gl draw order / globe occlusion)
-*(All surfaced during the 2026-07-28 shadow session; none caused by it. Terse status is in
-HANDOFF §11; candidate-fix detail lives here.)*
-
-- **#P1 observer pin — three issues, batch them (likely shared root cause):**
-  - (a) **pin renders BEHIND the eclipse path** — deck.gl draws the path over the marker.
-    Candidate: marker vs deck-layer ordering / depth; the pin may be a deck layer that needs to
-    sit above the path layers, or a maplibre marker whose stacking vs the deck overlay is wrong.
-  - (b) **pin drifts to the top-left corner while zooming the globe, then snaps back** on settle
-    — the marker's globe reprojection lags the camera transform mid-gesture. Candidate: it's a
-    per-frame-positioned element not following MapLibre's globe transform during the zoom; check
-    how the pin is projected vs. a native MapLibre `Marker` (which reprojects correctly on globe).
-  - (c) **pin tip is not exactly on the location dot** — anchor/offset error. The pin artwork's
-    tip must land on the coordinate at all zooms (this was a stated invariant — see PARITY
-    checklist "Pin tip lands on the exact coordinate at all zooms"). Fix the anchor.
-- **#P2 eclipse paths visible THROUGH the far edge of the planet** (globe backface). Path lines
-  on the hemisphere facing away from the camera show through the limb. **Fixed once before —
-  regression; find the prior fix.** Same family as #R1 (city labels fade through the globe) and
-  the STANDING RULE example about paths lifted off the ground / `depthFailMaterial` (that was
-  the Cesium fix; on MapLibre+deck.gl the equivalent is deck depth-test / horizon culling — name
-  the deck.gl parameter before hand-rolling).
+*(Both #P1 and #P2 from this batch are now resolved — #P1 by commit f25ff90/HANDOFF §13.6,
+#P2 confirmed fixed by user 2026-08-04. Nothing open in this batch; #R1 (city labels fading
+through the globe on spin) is a separate, still-open polish item — see HANDOFF §11.)*
 
 ---
 
@@ -80,13 +51,11 @@ HANDOFF §11; candidate-fix detail lives here.)*
 - **Limb not perfectly round** — the globe silhouette shows slight facets at grazing angle
   (ellipsoid tessellation). Only improvable with finer globe geometry (lower
   `maximumScreenSpaceError`) at a memory cost. Low priority; decide if worth it.
-- **Raster sharpness ceiling.** NE2 is 4096x2048 (9.8 km/px) via SingleTileImageryProvider, so it
-  is soft below ~300 km views. 8192x4096 would be ~134 MB of GPU texture — a 4x jump on the very
-  platform we fought an OOM on, so DO NOT just swap the image. The right answer is a **tile
-  pyramid** (only visible tiles resident). Revisit only if the softness actually bothers you in
-  the field.
-- **Biome-blob basemap (optional style).** Posterizing NE2 to a few flat colours gives
-  forest/desert/tundra blobs at the same texture cost. A style choice, parked.
+- **Raster sharpness ceiling.** NE2 is now `ne2_mercator.jpg`, 4096x4096 (Web Mercator, not the
+  old 4096x2048 equirect — see HANDOFF §13.2), so it's sharper than before but still soft at
+  close-in views. 8192x8192 would be a large GPU-texture jump on the platform we fought an OOM
+  on, so DO NOT just swap the image. The right answer is a **tile pyramid** (only visible tiles
+  resident). Revisit only if the softness actually bothers you in the field.
 - **Thunderforest Landscape basemap** — needs an **API key**, which for a static PWA must sit in
   client-side code where anyone can read it. Same for Stadia/Stamen and Mapbox. Decide whether
   that's acceptable. Free/no-key providers already ship in the Settings picker (Esri x5,
@@ -117,43 +86,10 @@ actually clears · landscape space reclaim · mobile install note · banner slim
 
 ## OPEN — UI / COPY
 
-- **Truncated basemap labels ("MAD" for Madrid, "LON" for London) + patchy detail (western US
-  loses its states).** DIAGNOSED, not fixed. These labels are **baked into the raster tiles**. On a
-  globe, the renderer requests a different LOD per tile depending on distance from the camera, so
-  a word spanning a tile boundary can straddle two DIFFERENT zoom levels and get cut; and areas
-  further round the curve are served coarser tiles, losing their detail. **Inherent to any raster
-  basemap
-  with pre-rendered labels on a 3D globe — no tuning fixes it.**
-  **The proper fix:** switch to **label-free base tiles** (Esri publishes Light Gray *Base* and
-  Imagery without labels — that's what its separate "Reference" overlays are for) and render the
-  labels OURSELVES. Our vector city labels are already LOD-independent and correctly
-  horizon-culled; they're merely hidden while online. This would also make labels consistent
-  across every basemap and give us control over language (see below). Worth doing properly.
-
-- **OpenStreetMap shows local-language placenames** (Москва, 北京). There is **no free English-only
-  OSM raster** — the standard tiles are baked with local names, and that's a property of the tile
-  images, not something a client can override. Options: (a) accept it; (b) use Esri's tiles, which
-  are largely English; (c) the real answer — go label-free + draw our own labels (above), where we
-  control the language entirely. Keyed vector providers (MapTiler etc.) can do English-only, but
-  need an API key.
-
-- **Where do map options belong?** Currently in Settings; the desktop **Map panel does nothing**.
-  Guy's thought: put a discreet **street / topo / satellite toggle on the map itself** (a real win
-  on mobile), and later small toggles for **clouds** and **shadows** — which would make the Map
-  panel redundant on desktop. Decide the model before building: an on-map control strip is the
-  natural home for layer toggles, and it scales to the coming overlays. *Status update (2026-07-28):
-  the **Settings basemap picker now works** — it was silently dead on the maplibre branch
-  (`_scSetBasemap`/`_scRecenter` were never ported from the Cesium version; restored this session,
-  with a live raster/vector `setStyle` swap). Shadows already have an on-map toggle button — the
-  first piece of the control strip.*
-
-- **Mercator / globe projection toggle (NEW, 2026-07-28).** Add a Settings preference to choose
-  the map projection. The shadow feature already flips projection at runtime
-  (`map.setProjection({type:'mercator'|'globe'})` — it forces Mercator while shadows show, because
-  the shadow engine is Mercator-only; see HANDOFF §4), so the mechanism exists. The toggle must
-  **cooperate** with that: the user's choice is the *resting* projection, but shadows still force
-  Mercator while showing and restore the user's choice (not hard-coded globe) when hidden. Small,
-  but wire the interaction deliberately so the two don't fight.
+- **Where do map options belong? — MOSTLY DECIDED, shipped 2026-07-29.** On-map controls now
+  exist: basemap picker top-right (Street/Topo/Sat), shadow/cloud toggles top-left (HANDOFF
+  §13.3). Desktop Map sub-tab still holds only the force-offline toggle — decide if that's worth
+  folding into the on-map strip too, or leave it.
 
 - **Should HYBRID eclipses match a search for "total"?** They ARE total along part of their path
   (569 of 11,898). Arguments: a chaser searching "total" near a location would want a hybrid that
@@ -163,9 +99,9 @@ actually clears · landscape space reclaim · mobile install note · banner slim
   guess — it changes what the app claims.**
 
 - **Search temporal tokens — open-ended *backward* ranges are useless (the "1999-" / "now-"
-  problem). NEEDS A DESIGN DECISION — do not code yet.** Today a trailing-dash range like
-  `1999-` lists ascending from the catalog's START (year ~1 or earlier), so the user drowns in
-  ancient eclipses and never reaches 1999. **Constraint from Guy: the list must ALWAYS read the
+  problem). NEEDS A DESIGN DECISION — do not code yet. Low priority.** Today a trailing-dash range
+  like `1999-` lists ascending from the catalog's START (year ~1 or earlier), so the user drowns
+  in ancient eclipses and never reaches 1999. **Constraint from Guy: the list must ALWAYS read the
   same direction — no query-dependent sort flipping.** So the fix is NOT "sort descending for
   backward ranges." Open options to weigh (consult before implementing):
     (a) Auto-scroll/jump the list to the anchor year so the relevant region is on screen, while
@@ -190,16 +126,7 @@ actually clears · landscape space reclaim · mobile install note · banner slim
 
 ---
 
-## MOBILE UX / LAYOUT PASS (interdependent — one sitting)
-- (a) Banner + tabs permanent, immobile, unscalable on mobile/PWA (pairs with #R5 pinch-zoom
-  — don't scroll away or zoom); (b) move tabs to screen BOTTOM on mobile/PWA for thumb reach;
-  (c) single-line date/duration bar pinned at the bottom on mobile (overlaps "date label hard
-  to see" + the map-click microsheet); (d) map-tab mobile-vs-desktop disambiguation — SEE the
-  "Where do map options belong?" item under OPEN — UI / COPY: the likely answer is an on-map
-  control strip (basemap / clouds / shadows), which would make the desktop Map panel redundant.
-- **Mobile map-click microsheet** — with no sidebar on mobile, a map click gives no inline
-  "this is what changed." Add a small dismissable bottom-of-map sheet showing at least umbral
-  duration for the clicked point.
+---
 
 ---
 
@@ -229,16 +156,16 @@ MapLibre equivalent; do not port them to `map.js`.
   solved by the engine rather than by hand.
 
 *(The live MapLibre renderer has its own equivalents — e.g. globe occlusion via
-`map.transform.isLocationOccluded`, see HANDOFF §8.4. #P2 and #R1 are the open occlusion items on
-the live app.)*
+`map.transform.isLocationOccluded`, see HANDOFF §8.4. #P2 is now fixed; #R1 (city labels
+fading through the globe) is the remaining open occlusion item on the live app.)*
 
 ---
 
 ## ⛔ DO NOT DO (verified traps — recorded so they aren't re-attempted)
 *(Some traps below name **Cesium** primitives — `CLAMP_TO_GROUND`, `depthFailMaterial`,
 order-independent translucency. Those apply to the dormant `cesium` branch only; the live
-MapLibre+deck.gl app can't hit them, but the equivalent occlusion/depth question is real there —
-see #P2. The data-key and safety-rail traps are renderer-agnostic.)*
+MapLibre+deck.gl app can't hit them; the equivalent occlusion/depth question (#P2) is now fixed.
+The data-key and safety-rail traps are renderer-agnostic.)*
 - **Do NOT rename the `ep.centreline` DATA KEY → `centerline`.** Internal JSON key emitted by
   the generator and read by `map.js` (plus the layer id) — distinct from the visible label.
   Renaming requires changing generator output, regenerating EVERY path file, and changing the
@@ -279,24 +206,7 @@ generalizes that into a saved, catalog-wide report.
 
 ---
 
-## MAP — remaining path/oval correctness (not cosmetic)
-- **Pole-encircling umbra-oval fills.** The pole-encircling ring was SKIPPED on the old renderer.
-  On the **live MapLibre + deck.gl** renderer this is the **#R3 "onion ring"** problem —
-  `SolidPolygonLayer` mis-triangulates polar polygons, so the fill is currently disabled for the
-  corridor (ovals still fill). Verify polar-cap ovals (e.g. Jan 2094) and decide per #R3.
-  (On the dormant `cesium` branch the ellipsoid fills natively, so the ring works there — a
-  genuine behavioural difference between the branches, not a bug to chase on both.)
-- **Cosmetic terminus-join kinks** — 1533 / 1563 / 1587 (small joins); **1522** is a bumpy
-  mid-latitude grazer (γ +0.995) — livable. Low priority polish.
-
----
-
 ## BUGS — open (detail; status in handoff)
-- **Residual terminus polish (low priority — rare, cosmetic, NOT a regen blocker).** Only the
-  grazing hybrid remains: 1986-10-03 (γ=+0.993) traces but the totality corridor is so tiny
-  (~22 pts) it renders kinked. Candidate fix: densify the cone trace when a limb returns under
-  ~40 pts. Gentle-tip decliners fall to the envelope but it is SMOOTH at gentle tips, so those
-  are harmless.
 - **Penumbra threshold offset (low priority — user accepts "close").** Our penumbra limit
   sits ~7–10 km INSIDE Jubier's, asymmetric N/S. NOT a single term (dropping the cone-narrowing
   term fixes north, worsens south) — suggests a direction-dependent (refraction/limb) term. The
@@ -306,11 +216,8 @@ generalizes that into a saved, catalog-wide report.
 - **#R5 iOS pinch-zoom not blocked.** `user-scalable=no` is deliberately ignored by iOS Safari.
   Real fix: `touch-action: pan-y` on the scrollable panels (allows scroll, blocks pinch) while
   LEAVING the map container alone (the map needs pinch to zoom). Must test on a real iPhone.
-- **Locate-pin (📍, top-right of map).** Brave blocks geolocation by default. Also
-  `setStatus('Locating…')` writes to `#status-msg` in the Search tab → no visible feedback on
-  the Map tab. Needs map-context feedback.
 - **Safari geolocation fails; installed PWA works.** Check secure-context / permissions / Brave
-  default block vs the code path. Related to the locate-pin note.
+  default block vs the code path.
 - **Slow first load from local-disk server** — minutes vs seconds. *(Partly explained: every asset
   downloads TWICE on a build change — see PERFORMANCE / DATA. That is pre-existing and mostly
   served from disk cache in production (~11 s load, DOMContentLoaded ~950 ms), so profile the
@@ -326,13 +233,6 @@ generalizes that into a saved, catalog-wide report.
   inefficient.
 
 ---
-
-## OPEN UX QUESTIONS (deliberation; decide before coding)
-- **Probe backoff (agreed, not yet built).** The connectivity probe fires every 5 s forever — a
-  radio wake-up on mobile (battery, more than bytes). Negatives are already DEBOUNCED (2 consecutive
-  failures) so a single timeout can't flip the app. The agreed improvement: poll at 5 s for ~30 s
-  after any state change, then relax to 20–30 s while the state is stable. Fast detection when it
-  matters, near-zero cost otherwise. Contained: one timer, no change to the detection logic.
 
 ---
 
@@ -391,8 +291,18 @@ generalizes that into a saved, catalog-wide report.
   that scrubs *terrain* shadows at one place; #F3 animates the *umbra/penumbra footprint*
   sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
   clean precedent for the time-plumbing.
-- **#F1 Personal "ShadowChaser log"** — eclipses visited / wishlist; schema, localStorage (or
-  future sync), UI in list/details, "been there" vs "want to go", merge with selection state.
+- **#F1 Personal "ShadowChaser log" — SPEC'D (2026-08-04), user has multi-map code already.**
+  - **User panel** replaces the (currently near-empty) desktop Map sub-tab: a list of saved
+    eclipses, each tagged **Seen** / **Saved**, each with an optional attached location (so a
+    saved eclipse can carry its own observing site, distinct from the app's single active pin).
+  - **Save button** on the Details page, next to the existing Share button — the write entry
+    point into the log.
+  - **Custom multi-map output** — from the saved list, checkbox-select a subset and generate a
+    combined multi-eclipse map. User already has the code for this piece; needs wiring in, not
+    building from scratch.
+  - Still open: storage schema (localStorage vs future sync — ties into the merge-with-selection-
+    state question already on the ledger), and whether "Seen"/"Saved" are the only two tags or
+    there's a wishlist tier too.
 
 ---
 
@@ -466,9 +376,10 @@ generalizes that into a saved, catalog-wide report.
     Also `sunArrowImage()` is now unused (billboard arrow replaced by surface geometry) —
     remove in the next map.js cleanup pass.
   - `AppState.on()` exists but has no subscribers — wire only when a feature demands it.
-  - **Connectivity state** — now a real subsystem: active probe (3 s timeout, cache-busted, 5 s
-    interval), debounced negatives, `_forceOffline`, and `applyOnlineState()` driving imagery,
-    vectors and the pole filler. It has outgrown being scattered in `map.js`. A *second*
+  - **Connectivity state** — now a real subsystem (post 2026-07-29 rewrite): active probe (3 s
+    timeout, cache-busted, 15 s poll + event-driven, 3 s reprobe on failure), two-strike debounce,
+    `_forceOffline`, and `applyOnlineState()` driving imagery, vectors and the pole filler. Still
+    lives in `js/map.js`, not yet promoted to its own module. A *second*
     connectivity-dependent feature (cloud-cover #F2) is the trigger to promote it to a module
     with periodic re-probe + subscribers.
   - **Comment cleanup pass on map.js** — several build-to-build war-story comments could be

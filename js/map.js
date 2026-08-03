@@ -1351,6 +1351,23 @@ function densifySegment(seg) {
    setDeckLayers() is the single point of truth — call it with an array
    of deck.gl layer objects whenever the eclipse changes.               */
 
+/* THE one way to change projection. Every caller goes through here, because a
+   projection change must always be followed by re-pushing the deck.gl layers:
+   the overlay latches the projection it last saw, and a globe→mercator→globe
+   round trip (which is exactly what arming shadows and zooming back out does)
+   otherwise leaves it drawing without far-side culling — eclipse paths visible
+   straight through the planet. Re-pushing forces a fresh viewport read.
+   Same failure mode that `setStyle` used to cause; see HANDOFF §13.1. */
+function setMapProjection(type) {
+  if (!map || !map.setProjection) return;
+  try {
+    if (map.getProjection && map.getProjection().type === type) return;
+    map.setProjection({ type: type });
+  } catch (e) { return; }
+  /* Clone the array so deck.gl sees a new reference and re-reads the viewport. */
+  if (deckOverlay && _deckLayers) setDeckLayers(_deckLayers.slice());
+}
+
 function setDeckLayers(layers) {
   _deckLayers = layers;
   if (deckOverlay) {

@@ -301,7 +301,7 @@ function disableShadows() {
   _shadowShowing = false;
   _detachShadowZoom();
   try { if (map && map.getLayer && map.getLayer('shadow')) map.removeLayer('shadow'); } catch (e) {}
-  try { if (map) map.setProjection({ type: 'globe' }); } catch (e) {}
+  setMapProjection('globe');
   _shadowLayer  = null;
   _shadowWin    = null;
   _shadowWinKey = null;
@@ -322,7 +322,7 @@ function updateShadowVisibility() {
 }
 
 function _showShadowNow() {
-  try { map.setProjection({ type: 'mercator' }); } catch (e) {}
+  setMapProjection('mercator');
   if (!_shadowWin) {                        /* window still loading — defer */
     computeShadowWindow(selectedEntry).then(function (win) {
       if (!_shadowArmed || !win) return;
@@ -346,7 +346,7 @@ function _showShadowNow() {
    the user zooms back in. */
 function _hideShadowKeepArmed(mode) {
   try { if (map && map.getLayer && map.getLayer('shadow')) map.removeLayer('shadow'); } catch (e) {}
-  try { if (map && map.getProjection && map.getProjection().type !== 'globe') map.setProjection({ type: 'globe' }); } catch (e) {}
+  setMapProjection('globe');
   _shadowShowing = false;
   _renderTimeline(mode || 'off');
 }
@@ -365,7 +365,7 @@ function _attachShadowZoom() {
     _shadowStyleHooked = true;
     map.on('style.load', function () {
       if (!_shadowShowing) return;
-      try { map.setProjection({ type: 'mercator' }); } catch (e) {}
+      setMapProjection('mercator');
       _makeShadowLayer(_shadowWin ? _shadowWin.curms : Date.now());
       try { if (!map.getLayer('shadow')) map.addLayer(_shadowLayer); } catch (e) {}
       if (_shadowWin) setShadowTime(_shadowWin.curms);
