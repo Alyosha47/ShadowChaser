@@ -157,16 +157,25 @@ function renderData(rec, _tz, _lat, _lon) {
     var durType = (res.type === 'hybrid' && res.localPhase) ? res.localPhase : res.type;
     var lbl = typeName(durType[0].toUpperCase());
 
-    html +=
-      '<table class="detail-table"><tbody>'
+    /* Order: Contact Times → Sun Track → Local Circumstances → Global.
+       The times and the track are what a chaser acts on, so they lead; the
+       summary figures are a recap and sit against the global ones they invite
+       comparison with. Having moved out of the opening position, the summary
+       now needs its own heading like every other section. */
+    var localSummary =
+      /* "Summary", not "Local Circumstances" — that heading is already above,
+         covering this whole block (location line, contacts, track and this). */
+      '<div class="detail-section-h">Summary</div>'
+    + '<table class="detail-table"><tbody>'
     +   (res.durCentral ? row('Duration (' + lbl.toLowerCase() + ')', fmtDur(res.durCentral)) : '')
     +   (res.durPartial ? row('Partial duration', fmtDur(res.durPartial)) : '')
     +   row('Magnitude',           res.mag.toFixed(4))
     +   row('Obscuration',         res.osc.toFixed(1) + '%')
     +   row('Sun alt / az at max', fmtAng(res.sun.alt) + ' / ' + fmtAng(res.sun.az))
-    + '</tbody></table>'
+    + '</tbody></table>';
 
-    + '<div class="detail-section-h">Contact Times</div>'
+    html +=
+      '<div class="detail-section-h">Contact Times</div>'
     + '<table class="contacts-table"><thead><tr>'
     + '<th>Event</th>'
     + '<th class="time-mode-toggle" onclick="setTimeMode(\''
@@ -189,7 +198,8 @@ function renderData(rec, _tz, _lat, _lon) {
     + '</div>'
 
     + '<div class="detail-section-h">Sun Track</div>'
-    + '<div id="suntrack"></div>';
+    + '<div id="suntrack"></div>'
+    + localSummary;
   }
 
   /* ── Global Circumstances (reference data — least actionable, so last) ── */

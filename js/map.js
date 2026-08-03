@@ -7,7 +7,6 @@ var pathCache      = {};
    observer location and may be cleared independently when the user clicks. */
 var mapMarkers     = [];
 var pathMarkers    = [];
-var currentPathKey = null;
 var deckOverlay = null; /* deck.gl MapboxOverlay */
 var _deckLayers = null; /* last layers array pushed to the overlay */
 
@@ -79,7 +78,6 @@ var BASEMAPS = {
    BASEMAPS still holds the others — they are simply no longer exposed, now that
    the Settings pulldown is gone. */
 var PICKER_KEYS  = ['esri_street', 'opentopo', 'esri_imagery'];
-var PICKER_LABEL = { esri_street: 'Street', opentopo: 'Topo', esri_imagery: 'Sat' };
 
 /* Swatches: small hand-drawn map fragments, not photographs and not icons.
    Live provider tiles were tried first — at 44px a zoomed-out topo tile and a
@@ -626,7 +624,11 @@ function applyOnlineState() {
   renderBasemapPicker();
 }
 
-/* Settings → "force offline". Routed through applyOnlineState rather than a full
+/* Force offline. No longer has a UI control — connectivity is detected
+   automatically — but kept as a console hook for testing the offline path:
+   `forceOfflineMap(true)`. Removing it would also strip _forceOffline from
+   isOffline(), so it stays.
+   Formerly Settings → "force offline". Routed through applyOnlineState rather than a full
    initMap() teardown, so the camera, markers and layers survive the flip and a
    forced switch takes exactly the same path as a real one. */
 function forceOfflineMap(on) {
@@ -765,7 +767,22 @@ function createMap(style) {
     }
   });
 
+  /* A click that merely brings the window to the front should NOT drop a pin.
+     The browser gives no flag for this, but the timing is unambiguous: when a
+     click focuses a background window, the `focus` event fires in the same
+     gesture as the mousedown that caused it. So a click arriving within a few
+     frames of regaining focus is a focus-restoring click and nothing more.
+     Alt-tabbing back and then deliberately clicking is well outside the window,
+     so intentional clicks are never swallowed. */
+  var _focusAt = 0;
+  var REFOCUS_GRACE_MS = 300;
+  window.addEventListener('focus', function () { _focusAt = Date.now(); });
+
   map.on('click', function (e) {
+    if (Date.now() - _focusAt < REFOCUS_GRACE_MS) {
+      _focusAt = 0;      /* consume it — the next click is a real one */
+      return;
+    }
     /* In globe mode a click in empty space still returns a lngLat clamped to the
        globe's edge (the "nearest spot on land" snap). Detect that by re-projecting
        the returned lngLat back to screen: an ON-globe click round-trips to the
@@ -1344,16 +1361,18 @@ function setDeckLayers(layers) {
   }
 }
 
-/* Toggle just the umbra-ovals layer's visibility when zoom crosses
-   OVAL_HIDE_ZOOM. deck.gl diffs layers by reference, so we clone that one layer
-   with the new `visible` value into a fresh array and re-push. Markers are
-   MapLibre objects, not deck layers, so they are untouched. */
+/* Toggle the umbra-oval layers' visibility when zoom crosses OVAL_HIDE_ZOOM.
+   deck.gl diffs layers by reference, so we clone the affected layers with the
+   new `visible` value into a fresh array and re-push. Matched by id PREFIX,
+   because the ovals are drawn as two layers — a fill and an outline — which
+   must appear and disappear together. Markers are MapLibre objects, not deck
+   layers, so they are untouched. */
 function updateOvalVisibility() {
   if (!deckOverlay || !_deckLayers) return;
   var vis = map.getZoom() < OVAL_HIDE_ZOOM;
   var changed = false;
   var next = _deckLayers.map(function (L) {
-    if (L && L.id === 'umbra-ovals' && L.props.visible !== vis) {
+    if (L && L.id.indexOf('umbra-ovals') === 0 && L.props.visible !== vis) {
       changed = true;
       return L.clone({ visible: vis });
     }
@@ -1415,43 +1434,6 @@ function segsToPathData(segs, id) {
     if (!seg || seg.length < 2) return null;
     return { id: id + '_' + i, path: wrapContinuous(densifySegment(seg)) };
   }).filter(Boolean);
-}
-
-/* Build corridor polygon data from two edge arrays for SolidPolygonLayer.
-   Uses arc-length parameterization to pair vertices correctly. */
-function corridorToPolygonData(nSegs, sSegs, id) {
-  if (!nSegs||!sSegs||!nSegs.length||!sSegs.length) return [];
-  var north = densifySegment(nSegs[0]);
-  var south = densifySegment(sSegs[0]);
-  if (!north||!north.length||!south||!south.length) return [];
-
-  function arcLengthParams(edge) {
-    var dists=[0];
-    for(var i=1;i<edge.length;i++){
-      var p0=edge[i-1],p1=edge[i];
-      dists.push(dists[i-1]+gcDistance(p0[0],p0[1],p1[0],p1[1]));
-    }
-    var total=dists[dists.length-1];
-    return dists.map(function(d){return total>0?d/total:0;});
-  }
-
-  var np=arcLengthParams(north), sp=arcLengthParams(south);
-  function resampleByParam(edge,srcP,tgtP){
-    var out=[],si=0;
-    for(var i=0;i<tgtP.length;i++){
-      var t=tgtP[i];
-      while(si<srcP.length-2&&srcP[si+1]<t)si++;
-      var t0=srcP[si],t1=srcP[si+1]||t0,f=t1>t0?(t-t0)/(t1-t0):0;
-      var a=edge[si],b=edge[Math.min(si+1,edge.length-1)];
-      out.push([a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f]);
-    }
-    return out;
-  }
-
-  var southR = resampleByParam(south, sp, np);
-  /* Closed ring: north forward + south reversed, longitude-continuous. */
-  var ring = wrapContinuous(north.concat(southR.slice().reverse()));
-  return [{ id: id, polygon: ring }];
 }
 
 
@@ -1526,7 +1508,11 @@ function drawEclipsePath(ep) {
        out of step with the umbra path they belong to. */
     var ovalBase = /[TH]/.test(ep.type||'') ? PAL.umbraTotal : PAL.umbraAnnfmt;
     var ovalFill = ovalBase.concat([PAL.ovalFillAlpha]);
-    var ovalLine = ovalBase.map(function (c) { return Math.min(255, c + 45); }).concat([200]);
+    /* On a dark base the outline is the only thing drawn, so it is brightened
+       and fully opaque; over a light fill it stays a quiet edge. */
+    var ovalLine = PAL.ovalFillAlpha > 0
+      ? ovalBase.map(function (c) { return Math.min(255, c + 45); }).concat([200])
+      : ovalBase.concat([255]);
     var ovalData = ep.umbra_ovals
       .filter(function(r) { return r && r.length >= 3; })
       .map(function(r, i) {
@@ -1543,16 +1529,33 @@ function drawEclipsePath(ep) {
         return Math.abs(p[p.length-1][0] - p[0][0]) <= 270;
       });
     if (ovalData.length) {
-      layers.push(new DeckGL.SolidPolygonLayer({
-        id:                 'umbra-ovals',
-        data:               ovalData,
-        visible:            map.getZoom() < OVAL_HIDE_ZOOM,
-        getPolygon:         function(d) { return d.polygon; },
-        getFillColor:       ovalFill,
-        getLineColor:       ovalLine,
-        stroked:            true,
-        filled:             PAL.ovalFillAlpha > 0,   /* outline-only on dark bases */
-        lineWidthMinPixels: 1,
+      /* SolidPolygonLayer FILLS ONLY — it has no stroke. (`stroked` and
+         `getLineColor` live on PolygonLayer and were silently ignored here, so
+         the ovals never actually had an outline.) The outline is therefore its
+         own PathLayer, matching how every other path in this file is drawn.
+         Both carry the same id prefix so updateOvalVisibility toggles them as
+         one. On a dark base the fill is dropped and only the outline remains. */
+      if (PAL.ovalFillAlpha > 0) {
+        layers.push(new DeckGL.SolidPolygonLayer({
+          id:           'umbra-ovals',
+          data:         ovalData,
+          visible:      map.getZoom() < OVAL_HIDE_ZOOM,
+          getPolygon:   function(d) { return d.polygon; },
+          getFillColor: ovalFill,
+          filled:       true,
+        }));
+      }
+      layers.push(new DeckGL.PathLayer({
+        id:              'umbra-ovals-outline',
+        data:            ovalData,
+        visible:         map.getZoom() < OVAL_HIDE_ZOOM,
+        /* Close the ring: ovalData strips the duplicated last point for the
+           fill's triangulation, but an open path would leave a visible gap. */
+        getPath:         function(d) { return d.polygon.concat([d.polygon[0]]); },
+        getColor:        ovalLine,
+        getWidth:        1.2,
+        widthUnits:      'pixels',
+        widthMinPixels:  1,
       }));
     }
   }

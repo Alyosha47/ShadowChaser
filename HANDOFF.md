@@ -1,4 +1,5 @@
-# ShadowChaser — HANDOFF (consolidated 2026-07-19; §4 terrain shadows WIRED IN 2026-07-28)
+# ShadowChaser — HANDOFF (consolidated 2026-07-19; §4 terrain shadows WIRED IN 2026-07-28;
+#   §13 basemap/connectivity rewrite + non-central durations 2026-07-29)
 
 Single authoritative status + knowledge document. Supersedes all prior HANDOFF versions and
 the 2026-07-18 correction block. `TODO.md` owns durable task detail; this file owns status,
@@ -62,17 +63,26 @@ project's history.
 
 ## 3. LOOSE ENDS — OPEN, RECORDED NOWHERE ELSE
 
-1. **Dead shademap code with a live key in `js/map.js`.** Wired up before the decision to
-   build our own raymarch. Inert (off by default, fails soft if the library is absent) but
-   it is dead code carrying an API key. **Recommend deleting** `SHADEMAP_KEY`,
-   `initShadeMap`, `setShadeDate`, `setShadeVisible`, `toggleShade`, `isPositionInSun`, and
-   the `vendor/shademap.umd.min.js` script tag in `index.html`. The key is localhost-only;
-   shademap quoted **$25/month** for custom domains, which is why we built our own.
-2. **`addPin` gap — UNRESOLVED.** The Cesium renderer exposed `addPin`; the MapLibre
-   renderer does not, and ~3 call sites elsewhere in the app call it. Verify whether this is
-   actually breaking anything, then reconcile.
+1. ~~Dead shademap code with a live key.~~ **RESOLVED — verified gone 2026-07-29.** No
+   `SHADEMAP_KEY`, `initShadeMap`, `toggleShade` etc. anywhere in `js/`, and no
+   `vendor/shademap.umd.min.js`. Only comment mentions remain in `shadow-layer.js` and
+   `spikes/`, which are legitimate history. **This entry was stale; do not go looking.**
+2. **`addPin` gap — still unverified.** The Cesium renderer exposed `addPin`; the MapLibre
+   renderer does not. Not investigated in the 2026-07-29 session.
 3. **Cesium ion token is committed** in the spike files. Restrict it to
    `followtheshadow.com` in the ion console before any public release, or rotate it.
+4. **Ross Ice Shelf seam (Antarctica) — OPEN, deliberately deferred.** A cut runs from the
+   coast to the pole and back. Long-standing; one of the reasons Cesium was tried.
+   Investigated 2026-07-29 far enough to rule out the obvious cause: the Antarctic ring has
+   8 points, 6 at lat −89.999, with the cut at lon −180, and **both** of `seamFreeLines`'
+   tests (seam and pole) should already catch it. So the artefact is very likely the
+   globe-projection **fill**, not the stroked outline — `seamFreeLines` rebuilds outlines
+   only and explicitly leaves fill alone. Different mechanism, real work. User can live
+   with it.
+5. **`data/basemap/ne2.jpg` is now unreferenced** — superseded by `ne2_mercator.jpg`
+   (see §13.2). Safe to delete.
+6. **The dead `MAP_JS_BUILD` guard.** `index.html` tests `window.MAP_JS_BUILD` to warn about
+   a stale `map.js`, but nothing ever sets it, so the warning can never fire. Harmless.
 
 ### Standard regression test for any shadow/sun work
 Eclipse **2026-08-12**, observer **41.9851°N, 3.4186°W**, greatest eclipse there
@@ -188,7 +198,8 @@ The module is fully integrated. All integration logic lives in a new file
 **`js/shadow-ui.js`** (~443 lines, the only new file); the engine `shadow-layer.js`
 gained a small, opt-in supersampling addition (below) and nothing else.
 
-**Pristine engine backup:** `shadow-layer.ORIGINAL.js` (repo root + delivered) is the
+**Pristine engine backup:** `js/shadow-layer.ORIGINAL.js` (in `js/`, NOT the repo root as
+earlier drafts of this doc claimed — verified 2026-07-29) is the
 byte-for-byte v64 engine as first committed (`ba1c20f`). The shipped
 `shadow-layer.js` differs from it by **supersampling only** — verified by diff.
 Keep it as the safety net; if a shadow change ever misbehaves, diff against it.
@@ -416,7 +427,7 @@ ShadowChaser/
 ├── DESIGN_SPEC_cesium_map.md   (pin / arrow / palette values — ported, still authoritative)
 ├── shadow-layer-README.md      (terrain-shadow engine API + integration notes)
 ├── shadow-layer-example.html   (minimal standalone wiring of the engine)
-├── shadow-layer.ORIGINAL.js    (pristine v64 engine backup; NOT loaded — safety net, see §4)
+│   └── shadow-layer.ORIGINAL.js  (pristine v64 engine backup; NOT loaded — in js/, see §4)
 ├── vendor/
 │   ├── maplibre-gl-csp-5.5.0.js + maplibre-gl-csp-worker-5.5.0.js   (official CSP build)
 │   ├── maplibre-gl-5.5.0.css
@@ -427,11 +438,13 @@ ShadowChaser/
 ├── icons/              (icon-192.png, icon-512.png — provisional glyph)
 ├── spikes/             (raymarch.html, dem_spike.html, sunmap.html, horizon3.html)
 ├── data/
-│   ├── basemap/        land / countries (antimeridian-split), lakes, rivers, cities  (.gz)
+│   ├── basemap/   (+ ne2_mercator.jpg — the offline relief, §13.2)        land / countries (antimeridian-split), lakes, rivers, cities  (.gz)
 │   │                   ocean.geojson.gz is ORPHANED — safe to delete
 │   ├── besselian/      per-century element records — SOURCE OF TRUTH, git-tracked
 │   └── paths/          generated *.json.gz corridors — NOT git-tracked (build artifacts)
 ├── data build tools/   gen_eclipse_paths.py — the canonical generator (+ dev scratch)
+├── tools/              noncentral_durations.py — non-central max durations (§13.5)
+├── docs/               GREATEST-DURATION.md — handoff for the all-eclipse version
 └── js/
     ├── cities.js       lookupCity, lazy index from basemapData.cities
     ├── details.js      renderData, buildContactRows, contactIcon, lookupElevationAndTz
@@ -852,3 +865,222 @@ Sans PBF is ~2–3 MB. CSS module split (only after a build step). `map.js` sing
 - `window.matchMedia('(min-width: 900px)')` chooses the initial map zoom (desktop vs mobile).
 - Vendored libs: version in the filename, **no** `?v=BUILD`.
 - Terrarium DEM tiles are cross-origin — they pass straight through the service worker.
+- **There is no `setStyle` in the codebase. Do not add one** (§13.1).
+- MapLibre layer zoom ranges are tested per **tile**; on a globe, on-screen tiles differ in
+  zoom. Use an opacity expression on `['zoom']` to switch things per frame (§13.3).
+- Latitude ±90 is infinity in Mercator — rings touching it silently fail to draw. Use
+  ±89.999. And never ring a pole in one polygon: split at longitude 0 (§13.2).
+- `SolidPolygonLayer` has no stroke; `stroked`/`getLineColor` are silently ignored (§13.4).
+- A MapLibre `image` source maps corners linearly in **Web Mercator** — feed it a
+  reprojected raster, not plate carrée (§13.2).
+- `pathPalette()` owns every path colour; basemaps declare `dark` (§13.4).
+- Low ΔT-era agreement in `noncentral_durations.py` is the ΔT upgrade working, not a bug.
+  Gate on the USNO rows (§13.5).
+- Don't set `position` on a MapLibre marker wrapper (§13.6).
+
+
+---
+
+## 13. BASEMAPS, CONNECTIVITY & NON-CENTRAL DURATIONS (2026-07-29)
+
+A day of polish that turned into two structural rewrites. Read 13.1 before touching
+anything to do with basemaps or online/offline — it undoes a lot of older advice.
+
+### 13.1 THERE IS NO `setStyle` ANYWHERE. KEEP IT THAT WAY.
+
+The style is built **once** and never replaced. It contains the local (offline) layers
+**and** the online basemap together. Going offline hides a layer; changing basemap
+retargets a source's tiles. Nothing rebuilds the style.
+
+This replaced four divergent `setStyle` call sites that each behaved differently
+depending on how they were reached. That divergence caused two bugs that looked
+unrelated and took several wrong patches to understand:
+
+- **Eclipse paths drawing through the globe.** A full style rebuild costs the deck.gl
+  overlay its globe state, after which it stops hiding far-side geometry. This is why it
+  appeared after an offline→online swap but never on a fresh load of the same style.
+- **A blank/black globe.** `setStyle` defaults to *diffing* old against new. Between two
+  raster basemaps that is fine; local↔online changes seven geojson sources, an image
+  source and the projection at once, and the differ left nothing rendering. Switching
+  basemap afterwards "fixed" it precisely because that was a diff it could handle.
+
+`diff: false` fixed the second and *caused* the first. Both failure modes are now gone by
+construction rather than by guard. **If you reintroduce `setStyle`, you reintroduce both.**
+
+Deleted, not disabled: `mountStyle()`, `_basemapStyle()`, `_localStyle`,
+`ONLINE_STYLE_URL`, and the OpenFreeMap tint block (which with a merged style would have
+recoloured our *own* layers).
+
+**The constraint that makes this possible: every offered basemap is RASTER.** Adding a
+vector style to `PICKER_KEYS` brings the whole swap problem back. Noted at `BASEMAPS`.
+
+Key functions in `js/map.js`:
+- `syncBasemapLayers()` — the single owner of both basemap layers' tiles, zoom ranges and
+  visibility. Called at startup, on connectivity change, and on basemap selection.
+- `applyOnlineState()` — decides *what* should be showing; delegates.
+- `probeConnectivity()` / `setOnline()` — ported from the cesium branch. 3 s timeout (an
+  offline fetch on iOS *hangs* rather than rejecting), cache-bust param (iOS ignores
+  `no-store` for `no-cors`), two-strike debounce on negatives (stops flapping during
+  service-worker precache). 15 s poll plus events; a first failure re-probes in 3 s, so a
+  real drop shows in ~3 s rather than 30.
+
+### 13.2 OFFLINE BASEMAP IS NOW NE2 RELIEF
+
+`data/basemap/ne2_mercator.jpg` (4096×4096). The old `ne2.jpg` was 4096×2048
+**equirectangular**, was precached but never actually mounted by the map, and could not be
+used as-is: a MapLibre `image` source maps its corners linearly in **Web Mercator**, so a
+plate-carrée image slides every latitude — mildly at the equator, grossly at the poles.
+
+Layer order: `land-fill → lakes → relief → coastline → borders → rivers → cities`. Fills
+sit *below* the relief deliberately, as a fallback if the image fails; lines sit above so
+they stay crisp. `lakes` is therefore invisible in normal operation — it and `land-fill`
+are a matched fallback pair; removing one leaves the fallback half-broken.
+
+**Polar caps.** Mercator is undefined at the poles, so the relief stops at ±85.0511° and
+you saw straight through. Capped in ice-white, with two traps hit on the way:
+- **Not ±90** — latitude 90 is infinity in Mercator; a ring touching it projects to
+  invalid geometry and the fill *silently fails to draw*. Use ±89.999. (`land.geojson`
+  uses the same value for Antarctica, for the same reason.)
+- **Two half-rings, split at longitude 0** — a single ring around a pole encloses the
+  antimeridian, and MapLibre cannot tell which side is interior, so it filled half the cap
+  and *which* half changed with rotation.
+
+**Coastline graticule.** `land.geojson` ships clipped to a 5° grid (3,350 polygons; 10% of
+its 83,008 vertices lie exactly on a 5° line). Extracting ring edges as coastline drew
+every internal cut — a graticule over every continent. `seamFreeLines(fc, dropShared)`
+now drops **duplicated** segments: an artificial cut is shared by the two cells either
+side and so appears twice, while real coastline appears once. Verified exactly: all 2,756
+duplicated segments lie on a 5° line, and the only grid-aligned singletons are at ±180,
+already handled. **`dropShared` must stay OFF for `countries`** — adjacent nations
+legitimately share 19,099 border segments, and dropping those erases every internal border.
+
+### 13.3 ON-MAP CONTROLS
+
+Basemap picker (top right) replaced the Settings pulldown, which is gone along with its
+handler in `tabs.js`. `_scSetBasemap()` remains the single entry point.
+
+- Three options: Street, Topo, Sat. `PICKER_KEYS` is the picker order.
+- **Default migrated to `esri_street`.** The old default `'osm'` named a vector style that
+  is no longer reachable; `_basemapKey()` resolves anything off the picker to
+  `esri_street`, so no stored key can leave the picker with nothing lit.
+- Swatches are inline SVG map fragments. Live provider tiles were tried first (Google's
+  approach — show the thing, not a metaphor) and **failed**: at 44 px a zoomed-out topo
+  tile is indistinguishable from a street tile. Text labels were also tried and rejected by
+  the user. Three iterations; don't re-litigate without reading this.
+- **Two-source basemaps.** Any `BASEMAPS` entry may carry `nearUrl`/`nearFrom`/`nearMax`/
+  `nearAttr`. Topo flies over **Esri Topographic** and lands on **OpenTopoMap at z9.5**.
+  OpenTopoMap is really two maps: saturated shaded relief at low zoom, then an abrupt
+  switch to a classic paper sheet at **9.45**. The paper sheet is the good part. 9.5 is
+  chosen to sit just past *their* break — a fact about a third party's cartography, so it
+  may move.
+- **The handover uses an OPACITY STEP on `['zoom']`, not layer zoom ranges.** MapLibre
+  tests a layer's zoom range against each **tile's** zoom, and on a globe the on-screen
+  tiles are not all at the same zoom — so range-based switching drew both maps at once, in
+  patches. `['zoom']` is one scalar for the frame. `step`, not `interpolate`: these are two
+  different cartographies and cross-fading looks like a fault. Zoom ranges are still set,
+  one level wider each side, purely to keep us off OpenTopoMap's servers at global zoom
+  (their usage policy asks).
+
+Overlay toggles (top left) are icon-only: `◐` shadows, `☁` cloud. **The cloud button is
+present but deliberately inert** — visibly disabled, not silently dead. Its block in
+`shadow-ui.js` is marked for wholesale replacement; id and CSS class are already right.
+A yin-yang was considered for shadows and rejected: `◐` is literally lit/unlit, and a hard
+circle beside a soft cloud separates at a glance where two round blobs would not.
+
+### 13.4 PATH COLOURS FOLLOW THE BASEMAP
+
+`pathPalette()` in `js/map.js` is the **single** definition of every path colour, read by
+all consumers — penumbra, umbra, centreline, green curve, and both umbra-oval colours.
+They were previously RGB literals at six scattered call sites, which is how they drifted.
+
+Each basemap declares its own tone via a `dark` flag in `BASEMAPS`; the palette never tests
+for particular keys. Satellite is the only dark one. Offline is always the light case (NE2
+is pale). Adding a basemap means adding one flag.
+
+**`SolidPolygonLayer` FILLS ONLY — it has no stroke.** `stroked` and `getLineColor` are
+`PolygonLayer` props and were being silently ignored, so the umbra ovals never had an
+outline on any basemap. The outline is now its own `PathLayer`, sharing the id prefix
+`umbra-ovals` so `updateOvalVisibility()` toggles fill and outline together at
+`OVAL_HIDE_ZOOM` (it matches on prefix — keep it that way). On dark bases the fill is
+dropped (`ovalFillAlpha: 0`, and `filled` follows it so deck.gl skips the pass entirely)
+and only the outline draws.
+
+### 13.5 NON-CENTRAL ECLIPSE DURATIONS — SHIPPED
+
+`tools/noncentral_durations.py` (stdlib only; run from the repo root). **Already run with
+`--write`; `data/index.json` is patched.** Re-running is safe and idempotent.
+
+94 eclipses have **no central line** — the shadow axis misses the Earth (|γ| > 1) while the
+cone's edge still clips the limb. Espenak's `central_duration` is *defined* on that line,
+so the canon records 0; Jubier shows 0 for the same reason. **Neither is in error** — the
+quantity doesn't exist. The script answers the different question, "how long is totality at
+its longest, anywhere?", by searching the surface using the app's own Besselian maths.
+
+*2 Nov 1967: 104.8 s at 62.699°S, 25.489°W — not zero.*
+
+Sparse fields on those 94 records only: `max_duration_secs`, `max_duration_lat`,
+`max_duration_lon`. `duration_secs` is **untouched** — Espenak's answer to a different
+question, and it stays attributable. Absence of the fields means "use the catalogue value",
+so `details.js:maxDurationRows()` is also the feature detector.
+
+**READ THIS BEFORE JUDGING THE VALIDATION OUTPUT.** PASS 1 compares us to Espenak grouped
+by ΔT source, and the low numbers are **not bugs** — they are this project's ΔT upgrade
+working:
+
+```
+USNO observed / predicted    87   100.0% within 1s   <- THE GATE (median 40 ms)
+Espenak-Meeus              3839    72.6%
+SMH2016 LOD extrapolation  1320    42.5%
+SMH2016 (ancient)           453     6.0%
+```
+
+Where ΔT was replaced we *should* disagree: his figure used the old ΔT. A ΔT difference
+rotates the Earth under the shadow, sliding the sample point off the central line, so the
+duration there collapses. Proof — restoring an offset recovers his value exactly
+(−947-11: 511.9 s vs our 93.8 s → 511.9 s at ΔT +1060 s). Within the Espenak-Meeus rows,
+agreement degrades monotonically with |ΔT| and nothing else: 100% below 38 s of ΔT, 30%
+above 13,000 s. **Gate on the USNO rows only.** If that drops below ~99%, the maths broke.
+
+**Not done: greatest duration for all ~11,900 eclipses.** GE ≠ greatest duration even for
+ordinary eclipses (measured: median +0.07 s, max +49.8 s and 10,686 km away). Deferred
+deliberately — it needs a trustworthy global search, not the hill climb used for the 94.
+Full handoff in **`docs/GREATEST-DURATION.md`**; read it before starting.
+
+### 13.6 SMALLER THINGS
+
+- Pin was darting to the container's top-left while zooming: `updateArrowScale` wrote
+  `transform` onto the **marker element**, erasing MapLibre's own positioning. The pin is
+  now wrapped (like the arrow) so MapLibre owns the wrapper and we scale the child. Pin
+  geometry is `PIN_W`/`PIN_H`/`PIN_TIP_Y` — art and anchoring read the same constants, so
+  the tip cannot drift from the point.
+- `.maplibregl-marker { z-index: 3 }` — deck.gl's overlay is added via `addControl`, so it
+  lands in a `.maplibregl-ctrl-*` container with `z-index: 2`, and markers (no z-index at
+  all) drew *under* the eclipse paths.
+- **Do not set `position` on a marker wrapper.** `.maplibregl-marker` is `position:
+  absolute`; overriding it to `relative` drops the wrapper into normal flow, where a
+  preceding in-flow marker shifts it off its coordinate.
+- Camera: every eclipse change re-frames to `defaultZoom()`, centred on the pin if set,
+  else the eclipse. `_framedEntry` (camera) is deliberately **separate** from `_lastEntry`
+  (shadow hook), and only advances once the camera has moved on a *visible* map — that is
+  what makes mobile deep links frame correctly when the user later opens the Map tab.
+- New eclipse **disarms shadows** (different place, date and time; the camera is also
+  pulling below `SHADOW_MIN_ZOOM` anyway).
+- Shadow scrubber follows the Local/UT toggle. Display-only shift; shadow time stays
+  absolute ms. Ruler tick *boundaries* are computed in the displayed timescale so labels
+  land on clean 5-minute local marks even in a :30/:45 zone, and the shift is part of
+  `_rulerWinKey` so a mode flip rebuilds them. Readout width is pinned in `ch` — otherwise
+  "local" vs "UTC" changes width and the ruler slides under the static needle.
+- Details tab throbs on a new map location (`scFlagFreshDetails()` existed and was simply
+  never called). CSS keyframe filter lists **must contain the same functions in the same
+  order at every stop**, or the browser interpolates *discretely* and the colour snaps.
+- Mobile attribution collapses behind an (i): `attributionControl: { compact: true }` plus
+  CSS below 900 px. MapLibre otherwise decides from container width and leaves it inline.
+- Console noise: a READ-usage buffer warning on every zoom/scroll, then "WebGL: too many
+  errors" at 256 — that second line is just Chrome's per-context throttle. **Not ours.**
+  Our only `readPixels` is a one-off 1×1 terrain-height probe in `shadow-layer.js`, and we
+  set no `pickable`/`onHover`/`queryRenderedFeatures` anywhere. No lever; ignore.
+- There is **no Map tab on desktop** — `app.css` hides `.tab-bar` above 900 px. The desktop
+  sidebar *does* have a Map sub-tab holding only the force-offline toggle; user asked to
+  keep it for now. The 900 px branches in JS are load-bearing and must stay.
+
+---
