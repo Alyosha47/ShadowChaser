@@ -1,5 +1,6 @@
 # ShadowChaser — HANDOFF (consolidated 2026-07-19; §4 terrain shadows WIRED IN 2026-07-28;
-#   §13 basemap/connectivity rewrite + non-central durations 2026-07-29)
+#   §13 basemap/connectivity rewrite + non-central durations 2026-07-29;
+#   §11 pre-ship GATE run and PASSED 2026-08-04)
 
 Single authoritative status + knowledge document. Supersedes all prior HANDOFF versions and
 the 2026-07-18 correction block. `TODO.md` owns durable task detail; this file owns status,
@@ -83,6 +84,11 @@ project's history.
    (see §13.2). Safe to delete.
 6. **The dead `MAP_JS_BUILD` guard.** `index.html` tests `window.MAP_JS_BUILD` to warn about
    a stale `map.js`, but nothing ever sets it, so the warning can never fire. Harmless.
+7. **`data/paths/paths_1501_1600_kinked.json.gz` is a stray** — a ~5 MB comparison copy left
+   from the June kink work, still on generator `2026-06-24h` while every live chunk is on
+   `2026-07-13j`. Nothing loads it (the app resolves chunks by the `paths_YYYY_YYYY` name), but
+   an out-of-date `.gz` sitting in `data/paths/` is precisely the trap that cost a session on
+   1957. **Delete it.** `audit_paths.py` reports it as a STALE CHUNK until it's gone.
 
 ### Standard regression test for any shadow/sun work
 Eclipse **2026-08-12**, observer **41.9851°N, 3.4186°W**, greatest eclipse there
@@ -443,6 +449,7 @@ ShadowChaser/
 │   ├── besselian/      per-century element records — SOURCE OF TRUTH, git-tracked
 │   └── paths/          generated *.json.gz corridors — NOT git-tracked (build artifacts)
 ├── data build tools/   gen_eclipse_paths.py — the canonical generator (+ dev scratch)
+│                       audit_paths.py — read-only catalog audit, the pre-ship gate (§11)
 ├── tools/              noncentral_durations.py — non-central max durations (§13.5)
 ├── docs/               GREATEST-DURATION.md — handoff for the all-eclipse version
 └── js/
@@ -820,10 +827,32 @@ data/paths` stops growth but does not shrink existing history (that needs a dest
   bump clears them.
 - Eclipse paths in offline mode: not re-confirmed since the revert. Verify.
 
-### The pre-ship GATE
-**Full-catalog audit** of all ~11,898 eclipses — build everything, flag stub / asymmetric /
-wild-turn umbra limbs. Foldable INTO the regen (per-eclipse flags to a report, no extra
-runtime). The 2028 regression proved spot-checks are insufficient.
+### The pre-ship GATE — RUN AND PASSED (2026-08-04). CLOSED.
+The full-catalog audit is done. All 50 chunks were regenerated on generator `2026-07-13j`, then
+swept by **`data build tools/audit_paths.py`** — a read-only pass over the built `.json.gz`
+chunks (seconds, no rebuild).
+
+**Result: 11,898 eclipses, 7,851 central. Zero stub or missing limbs on two-limit eclipses,
+zero gross N/S asymmetry, no stale chunks.** The 2028/2041 failure mode is confirmed absent
+catalog-wide. Only two eclipses flagged — `332-03-13` and `2485-12-07`, both `A+`, both
+deliberately won't-fix; the full detail, the Jubier measurements and the candidate fix are in
+TODO under BUGS.
+
+**Why a separate script rather than more generator checks.** The generator's in-run AUDIT pass
+checks only vertex GAPS (>350 km) and INTERIOR TURNS (>30°) on curves that already exist.
+`audit_curve()` returns early on `len < 2`, and a 2-point stub has no interior vertex to turn
+at — so a missing or stubbed limb passes it in total silence. **That is exactly how 2028/2041
+hid.** The three structural checks the generator cannot make are STUB, ONELIMB and ASYM, and
+they live in the script.
+
+The script classifies **verbatim from the generator** — `is_central` = type[0] in T/A/H,
+`one_limit` = type[1] in `n s - +`, a real limb = ≥3 points — so the two cannot drift on what
+they mean by a limb. **If those definitions ever change in `gen_eclipse_paths.py`, change them
+in `audit_paths.py` in the same commit.** It also flags any chunk not built by the majority
+generator version, which catches the stale-`.gz` trap that once cost a session on 1957.
+
+Re-run it after any generator change touching limb construction:
+`python3 "data build tools/audit_paths.py" --report audit_report.txt`
 
 ### Bigger features needing scoping (Opus-grade; direction is the USER's to set)
 - **#F1 personal ShadowChaser log** — visited / wishlist; schema, localStorage, UI, merge with
@@ -876,6 +905,8 @@ Sans PBF is ~2–3 MB. CSS module split (only after a build step). `map.js` sing
 - `pathPalette()` owns every path colour; basemaps declare `dark` (§13.4).
 - Low ΔT-era agreement in `noncentral_durations.py` is the ΔT upgrade working, not a bug.
   Gate on the USNO rows (§13.5).
+- The generator's in-run AUDIT checks gaps and turns only — a missing or 2-point-stub limb
+  passes it silently. Structural limb checks live in `audit_paths.py` (§11).
 - Don't set `position` on a MapLibre marker wrapper (§13.6).
 
 

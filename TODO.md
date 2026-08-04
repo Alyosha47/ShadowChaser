@@ -14,7 +14,13 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-07-29 — basemap/connectivity rewrite (one raster style, live
+Last touched: 2026-08-04 — **full-catalog audit RUN AND PASSED** (`data build tools/
+audit_paths.py`, read-only over the built chunks): 11,898 eclipses, 7,851 central, **zero**
+stub or missing limbs on two-limit eclipses, zero gross N/S asymmetry, all 50 chunks on
+generator `2026-07-13j`. Only two hits, both `A+` and both won't-fix (see BUGS). The pre-ship
+gate is closed.
+
+Prior: 2026-07-29 — basemap/connectivity rewrite (one raster style, live
 online/offline swap, on-map basemap picker) + non-central eclipse durations shipped
 (full detail HANDOFF §13). Pin cluster (#P1: draw order, zoom drift, tip anchor, commit
 f25ff90/HANDOFF §13.6) and paths-through-the-planet (#P2) both resolved — the whole
@@ -30,13 +36,9 @@ HANDOFF §2. Kept for history.)
 *(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. Terrain
 shadows are DONE and wired in (HANDOFF §4). Priorities are the USER's to set — this is a
 suggestion.)*
-1. **Full-catalog audit — the pre-ship GATE** (see PRE-SHIP GATE below). Build all ~11,898
-   eclipses and flag central eclipses with empty/stub umbra limbs, gross limb asymmetry, or
-   wild interior turns — a systematic sweep, because the 2028/2041 regressions proved
-   spot-checks miss things. The real blocker to shipping.
-2. **Search temporal tokens** — needs a design decision before any code (low priority; not
+1. **Search temporal tokens** — needs a design decision before any code (low priority; not
    currently bothering the user).
-3. Remaining open bugs → UX deliberations → Features.
+2. Remaining open bugs → UX deliberations → Features.
 
 ---
 
@@ -194,19 +196,27 @@ The data-key and safety-rail traps are renderer-agnostic.)*
 
 ---
 
-## PRE-SHIP GATE — FULL-CATALOG AUDIT
-Build all ~11,898 with the current generator and flag central eclipses with empty/stub umbra
-limbs, gross limb asymmetry, or wild interior turns. Fold the checks INTO the regen
-(per-eclipse flags appended to an `_audit.txt` beside the chunks) so it costs zero extra build
-time. The 2028/2041 regressions proved spot-checks miss things; this turns one-eclipse luck
-into systematic coverage. No ground-truth comparison — it surfaces *suspicious* cases by
-internal consistency for eyeballing vs Jubier. The generator already prints an `interior turn`
-flag on any umbra limb >30°, so residual zigzags self-report during regen — the audit
-generalizes that into a saved, catalog-wide report.
-
----
-
 ## BUGS — open (detail; status in handoff)
+- **Two eclipses with a missing umbral sliver — WON'T FIX for now; documented so it isn't
+  rediscovered.** `332-03-13` (cat 5554) and `2485-12-07` (cat 10668), both type `A+`, are the
+  only two central eclipses in all 11,898 that produce NO umbral limb at all. Verified against
+  Jubier's KMZs: he draws a single tiny annular edge for each — **50.8 km / 14 pts** (332) and
+  **117.4 km / 37 pts** (2485), plus one terminus point tacked on either end (164 km and 222 km
+  end-to-end). His "Northern Umbra Limit" and "Southern Limit" are the *same curve reversed*,
+  point-for-point — consistent with `A+` meaning one edge only. Everything else on both records
+  is correct (penumbra, green curve, terminators).
+  **Rarity:** these are the two smallest umbral footprints in the catalog. A normal `A+` peer
+  traces 100–240 points, and both 332 (γ 1.00358) and 2485 (γ 1.02422) sit inside the peer γ
+  range, so it is NOT a marginality cutoff — 332 is a milder non-central than peers at γ 1.02
+  that trace fine.
+  **If it ever needs fixing:** the one-limit branch in `build_path` samples `tmin..tmax` at
+  **1201 fixed steps** and requires `len(_tn) >= 2` before it will walk a limb. On an arc this
+  short the annular phase may fall between samples, so the walk never starts. **Untested
+  hypothesis — instrument `umbra_pair` over both records' t-ranges to confirm before coding.**
+  If confirmed, the fix is a scale-aware resample of that interval, the same principle as the
+  existing narrow-band densification (`NARROW_KM`) — not a new mechanism. Do NOT widen the
+  1201-step sampling globally; that costs every eclipse to serve two.
+  **Regression test if attempted:** the other 33 `A+` records must be byte-identical after.
 - **Penumbra threshold offset (low priority — user accepts "close").** Our penumbra limit
   sits ~7–10 km INSIDE Jubier's, asymmetric N/S. NOT a single term (dropping the cone-narrowing
   term fixes north, worsens south) — suggests a direction-dependent (refraction/limb) term. The
