@@ -10,6 +10,10 @@
       src: url('./fonts/CormorantGaramond-Light.woff2') format('woff2'); }
     @font-face { font-family:'JetBrains Mono'; font-weight:400; font-style:normal;
       src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2'); }
+    @font-face { font-family:'JetBrains Mono'; font-weight:700; font-style:normal;
+      src: url('./fonts/JetBrainsMono-Bold.woff2') format('woff2'); }
+    @font-face { font-family:'JetBrains Mono'; font-weight:800; font-style:normal;
+      src: url('./fonts/JetBrainsMono-ExtraBold.woff2') format('woff2'); }
   </style>
   <link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
   <link rel="manifest" href="manifest.webmanifest">
@@ -32,7 +36,7 @@
   </script>
     <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-07-29n">
+  <link rel="stylesheet" href="css/app.css?v=2026-08-05d">
 </head>
 <body>
 
@@ -52,6 +56,7 @@
     <button class="tab-btn"        data-tab="search">🔍<span class="tab-label"> Search</span></button>
     <button class="tab-btn active" data-tab="map">🌍<span class="tab-label"> Map</span></button>
     <button class="tab-btn"        data-tab="eclipse"><svg class="tab-icon-svg" viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="4"  width="16" height="2.4" rx="1.2"/><rect x="2" y="8.8" width="16" height="2.4" rx="1.2"/><rect x="2" y="13.6" width="16" height="2.4" rx="1.2"/></svg><span class="tab-label"> Details</span></button>
+    <button class="tab-btn"        data-tab="log"><svg class="tab-icon-svg" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3.4"/><path d="M10 10.8c-3.6 0-6.4 2.2-6.4 5.1v1.3h12.8v-1.3c0-2.9-2.8-5.1-6.4-5.1z"/></svg><span class="tab-label"> Log</span></button>
     <button class="tab-btn"        data-tab="settings">⚙️<span class="tab-label"> Settings</span></button>
   </nav>
 
@@ -81,14 +86,6 @@
     <div class="tab-panel active" id="tab-map">
             <div id="map"></div>
 
-      <!-- Locate button — top right of map -->
-      <button id="btn-locate" title="Use my location" aria-label="Use my location"
-              style="position:absolute;top:0.6rem;right:0.6rem;z-index:200;
-                     background:rgba(10,15,32,0.88);border:1px solid var(--border2);
-                     border-radius:var(--radius);padding:0.35rem 0.65rem;
-                     font-size:1rem;cursor:pointer;backdrop-filter:blur(4px);
-                     pointer-events:auto">📍</button>
-
       <!-- Floating overlay: shows eclipse name or "click to set location" -->
         <div id="map-status" class="map-status"></div>
 
@@ -111,11 +108,21 @@
                 title="Cloud cover (not yet available)">&#9729;</button>
       </div>
 
-      <!-- Basemap picker — top right. Live tiles as thumbnails, the way Google
-           does it: the button shows the thing itself rather than a metaphor
-           for it. z5 over the Alps gives mountains, coast and cities, so the
-           three styles are obviously different at a glance. -->
-      <div id="basemap-picker" class="basemap-picker"></div>
+      <!-- Basemap picker + locate — top right, one row. Live tiles as
+           thumbnails, the way Google does it: the button shows the thing itself
+           rather than a metaphor for it. z5 over the Alps gives mountains,
+           coast and cities, so the three styles are obviously different at a
+           glance.
+           The locate pin sits BESIDE the picker, not inside it: the picker is a
+           segmented control with a mutually-exclusive active state, so a fourth
+           cell within that border would read as a fourth basemap rather than an
+           action. Both are anchored by the flex wrapper, which is what keeps
+           them from stacking on the same coordinates (they previously both used
+           top/right 0.6rem and the picker covered the pin completely). -->
+      <div class="map-right-controls">
+        <div id="basemap-picker" class="basemap-picker"></div>
+        <button id="btn-locate" title="Use my location" aria-label="Use my location">📍</button>
+      </div>
 
       <!-- Terrain-shadow time scrubber — flush bottom bar; date/time at left,
            time strip slides past a fixed centre needle -->
@@ -140,8 +147,8 @@
       <!-- Sub-tab buttons (visible on desktop only via CSS) -->
       <nav class="sidebar-tabs">
         <button class="sidebar-tab-btn" data-sidebar-tab="search">🔍 Search</button>
-        <button class="sidebar-tab-btn" data-sidebar-tab="mapctrl">🌍 Map</button>
         <button class="sidebar-tab-btn active" data-sidebar-tab="eclipse"><svg class="tab-icon-svg" viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="4"  width="16" height="2.4" rx="1.2"/><rect x="2" y="8.8" width="16" height="2.4" rx="1.2"/><rect x="2" y="13.6" width="16" height="2.4" rx="1.2"/></svg> Details</button>
+        <button class="sidebar-tab-btn" data-sidebar-tab="log"><svg class="tab-icon-svg" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3.4"/><path d="M10 10.8c-3.6 0-6.4 2.2-6.4 5.1v1.3h12.8v-1.3c0-2.9-2.8-5.1-6.4-5.1z"/></svg> Log</button>
         <button class="sidebar-tab-btn" data-sidebar-tab="settings">⚙️ Settings</button>
       </nav>
 
@@ -161,13 +168,9 @@
         <div class="panel">
 
           <div class="search-box">
-            <textarea id="search" rows="1"
-                      placeholder="today+  ·  year  ·  total  ·  s126  ·  (lat, lon)  ·  &gt;47%">today+ total annular hybrid</textarea>
+            <textarea id="search" rows="2"
+                      placeholder="today+  ·  date  ·  total  ·  s126  ·  (lat, lon)  ·  &gt;47%">today+ total annular hybrid</textarea>
             <button class="search-clear" id="btn-search-clear" title="Clear search" aria-label="Clear search">&times;</button>
-          </div>
-
-          <div class="search-hint">
-            <strong>today+</strong> &nbsp; year month day &nbsp; <strong>s126</strong> &nbsp; <strong>&gt;47%</strong> &nbsp; <strong>(lat, lon)</strong>
           </div>
 
           <div class="pill-row" id="pill-row">
@@ -180,10 +183,8 @@
               <input type="range" id="partial-min" min="0" max="99" value="70" step="1">
               <span class="partial-min-label" id="partial-min-label">&gt;70%</span>
             </div>
-            <button class="pill pill-loc" id="pill-loc" style="display:none">&times;&nbsp;Location filter</button>
+            <button class="pill pill-loc" id="pill-loc" style="display:none" title="Clear location filter"></button>
           </div>
-
-          <div id="coords-status" style="font-family:var(--mono);font-size:0.68rem;color:var(--text-dim);margin-bottom:0.2rem;min-height:1rem"></div>
 
           <div class="scan-bar" id="scan-bar" style="display:none">
             <div class="scan-progress">
@@ -202,18 +203,14 @@
       </div><!-- #tab-search -->
 
 
-      <!-- ── Map overlay-controls (desktop sidebar only — placeholder) -->
+      <!-- ── User log (saved & seen eclipses) ─────────────────── -->
 
-      <div class="tab-panel" id="tab-mapctrl">
+      <div class="tab-panel" id="tab-log">
         <div class="panel">
-          <!-- The force-offline toggle lived here; connectivity is now detected
-               automatically (see probeConnectivity in js/map.js), so it was only
-               a testing aid. Pane kept as the home for the next map feature. -->
-          <div class="about-text" style="margin:1rem">
-            <p>Fun new feature coming here soon.</p>
-          </div>
+          <div id="log-list"></div>
+          <div id="log-tools" class="log-tools"></div>
         </div>
-      </div><!-- #tab-mapctrl -->
+      </div><!-- #tab-log -->
 
 
       <!-- ── Settings tab ────────────────────────────────────── -->
@@ -280,6 +277,17 @@
           anywhere on Earth.</p>
         </div>
 
+        <!-- LOG — its own block, before the map-overlays divider. The icons are
+             inlined from the same paths as SC_ICON in js/userlog.js; if those
+             change, change these. -->
+        <div class="instructions-ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
+        <div class="about-text">
+          <p><strong>Your log.</strong></p>
+          <p>The <svg class="inline-icon" viewBox="1.5 2.2 17 16.4" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M10 2.8l2.35 4.76 5.25.76-3.8 3.7.9 5.23L10 14.78l-4.7 2.47.9-5.23-3.8-3.7 5.25-.76z"/></svg> button beside an eclipse&rsquo;s date in the details panel saves it to your log. If you have a location set at the time, it is saved with the eclipse.</p>
+          <p>Then in the Log panel, you can click the <svg class="inline-icon" viewBox="4.8 2.6 10.4 15" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M5.4 3.2V17"/><path d="M5.4 4.4h9.2l-2.1 3.2 2.1 3.2H5.4z"/></svg>&thinsp;/&thinsp;<svg class="inline-icon" viewBox="4.8 2.6 10.4 15" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="currentColor"><path d="M5.4 3.2V17"/><path d="M5.4 4.4h9.2l-2.1 3.2 2.1 3.2H5.4z"/></svg> to mark which eclipses you have seen — the flag fills in once it is set; the <svg class="inline-icon" viewBox="3.4 3 13.6 14.6" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M13.4 3.6l3 3-8.8 8.8L4 17l1.6-3.6z"/></svg> to change an eclipse&rsquo;s saved location to the currently set map pin location; the <svg class="inline-icon" viewBox="3.9 3.2 12.2 14.5" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4.5 6.2h11"/><path d="M8.2 6.2V4.6a.8.8 0 0 1 .8-.8h2a.8.8 0 0 1 .8.8v1.6"/><path d="M6.4 6.2 7.2 16.2a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9L13.6 6.2"/></svg> to remove the eclipse from the list; or the <svg class="inline-icon" viewBox="3.4 5.6 12.4 8.8" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4 10h11.2"/><path d="M11.4 6.2 15.2 10l-3.8 3.8"/></svg> to jump to that eclipse on the map.</p>
+          <p>The log lives locally only &mdash; there is no account and nothing is uploaded. The export button writes it to a file as a backup if the log matters to you.</p>
+        </div>
+
         <!-- MAP OVERLAYS — kept last, after a divider, as its own group. The
              cloud-cover overlay's paragraph joins this block when it lands. -->
         <div class="instructions-ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
@@ -303,8 +311,8 @@
             April 2026 to late 2033 &mdash; USNO quarterly forecast (<em>deltat.preds</em>);
             &minus;720 to 2050 (outside the USNO range) &mdash; Espenak&ndash;Meeus piecewise polynomial;
             before &minus;720 and after 2050 &mdash; Stephenson, Morrison &amp; Hohenkerk (2016) LOD integral extrapolation.</p>
-          <p><strong>Eclipses with no central line.</strong> For 94 eclipses the Moon&rsquo;s shadow axis misses the Earth entirely while the cone&rsquo;s edge still clips the limb: there is totality somewhere, but no central line. Espenak&rsquo;s <em>central duration</em> is defined on that line, so the canon records zero &mdash; as does Jubier, from the same data. Neither is in error; the quantity doesn&rsquo;t exist. A <em>longest totality</em> marked &ldquo;computed&rdquo; is ours, found by searching the surface. Greatest <em>duration</em> is not the same place as greatest <em>eclipse</em>.</p>
-          <p><strong>Basemaps.</strong> Three online basemaps are selectable on the map itself: <em>Street</em> and <em>Sat</em> are Esri World Street Map and World Imagery (<em>esri.com</em>); <em>Topo</em> is Esri World Topographic when zoomed out, handing over to OpenTopoMap (CC-BY-SA, <em>opentopomap.org</em>) close in, where its contour cartography comes into its own. Offline the globe falls back to NASA/NGDC Natural Earth II shaded relief, overlaid with vector coastlines, borders, rivers, lakes and cities from Natural Earth public-domain geodata (<em>naturalearthdata.com</em>). The map itself is rendered with MapLibre GL JS (BSD-3-Clause, <em>maplibre.org</em>).</p>
+          <p>In 94 cases, the lunar shadow axis misses the Earth entirely while the cone&rsquo;s edge still clips the limb: there is totality somewhere, but <strong>no central line</strong>. Espenak&rsquo;s <em>central duration</em> is defined on that line, so the canon records zero &mdash; as does Jubier, from the same data. Neither is in error; the quantity doesn&rsquo;t exist. For these rare eclipses, we have computed a <em>longest totality</em> by searching the surface. Greatest <em>duration</em> is not the same place as greatest <em>eclipse</em>.</p>
+          <p>Three online <strong>basemaps</strong> are selectable on the map itself: <em>Street</em> and <em>Sat</em> are Esri World Street Map and World Imagery (<em>esri.com</em>); <em>Topo</em> is Esri World Topographic when zoomed out, handing over to OpenTopoMap (CC-BY-SA, <em>opentopomap.org</em>) close in, where its contour cartography comes into its own. Offline the globe falls back to NASA/NGDC Natural Earth II shaded relief, overlaid with vector coastlines, borders, rivers, lakes and cities from Natural Earth public-domain geodata (<em>naturalearthdata.com</em>). The map itself is rendered with MapLibre GL JS (BSD-3-Clause, <em>maplibre.org</em>).</p>
           <p><strong>Timezones</strong> are resolved offline via the <em>tz-lookup</em> polygon database. Elevation is auto-filled by the Open-Elevation API when online.</p>
         </div>
       </div>
@@ -392,10 +400,10 @@
 
 
 <!-- search_parser.js provides parseSearch(), applyFilter(), filterToString() -->
-<script src="js/search_parser.js?v=2026-07-29n"></script>
+<script src="js/search_parser.js?v=2026-08-05d"></script>
 
 <!-- eclipse.js provides computeEclipse(), fundamentalArgs(), sunAltAz(), findMaximum() -->
-<script src="js/eclipse.js?v=2026-07-29n"></script>
+<script src="js/eclipse.js?v=2026-08-05d"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
      Single source of truth for BUILD. The <meta> and build stamp auto-populate from it.
@@ -477,7 +485,7 @@ window.scFlagFreshDetails = function () {
 };
 
 var DATA_BASE = './data';
-var BUILD     = '2026-07-29n';   /* ← THE single source. Everything below follows it. */
+var BUILD     = '2026-08-05d';   /* ← THE single source. Everything below follows it. */
 
 /* Propagate BUILD so it never has to be typed twice. The <meta name="build"> and
    every element with [data-build-stamp] are filled from this one constant, so a
@@ -504,19 +512,20 @@ if ('serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD, { updateViaCache: 'none' }));
 }
 </script>
-<script src="js/format.js?v=2026-07-29n"></script>
-<script src="js/state.js?v=2026-07-29n"></script>
-<script src="js/cities.js?v=2026-07-29n"></script>
-<script src="js/tabs.js?v=2026-07-29n"></script>
-<script src="js/search.js?v=2026-07-29n"></script>
-<script src="js/list.js?v=2026-07-29n"></script>
-<script src="js/local.js?v=2026-07-29n"></script>
-<script src="js/details.js?v=2026-07-29n"></script>
-<script src="js/url.js?v=2026-07-29n"></script>
-<script src="js/map.js?v=2026-07-29n"></script>
-<script src="js/shadow-layer.js?v=2026-07-29n"></script>
-<script src="js/shadow-ui.js?v=2026-07-29n"></script>
-<script src="js/share.js?v=2026-07-29n"></script>
-<script src="js/init.js?v=2026-07-29n"></script>
+<script src="js/format.js?v=2026-08-05d"></script>
+<script src="js/state.js?v=2026-08-05d"></script>
+<script src="js/cities.js?v=2026-08-05d"></script>
+<script src="js/tabs.js?v=2026-08-05d"></script>
+<script src="js/search.js?v=2026-08-05d"></script>
+<script src="js/list.js?v=2026-08-05d"></script>
+<script src="js/local.js?v=2026-08-05d"></script>
+<script src="js/details.js?v=2026-08-05d"></script>
+<script src="js/url.js?v=2026-08-05d"></script>
+<script src="js/map.js?v=2026-08-05d"></script>
+<script src="js/shadow-layer.js?v=2026-08-05d"></script>
+<script src="js/shadow-ui.js?v=2026-08-05d"></script>
+<script src="js/userlog.js?v=2026-08-05d"></script>
+<script src="js/share.js?v=2026-08-05d"></script>
+<script src="js/init.js?v=2026-08-05d"></script>
 </body>
 </html>

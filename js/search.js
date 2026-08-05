@@ -1,8 +1,30 @@
 /* ── Coordinate parsing — reads from currentFilter ───────────────────── */
 
+/* Literal "(lat, lon)" in the search box. Used only to detect a stale cache,
+   not to parse — parseSearch remains the single parser. */
+var COORD_RE = /\(\s*[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?\s*\)/;
+
 function parseCoords() {
-  /* Coordinates come from the search field via currentFilter */
-  return currentFilter && currentFilter.coords ? currentFilter.coords : null;
+  /* Coordinates come from the search field via currentFilter, which is a CACHE
+     of parseSearch(search.value) refreshed by onSearchChanged. If anything ever
+     leaves the two out of step, the input is the truth and the cache is wrong —
+     and the failure is silent and confusing: the map draws the pin (it re-reads
+     on redraw) while the details panel shows "enter coordinates", because
+     whichever consumer ran while the cache was stale never re-ran.
+     So: when the cache says "no coordinates" but the box plainly contains a
+     pair, re-parse and repair. Guarded by the regex so this costs nothing on
+     the normal path and can never invent a location that wasn't typed. */
+  if (currentFilter && currentFilter.coords) return currentFilter.coords;
+
+  var el = document.getElementById('search');
+  if (el && COORD_RE.test(el.value)) {
+    var fresh = parseSearch(el.value);
+    if (fresh && fresh.coords) {
+      currentFilter = fresh;
+      return fresh.coords;
+    }
+  }
+  return null;
 }
 
 
@@ -52,19 +74,24 @@ function onSearchChanged(skipCompute) {
   }
 }
 
+/* The location filter pill IS the coordinate readout — it used to say
+   "Location filter" while the actual coordinates sat on a separate line below
+   the hints, which is two elements for one fact. The pill still clears the
+   filter when clicked; the x is kept so that remains obvious. */
 function updateCoordsStatus() {
-  var el = document.getElementById('coords-status');
-  var c  = currentFilter.coords;
-  if (!c) { el.textContent = ''; return; }
-  var latS   = c.lat >= 0 ? c.lat.toFixed(5)+'\u00b0N' : Math.abs(c.lat).toFixed(5)+'\u00b0S';
-  var lonS   = c.lon >= 0 ? c.lon.toFixed(5)+'\u00b0E' : Math.abs(c.lon).toFixed(5)+'\u00b0W';
-  var effAlt = _lookedUpAlt;
-  var alt    = effAlt ? ' \u00b7 ' + effAlt + '\u2009m' : '';
-  /* If the location came from a place NAME, lead with it — the parser already keeps
-     filter.city; we were just throwing it away on display. */
-  var place = currentFilter.city ? currentFilter.city + '\u2002\u00b7\u2002' : '';
-  el.textContent = place + latS + '\u2002' + lonS + alt;
-  el.style.color = 'var(--text-dim)';
+  var pill = document.getElementById('pill-loc');
+  if (!pill) return;
+  var c = currentFilter.coords;
+  if (!c) { pill.innerHTML = '&times;&nbsp;Location filter'; return; }
+  var latS = c.lat >= 0 ? c.lat.toFixed(3)+'\u00b0N' : Math.abs(c.lat).toFixed(3)+'\u00b0S';
+  var lonS = c.lon >= 0 ? c.lon.toFixed(3)+'\u00b0E' : Math.abs(c.lon).toFixed(3)+'\u00b0W';
+  var alt  = _lookedUpAlt ? '\u2002\u00b7\u2002' + _lookedUpAlt + '\u2009m' : '';
+  /* A place NAME beats coordinates when we have one — the parser keeps
+     filter.city and this used to throw it away. */
+  var body = currentFilter.city
+           ? currentFilter.city + '\u2002\u00b7\u2002' + latS + '\u2002' + lonS + alt
+           : latS + '\u2002' + lonS + alt;
+  pill.innerHTML = '&times;&nbsp;' + body.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 }
 
 function updatePillStates() {

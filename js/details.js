@@ -130,10 +130,28 @@ function renderData(rec, _tz, _lat, _lon) {
   var typeChar = (selectedEntry.eclipse_type||'P')[0].toUpperCase();
   var titleIcon = eclipseIcon({ type: typeChar, magnitude: selectedEntry.magnitude, size: 32 });
 
+  /* The standard share mark (box with an arrow leaving the top) has no Unicode
+     codepoint — the old &#x2197; was a plain north-east arrow standing in for
+     it. Inline SVG, same approach as the hamburger and person tab icons.
+     `currentColor` so it inherits .icon-btn's colour and its hover state. */
+  var shareIcon =
+    '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor"'
+  + ' stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+  + '<path d="M10 2.7V12.3"/>'
+  + '<path d="M6.7 6L10 2.7L13.3 6"/>'
+  + '<path d="M6.6 8.5H5a1.4 1.4 0 0 0-1.4 1.4v6.1A1.4 1.4 0 0 0 5 17.4h10a1.4 1.4 0'
+  +   ' 0 0 1.4-1.4V9.9A1.4 1.4 0 0 0 15 8.5h-1.6"/>'
+  + '</svg>';
+
   html = '<div class="detail-title">'
        + '<span class="detail-title-icon">' + titleIcon + '</span>'
-       + fmtDate(selectedEntry)
-       + '<button class="share-btn" onclick="shareEclipse()">&#x2197; Share</button>'
+       + '<span class="detail-title-date">' + fmtDate(selectedEntry) + '</span>'
+       + '<span class="detail-actions">'
+       +   '<button class="icon-btn" onclick="shareEclipse()"'
+       +     ' title="Share this eclipse" aria-label="Share this eclipse">'
+       +     shareIcon + '</button>'
+       +   (typeof scLogSaveButtonHtml === 'function' ? scLogSaveButtonHtml() : '')
+       + '</span>'
        + '</div>'
 
        + '<div class="detail-section-h">Local Circumstances</div>'
@@ -157,16 +175,18 @@ function renderData(rec, _tz, _lat, _lon) {
     var durType = (res.type === 'hybrid' && res.localPhase) ? res.localPhase : res.type;
     var lbl = typeName(durType[0].toUpperCase());
 
-    /* Order: Contact Times → Sun Track → Local Circumstances → Global.
-       The times and the track are what a chaser acts on, so they lead; the
-       summary figures are a recap and sit against the global ones they invite
-       comparison with. Having moved out of the opening position, the summary
-       now needs its own heading like every other section. */
+    /* Order: Summary → Contact Times → Sun Track → Global.
+       The summary leads because it answers the one question you open the panel
+       with — how long, how deep — in five rows. The contact times are what you
+       act on once you've decided the eclipse is worth acting on, and the track
+       supports them. Global circumstances are reference, so they stay last.
+
+       No heading on the summary: it sits directly beneath "Local Circumstances"
+       and the location line, which already name it. It only needed one back
+       when it had been pushed down past the contacts and the track, out of
+       reach of that heading. If it ever moves again, give it one back. */
     var localSummary =
-      /* "Summary", not "Local Circumstances" — that heading is already above,
-         covering this whole block (location line, contacts, track and this). */
-      '<div class="detail-section-h">Summary</div>'
-    + '<table class="detail-table"><tbody>'
+      '<table class="detail-table"><tbody>'
     +   (res.durCentral ? row('Duration (' + lbl.toLowerCase() + ')', fmtDur(res.durCentral)) : '')
     +   (res.durPartial ? row('Partial duration', fmtDur(res.durPartial)) : '')
     +   row('Magnitude',           res.mag.toFixed(4))
@@ -175,7 +195,8 @@ function renderData(rec, _tz, _lat, _lon) {
     + '</tbody></table>';
 
     html +=
-      '<div class="detail-section-h">Contact Times</div>'
+      localSummary
+    + '<div class="detail-sub-h">Contact Times</div>'
     + '<table class="contacts-table"><thead><tr>'
     + '<th>Event</th>'
     + '<th class="time-mode-toggle" onclick="setTimeMode(\''
@@ -197,9 +218,8 @@ function renderData(rec, _tz, _lat, _lon) {
           : (tz === 0 ? ' \u00b7 local = UT here' : ' \u00b7 local time (' + tzStr + ')'))
     + '</div>'
 
-    + '<div class="detail-section-h">Sun Track</div>'
-    + '<div id="suntrack"></div>'
-    + localSummary;
+    + '<div class="detail-sub-h">Sun Track</div>'
+    + '<div id="suntrack"></div>';
   }
 
   /* ── Global Circumstances (reference data — least actionable, so last) ── */

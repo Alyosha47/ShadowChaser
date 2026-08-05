@@ -18,11 +18,11 @@ const CORE = [
   'favicon.ico',
   'css/app.css',
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
-      'search','list','local','details','share','map','url','init'].map(n => `js/${n}.js`),
+      'search','list','local','details','userlog','share','map','url','init'].map(n => `js/${n}.js`),
   // Cesium engine entry (the geometry Workers are precached via the CESIUM array, below).
   'vendor/cesium-1.121/Build/Cesium/Cesium.js',
   'vendor/cesium-1.121/Build/Cesium/Widgets/widgets.css',
-  ...['CormorantGaramond-Light','JetBrainsMono-Regular'].map(n => `fonts/${n}.woff2`),
+  ...['CormorantGaramond-Light','JetBrainsMono-Regular','JetBrainsMono-Bold','JetBrainsMono-ExtraBold'].map(n => `fonts/${n}.woff2`),
   // Basemap: single offline NE II image + vector line overlays (coast/rivers/borders/cities).
   'data/basemap/ne2_mercator.jpg',
   'data/basemap/countries.geojson.gz',

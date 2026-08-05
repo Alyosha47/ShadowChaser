@@ -126,6 +126,21 @@ function _basemapKey() {
   return (PICKER_KEYS.indexOf(k) >= 0) ? k : 'esri_street';
 }
 
+/* The picker only collapses where space is tight; the breakpoint matches the
+   one in app.css that shrinks the tiles. */
+function _pickerCollapsible() {
+  return window.matchMedia('(max-width: 899px)').matches;
+}
+
+/* Any tap that isn't on the picker closes it again, so an accidental open
+   doesn't leave the row covering the map. */
+document.addEventListener('click', function (e) {
+  var host = document.getElementById('basemap-picker');
+  if (!host || !host.classList.contains('expanded')) return;
+  if (e.target && e.target.closest && e.target.closest('#basemap-picker')) return;
+  host.classList.remove('expanded');
+}, true);
+
 /* Build the picker once, then keep its lit segment in step with the stored key.
    Offline it greys out and stops responding, exactly as the Shadows button does
    — every option here is a network basemap. */
@@ -140,9 +155,19 @@ function renderBasemapPicker() {
              '<span class="basemap-swatch">' + PICKER_SWATCH[k] + '</span></button>';
     }).join('');
     host.dataset.built = '1';
+    /* On phones the picker collapses to just the ACTIVE tile — the tile is the
+       state indicator, so nothing is hidden by collapsing it, and the top strip
+       gets ~120px back. First tap opens the row, second tap picks. Desktop has
+       the room, so it stays open there and this branch never fires. */
     host.addEventListener('click', function (e) {
       var b = e.target && e.target.closest ? e.target.closest('.basemap-opt') : null;
-      if (b && !isOffline()) window._scSetBasemap(b.dataset.key);
+      if (!b || isOffline()) return;
+      if (_pickerCollapsible() && !host.classList.contains('expanded')) {
+        host.classList.add('expanded');
+        return;
+      }
+      host.classList.remove('expanded');
+      window._scSetBasemap(b.dataset.key);
     });
   }
   host.classList.toggle('is-offline', off);
@@ -172,8 +197,76 @@ window._scSetBasemap = function (key) {
     if (near && near.setTiles) near.setTiles([bm.nearUrl || bm.url]);
   } catch (e) {}
   syncBasemapLayers();
+  refreshBasemapTiles();
   redrawIfMapVisible();   /* path colours follow the base — see pathPalette() */
 };
+
+/* Why this exists, precisely: setTiles() defers to RasterTileSource.load(),
+   which is ASYNC — it awaits the TileJSON, then calls
+   sourceCaches[id].clearTiles() and fires its 'data' events. Refilling the
+   cleared cache is left to the next render pass, which re-evaluates against the
+   map transform. Normally something moves a moment later and nobody notices.
+   Zoomed hard in, nothing moves, so the cleared basemap is never re-requested.
+
+   Topographic is the case that actually breaks, and the reason is sharper than
+   "no movement": it is the only basemap with a nearUrl, so switching to it also
+   flips `basemap-near` from visibility:none to visible. MapLibre does not load
+   tiles for a source that no visible layer uses, and a source cache that has
+   only just become used is not brought up to date by calling update() on it
+   directly — the style has to re-evaluate which sources are needed, which it
+   does on a transform change. That is exactly why Satellite (no near layer)
+   switches cleanly while Topographic does not, and why the smallest drag fixes
+   it.
+
+   So the fix is the nudge itself, applied after the load settles. A zoom delta
+   of 1e-4 is far below one pixel at any zoom, so it is invisible, but it is a
+   real transform change and drives the whole tile pipeline. */
+function nudgeMapTransform() {
+  if (!map || !map.getZoom || !map.setZoom) return;
+  try {
+    var z    = map.getZoom();
+    var maxZ = map.getMaxZoom ? map.getMaxZoom() : 24;
+    var minZ = map.getMinZoom ? map.getMinZoom() : 0;
+    /* Step away from whichever limit we're pinned against — at full zoom, +eps
+       would be clamped to the same value and change nothing. */
+    var eps  = (z + 1e-4 <= maxZ) ? 1e-4 : -1e-4;
+    if (z + eps < minZ || z + eps > maxZ) return;
+    map.setZoom(z + eps);
+  } catch (e) {}
+}
+
+function refreshBasemapTiles() {
+  if (!map || !map.on) return;
+
+  var ids = ['basemap-far', 'basemap-near'];
+  var fired = false;
+
+  function nudge() {
+    if (fired) return;
+    fired = true;
+    try { map.off('sourcedata', onData); } catch (e) {}
+    /* update() alone is not sufficient for a cache that just became used, but
+       it is free and helps the already-used one; the transform nudge is what
+       actually does the work. */
+    var caches = map.style && map.style.sourceCaches;
+    ids.forEach(function (id) {
+      var sc = caches && caches[id];
+      try { if (sc && sc.update && map.transform) sc.update(map.transform); } catch (e) {}
+    });
+    nudgeMapTransform();
+    try { if (map.triggerRepaint) map.triggerRepaint(); } catch (e) {}
+  }
+
+  function onData(e) {
+    if (!e || ids.indexOf(e.sourceId) === -1 || e.sourceDataType !== 'content') return;
+    nudge();
+  }
+
+  try { map.on('sourcedata', onData); } catch (e) { nudge(); return; }
+  /* Fallback if the source never reports content (offline, failed TileJSON),
+     so the listener can't leak and the switch still completes. */
+  setTimeout(nudge, 1200);
+}
 
 /* Force a recentre on the current selection (framing is otherwise done once per
    eclipse). Clears only the CAMERA's bookkeeping — _lastEntry drives the shadow
@@ -580,9 +673,25 @@ var _styleMode  = null;
    whole sphere switches together. `step` rather than `interpolate`: these are
    two different maps, and cross-fading them just looks like a mistake.
 
-   Zoom ranges are still set, one level wider than the handover on each side, so
-   neither provider is asked for tiles far outside where it's used — that keeps
-   us off OpenTopoMap's servers at global zoom, which their usage policy asks.
+   TWO rules keep the handover from flashing, and both matter:
+
+   1. The near layer's minzoom is the handover point EXACTLY — not a level below
+      it. It used to start a level early (floor(split) - 1 = 8) to "warm up",
+      but zoom 8 is inside OpenTopoMap's saturated shaded-relief regime, which
+      is the very thing the handover exists to avoid. Those tiles got fetched
+      and cached, and then on any zoom past the split MapLibre painted the
+      cached z8/z9 parent — scaled up — for the frame or two before the z10+
+      paper-sheet tiles arrived. That was the bright flash. With minzoom at the
+      split the near source is never asked for a tile below z10, so there is no
+      saturated tile in the cache to flash.
+
+   2. The far layer stays FULLY OPAQUE through the band just above the split
+      rather than stepping to 0 at it. The near layer is drawn above the far
+      one, so once it has tiles it hides the far one completely and the extra
+      opacity costs nothing visually. But while those tiles are in flight the
+      far layer is what shows through — muted Esri Topo instead of a hole. The
+      far layer still stops at its old maxzoom, so this adds no tile traffic
+      beyond what it already fetched.
 
    Without `nearUrl` the far layer covers everything and the near layer is
    simply hidden. */
@@ -600,9 +709,8 @@ function syncBasemapLayers() {
       map.setPaintProperty('basemap-far', 'raster-opacity', 1);
     } else {
       map.setLayerZoomRange('basemap-far',  0, Math.ceil(split) + 1);
-      map.setLayerZoomRange('basemap-near', Math.floor(split) - 1, 24);
-      map.setPaintProperty('basemap-far',  'raster-opacity',
-        ['step', ['zoom'], 1, split, 0]);
+      map.setLayerZoomRange('basemap-near', split, 24);
+      map.setPaintProperty('basemap-far',  'raster-opacity', 1);
       map.setPaintProperty('basemap-near', 'raster-opacity',
         ['step', ['zoom'], 0, split, 1]);
     }

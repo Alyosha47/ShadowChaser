@@ -1,6 +1,7 @@
 # ShadowChaser — HANDOFF (consolidated 2026-07-19; §4 terrain shadows WIRED IN 2026-07-28;
 #   §13 basemap/connectivity rewrite + non-central durations 2026-07-29;
-#   §11 pre-ship GATE run and PASSED 2026-08-04)
+#   §11 pre-ship GATE run and PASSED 2026-08-04;
+#   §14 user log SHIPPED + visual language decided 2026-08-05)
 
 Single authoritative status + knowledge document. Supersedes all prior HANDOFF versions and
 the 2026-07-18 correction block. `TODO.md` owns durable task detail; this file owns status,
@@ -451,6 +452,7 @@ ShadowChaser/
 ├── data build tools/   gen_eclipse_paths.py — the canonical generator (+ dev scratch)
 │                       audit_paths.py — read-only catalog audit, the pre-ship gate (§11)
 ├── tools/              noncentral_durations.py — non-central max durations (§13.5)
+│                       checks/ — headless test suites, see §14.4
 ├── docs/               GREATEST-DURATION.md — handoff for the all-eclipse version
 └── js/
     ├── cities.js       lookupCity, lazy index from basemapData.cities
@@ -460,6 +462,7 @@ ShadowChaser/
     ├── format.js       fmt*, fmtUTAnchored, fmtLocalAnchored, eclipseIcon, horizonIcon
     ├── init.js         bootstrap; buildTzSelect, initMap, fetch index.json
     ├── list.js         renderList, selectEclipse (←/→ arrow-key navigation)
+    ├── userlog.js      the saved/seen log — store, panel, row actions (§14)
     ├── local.js        computeLocal, computeSunriseSunset, findHorizonCrossing, scanLocation
     ├── map.js          THE RENDERER — MapLibre + deck.gl; isOffline, seamFreeLines,
     │                   updateMarkerOcclusion, updateOvalVisibility, _deckLayers retainer
@@ -557,7 +560,7 @@ marker was visually behind the globe yet judged front-side. MapLibre 5.5.0 was i
 time; `isLocationOccluded` should have been used from the start. **Read the platform API before
 hand-rolling trig.** Both halves (visual + click) are CLOSED. A fully-WebGL marker
 (deck.gl IconLayer) is not warranted — blocked by `interleaved:false` and deck.gl's polar
-triangulation bug (#R3).
+triangulation bug (the former #R3, since resolved).
 
 ### 8.5 Umbra ovals hide at high zoom (`updateOvalVisibility`)
 Ovals are useful zoomed out but obscure the point being inspected up close, so they hide past
@@ -793,39 +796,21 @@ data/paths` stops growth but does not shrink existing history (that needs a dest
   along the centreline. A pin drop-shadow was tried and rejected as a smudge.
 
 ### Open bugs
-- **#F4 terrain shadows — COMPLETE & WIRED IN (2026-07-28).** No longer open. Shipped
-  as the `shadow-layer.js` module and fully integrated into the app; see §4's "Wiring
-  into the eclipse app — DONE" subsection for the whole integration. Only optional,
-  non-blocking future work: DSM canopy data for tree/building shadows (§4).
-- **#P1 observer pin — three issues, all NON-shadow, PARKED as a cluster** (surfaced
-  while building shadows; batch them, likely shared root cause in the deck.gl marker /
-  globe reprojection):
-  (a) the pin renders **behind the eclipse path** (deck.gl draw order — path over
-  marker);
-  (b) while **zooming the globe** the pin **drifts toward the top-left corner and then
-  snaps back** into place on settle (marker reprojection lagging the globe transform);
-  (c) the pin **tip is not exactly on the location dot** (anchor/offset — note this
-  contradicts the "tip = the coordinate" claim under Working; treat Working as stale
-  on this point until fixed).
-- **#P2 eclipse paths show THROUGH the far edge of the planet** (globe backface): path
-  lines on the hemisphere facing away from the camera are visible through the limb.
-  **This was corrected before in the past** (regression) — find the prior fix. Deck.gl
-  layers over the globe need depth/horizon occlusion; related to #R1 (labels fade
-  through the globe).
-- **#R3 polar corridor "onion ring" (deck.gl).** 1950-09-12 corridor + ovals render as
-  polar onion rings; SolidPolygonLayer mis-triangulates polar polygons even with clean
-  unwrapped data. Workaround: corridor fill DISABLED (path lines only); ovals still
-  filled. 4 candidates in TODO. User has chosen to leave it.
-- **#R4 offline basemap on mobile** — confirmed broken pre-revert; **re-verify on the maplibre
-  branch** before spending time on it.
+*(Closed and removed from this list — recorded here only so they aren't re-raised: **#F4**
+terrain shadows, complete and wired in 2026-07-28, see §4. **#P1** observer-pin cluster (draw
+order, zoom drift, tip anchor), fixed 2026-08-04, commit f25ff90, see §13.6 — the "tip = the
+coordinate" claim under Working is accurate again. **#P2** paths showing through the far side
+of the globe, fixed and user-confirmed 2026-08-04, see §13.1 — the cause was the `setStyle`
+rebuild costing the deck.gl overlay its globe state. **#R4** offline basemap on mobile and
+**eclipse paths offline**, both verified working on the maplibre branch 2026-08-04.
+**Ancient/BCE centuries**, rebuilt — all 50 chunks are on generator `2026-07-13j`, confirmed by
+`audit_paths.py`. **#R3** polar corridor/oval "onion ring" and **#R1** city labels fading
+through the globe on spin, both confirmed by the user as no longer issues — **do not re-raise
+either.** The whole globe-occlusion family is now closed.)*
+
 - **#R5 pinch-zoom on iOS not blocked** — `user-scalable=no` is ignored by iOS Safari. Fix:
-  `touch-action: pan-y` on scrollable panels but NOT the map container.
-- **#R1 (polish) city labels fade through the globe on spin** — WebGL symbol labels, not DOM
-  markers, so the `isLocationOccluded` approach doesn't directly apply. Check what MapLibre v5
-  offers for symbol-layer occlusion on globe before hand-rolling. (Same family as #P2.)
-- **Ancient/BCE centuries not yet rebuilt** — still show pre-improvement data; rebuild + BUILD
-  bump clears them.
-- Eclipse paths in offline mode: not re-confirmed since the revert. Verify.
+  `touch-action: pan-y` on scrollable panels but NOT the map container. Must test on a real
+  iPhone. **The only open bug on the list.**
 
 ### The pre-ship GATE — RUN AND PASSED (2026-08-04). CLOSED.
 The full-catalog audit is done. All 50 chunks were regenerated on generator `2026-07-13j`, then
@@ -1111,7 +1096,147 @@ Full handoff in **`docs/GREATEST-DURATION.md`**; read it before starting.
   Our only `readPixels` is a one-off 1×1 terrain-height probe in `shadow-layer.js`, and we
   set no `pickable`/`onHover`/`queryRenderedFeatures` anywhere. No lever; ignore.
 - There is **no Map tab on desktop** — `app.css` hides `.tab-bar` above 900 px. The desktop
-  sidebar *does* have a Map sub-tab holding only the force-offline toggle; user asked to
-  keep it for now. The 900 px branches in JS are load-bearing and must stay.
+  sidebar's old Map sub-tab (which held only the force-offline toggle) is **gone**: it became
+  the Log panel in 2026-08-05, see §14. The 900 px branches in JS are load-bearing and must
+  stay. Mobile now has FIVE tabs (Search, Map, Details, Log, Settings); the sidebar has four
+  (Search, Details, Log, Settings). Both use `flex: 1`, so adding one needed no CSS.
 
 ---
+
+
+---
+
+## 14. USER LOG + VISUAL LANGUAGE (2026-08-05)
+
+### 14.1 The log — SHIPPED (#F1)
+`js/userlog.js`. One localStorage key, one object, keyed by catalogue number:
+
+    sc.log = { v:1, entries: { "9518": { seen, loc, ts }, ... } }
+
+**PRESENCE IS "SAVED".** There is no `saved` field — an entry exists because the user saved
+it, and unsaving DELETES the entry. `seen` is likewise stored only when true, so an entry
+holding nothing but a `ts` is the wishlist case. Everything except `ts` is optional. There is
+no note field (tried, removed as clutter, never shipped to anyone).
+
+**`loc` is `[lon, lat]`** — the app's order everywhere else (`ge`, path data). A flip here
+would look entirely plausible and be wrong forever; it is asserted in the tests.
+
+**Keys go through `scLogKey()` and nowhere else.** `index.json` stores `cat_no` as a float,
+so a bare `String(rec.cat_no)` yields "9518" on one path and "9518.0" on another.
+
+**Row layout is a two-row grid**, `"ico date acts" / "ico loc loc"`, so the coordinate line
+spans the full width beneath the buttons. It was flex first, which squeezed the coordinates
+into whatever the icons left over and truncated them. **The column left of the type icon is
+deliberately empty and reserved for the t-shirt selection checkboxes** — commented in both
+`app.css` and the render function.
+
+**Four row actions**, all inline, no expander: flag (seen — it *fills*, not a checkbox, since
+a checkbox there would collide with the coming t-shirt selection control), pencil, bin, arrow.
+
+**The pencil is inert unless the current location differs from the saved one.** That is the
+whole safety property: opening a saved eclipse to look at it from somewhere else must never
+quietly overwrite where the user actually stood. Committing is always explicit.
+
+**Row tap and travel are SEPARATE.** `scLogGoto` restores the location and selects the
+eclipse; on a phone it switches to the map. They were one gesture at first, which on mobile
+meant a tap both expanded the row and hid the panel it had just opened.
+
+**Circumstances** (obscuration, and duration when central) come from `computeEclipse` in
+eclipse.js — the same function `computeLocal` uses. Async only because the Besselian record
+may sit in an unloaded chunk; a failed load caches the miss so it isn't retried every render.
+
+### 14.2 Visual language — DECIDED, enforced by tests
+Four decisions, taken deliberately after an audit of every rule in `app.css`. Two were
+reversed after seeing them on screen; both reversals are recorded here so they aren't redone.
+
+**Weights.** Only faces that exist: serif 300, mono 400/700/800. Four rules previously asked
+for 500 or 600, which have no face — 500 rounds DOWN to 400 (a no-op) and 600 UP to 700. A
+"make this slightly bolder" change sat in the stylesheet for a whole session doing nothing.
+**Never write a weight without a matching `@font-face`.**
+
+**Gold — one meaning per token.**
+- `--gold` = the SELECTED / current thing. Exceptions: `.app-title`, `.app-header::before`
+  (branding), and the heading tiers (below).
+- `--gold2` = DATA VALUES (`.detail-table .v`, type colours, readouts).
+- `--gold-dim` = never text. Non-interactive only now: disabled fill, progress fill,
+  `.badge-total`'s type colour, the sun-track frame.
+- `--edge` (#9a8a63, NEW) = interactive edges: hover, focus, active outline. `--gold-dim`
+  managed only 2.93:1 against the basemap picker's own background, so those outlines were
+  invisible on exactly the controls that needed them; `--edge` is 5.77:1.
+
+**Headings — REVERSED once.** First attempt made them grey and separated the tiers by weight.
+On screen that was worse. **Both tiers are GOLD; SIZE carries the hierarchy** —
+`.detail-section-h` 0.92rem/700, `.detail-sub-h` 0.72rem/700, against `.detail-table .l` at
+0.66rem/400 grey. Serif italic was also tried for the sub tier and looked wrong against the
+mono stack. Do not re-attempt either.
+
+**Rules.** Headings carry none. One separator treatment (`1px var(--border)`), replacing
+three. Left bar = selection. Gold is never a horizontal rule.
+
+**Icons — REVERSED.** Search/Map/Settings were converted from emoji to SVG so they'd inherit
+`currentColor`; the colour emoji read better at tab size and were restored. `.tab-icon-svg`
+still uses `currentColor`, so the SVG tabs (Details, Log) follow the active state.
+
+Everything above is asserted in `test_hygiene.js` §7. Two documented exceptions: `.pill-loc`
+is a selected state whose class name doesn't say so, and `.shadow-center::after` uses borders
+to draw the needle's arrowhead, not as a separator.
+
+### 14.3 Basemap switching at high zoom
+Switching to Topographic while zoomed hard in left the map blank until the user moved it.
+**Topo is the only basemap with a `nearUrl`**, so it is the only switch that also flips
+`basemap-near` from `visibility:none` to `visible` — and MapLibre does not load tiles for a
+source no visible layer uses. `setTiles()` → `RasterTileSource.load()` is async: it awaits the
+TileJSON, THEN calls `clearTiles()`. So the cache is cleared and never refilled, because
+refilling waits on a transform change. Satellite (no near layer) was always fine, which is the
+clue that identifies it.
+
+Current fix (`refreshBasemapTiles` / `nudgeMapTransform` in map.js): after the source reports
+content, apply a 1e-4 zoom delta — below a pixel at any zoom, but a real transform change.
+**This is acknowledged as a workaround, not a principled fix.** MapLibre recomputes
+`sourceCache.used` inside `Style.update()` from `!layer.isHidden(zoom)`. The principled fix is
+almost certainly ORDERING: make the layer visible BEFORE retargeting the source, so
+`setTiles` acts on a cache that is already used. One line moved. Try that first if this ever
+misbehaves.
+
+### 14.4 Test suites — `tools/checks/`
+Headless, no browser, run with `node`. They exist because several of the above were decided,
+silently undone, and re-litigated.
+- `test_hygiene.js` — orphaned comments, duplicate selectors, unused classes, rules filed
+  under the wrong banner, **the visual-language rules**, the **DOM contract** (every
+  `getElementById` must resolve to an id in index.html or one the JS creates), and the
+  **build stamp** (every js/css asset must carry the current BUILD).
+- `test_details.js` — heading tiers, title actions, no wrapping.
+- `test_userlog.js` — store semantics, `[lon,lat]` order, the explicit-commit gate, row vs
+  goto separation, escaping, corrupt-storage resilience.
+- `test_picker.js` — the collapsible basemap picker's two-tap behaviour, offline, desktop.
+
+**The DOM-contract and build-stamp checks were added after a real failure**: `#coords-status`
+was removed from the markup and `search.js` rewritten to stop using it, but BUILD was not
+bumped — so the service worker served the cached old `search.js` against the new HTML. One
+throw inside `onSearchChanged` aborted everything downstream: blank details panel, no map pin.
+**Touching any js/css without bumping BUILD now fails a test.**
+
+### 14.5 Details panel
+Order is Local Circumstances → (location line, summary table) → Contact Times → Sun Track →
+Global Circumstances. The summary has **no heading of its own** — it sits directly under
+"Local Circumstances" which already names it. It only needed one during the period it was
+pushed below the contacts and track. If it moves again, give it one back.
+
+Title actions are icon-only (share mark, save star), both SVG. **The star is SVG, not a
+glyph**: a text glyph centres on its LINE BOX, which includes ascender and descender space, so
+it sat visibly high in a flex-centred square no matter what line-height was set.
+
+### 14.6 Search panel
+The hint strip under the search box was removed — it duplicated the placeholder inside the
+empty box. The separate coordinate readout line was removed too: **the location filter pill
+now IS the coordinate readout**, showing the place name or coordinates instead of the words
+"Location filter". `#coords-status` no longer exists.
+
+`parseCoords()` now SELF-HEALS. `currentFilter` is a cache of `parseSearch(search.value)`
+refreshed by `onSearchChanged`; if anything leaves the two out of step the failure is silent
+and confusing — the map draws the pin (it re-reads on redraw) while the details panel shows
+"enter coordinates", because whichever consumer ran during the stale window never re-ran. When
+the cache says "no coordinates" but the box plainly contains a pair, it re-parses and repairs.
+Guarded by a literal regex, so it costs nothing normally and cannot invent a location.
+**The underlying trigger was never reproduced** — if this recurs, the stale cache was not the
+mechanism, which is itself worth knowing.

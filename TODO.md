@@ -14,7 +14,15 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-08-04 — **full-catalog audit RUN AND PASSED** (`data build tools/
+Last touched: 2026-08-05 — **user log (#F1) SHIPPED** (`js/userlog.js`, HANDOFF §14.1) and the
+**visual language DECIDED and enforced** (HANDOFF §14.2, `test_hygiene.js` §7). Also: basemap
+picker collapses on phones and animates open; Topo-at-high-zoom blank fixed (§14.3); search
+hint strip and separate coordinate line removed, the location pill now carries the
+coordinates; `parseCoords` self-heals a stale filter cache (§14.6); four headless test suites
+in `tools/checks/` (§14.4), including DOM-contract and BUILD-stamp checks added after a real
+cache-skew failure. BUILD is now `2026-08-05d`.
+
+Prior: 2026-08-04 — **full-catalog audit RUN AND PASSED** (`data build tools/
 audit_paths.py`, read-only over the built chunks): 11,898 eclipses, 7,851 central, **zero**
 stub or missing limbs on two-limit eclipses, zero gross N/S asymmetry, all 50 chunks on
 generator `2026-07-13j`. Only two hits, both `A+` and both won't-fix (see BUGS). The pre-ship
@@ -36,16 +44,19 @@ HANDOFF §2. Kept for history.)
 *(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. Terrain
 shadows are DONE and wired in (HANDOFF §4). Priorities are the USER's to set — this is a
 suggestion.)*
-1. **Search temporal tokens** — needs a design decision before any code (low priority; not
+1. **#F1a t-shirt / multi-eclipse map module** — the log shipped, so this is unblocked and
+   is the next build. See FEATURES — HARD.
+2. **Settings → Info.** Almost nothing in that tab is a setting: the timezone control is
+   redundant (the contacts-table header already toggles time mode inline) and the shadow
+   slider belongs with the overlay it drives, not in a settings list. Rename, drop the
+   timezone row, rehome the slider.
+3. **Overlay sheet pattern.** Three overlays are coming; the iOS sheet paradigm applied on
+   desktop too. The share modal is already that pattern — reuse it rather than growing three
+   bespoke control clusters competing with the basemap picker for the top strip. Do this
+   ONCE, before the overlays land.
+4. **Search temporal tokens** — needs a design decision before any code (low priority; not
    currently bothering the user).
-2. Remaining open bugs → UX deliberations → Features.
-
----
-
-## OPEN BUGS — MAP (deck.gl draw order / globe occlusion)
-*(Both #P1 and #P2 from this batch are now resolved — #P1 by commit f25ff90/HANDOFF §13.6,
-#P2 confirmed fixed by user 2026-08-04. Nothing open in this batch; #R1 (city labels fading
-through the globe on spin) is a separate, still-open polish item — see HANDOFF §11.)*
+5. Remaining open bugs → UX deliberations → Features.
 
 ---
 
@@ -158,8 +169,8 @@ MapLibre equivalent; do not port them to `map.js`.
   solved by the engine rather than by hand.
 
 *(The live MapLibre renderer has its own equivalents — e.g. globe occlusion via
-`map.transform.isLocationOccluded`, see HANDOFF §8.4. #P2 is now fixed; #R1 (city labels
-fading through the globe) is the remaining open occlusion item on the live app.)*
+`map.transform.isLocationOccluded`, see HANDOFF §8.4. The whole globe-occlusion family — #P2
+(paths through the planet) and #R1 (city labels) — is now closed.)*
 
 ---
 
@@ -293,26 +304,47 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   incumbent everywhere. Suggested two-branch discipline: freeze the shipped generator
   (bugfix-only) as stable truth; develop the unified engine as experimental successor.
   ~4–6 phased sessions. Next phase: penumbra onto the engine.
-- **#F2 Cloud-cover / weather overlay** — the killer feature. Forecast (near-term) +
-  climatology (far-future); needs data-source choice, globe-layer rendering, online/offline
-  behavior, controls, perf. ~2 sessions of design before code.
+- **#F2 Cloud-cover / weather overlay** — the killer feature. **TWO data paths, one overlay,
+  with the handover driven by days-to-eclipse.** Climatology (median cloud fraction for that
+  date and place) is the base layer and the only thing available months or years out — it is
+  what makes a site *choosable* in advance. **But inside about a week of an eclipse, switch to
+  live forecast data if a freely available source exists** — no key, no quota, cacheable for
+  offline. That week is when a chaser actually commits to travel, and climatology is worthless
+  at that range; a 40%-cloudy-in-August average tells you nothing about next Tuesday.
+  Still needs data-source choice (the whole feature turns on what can be fetched for free),
+  globe-layer rendering, online/offline behaviour, controls, perf. ~2 sessions of design
+  before code.
 - **#F3 Animated shadow on globe with time slider** — scrub the umbra/penumbra across the map in
   real time. Most on-brand feature. Distinct from the terrain-shadow scrubber that shipped:
   that scrubs *terrain* shadows at one place; #F3 animates the *umbra/penumbra footprint*
   sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
   clean precedent for the time-plumbing.
-- **#F1 Personal "ShadowChaser log" — SPEC'D (2026-08-04), user has multi-map code already.**
-  - **User panel** replaces the (currently near-empty) desktop Map sub-tab: a list of saved
-    eclipses, each tagged **Seen** / **Saved**, each with an optional attached location (so a
-    saved eclipse can carry its own observing site, distinct from the app's single active pin).
-  - **Save button** on the Details page, next to the existing Share button — the write entry
-    point into the log.
-  - **Custom multi-map output** — from the saved list, checkbox-select a subset and generate a
-    combined multi-eclipse map. User already has the code for this piece; needs wiring in, not
-    building from scratch.
-  - Still open: storage schema (localStorage vs future sync — ties into the merge-with-selection-
-    state question already on the ledger), and whether "Seen"/"Saved" are the only two tags or
-    there's a wishlist tier too.
+- **#F1a T-shirt / multi-eclipse map module — NEXT, and now unblocked.** The log shipped
+  (HANDOFF §14.1), so `scLogRows()` exists and the selection source is real. Port
+  `tshirt/umbral_paths.html` into `js/` as a module.
+  **It is a smaller job than tshirt/HANDOFF_umbral_map.md implies** — that doc describes the
+  ORIGINAL Python/shapely build. The tool already has a working runtime JS path: `fetchAll()`
+  pulls the `.json.gz` chunks, `DecompressionStream` unzips, `buildBands()` builds the rings,
+  and **`splitEdge()` already handles the antimeridian** by normalising into ±180 and cutting
+  where the jump exceeds 180°. No clipping library, no shapely, nothing to vendor.
+  What actually changes:
+  - **Data source.** Swap `fetchAll()`'s two hardcoded raw.githubusercontent URLs for the
+    app's `loadChunk()`. This is the change that matters: as written it is network-only and
+    hits GitHub, which breaks the offline promise. Reading the precached chunks also drops the
+    decompress step entirely.
+  - **Selection.** Replace the year-range filter with the saved log. Selection checkboxes go
+    in the column left of the type icon in each log row — **that column is already reserved
+    and commented for exactly this** (`app.css` `.log-row`, and the render function).
+  - **Locations.** New, and small: project each entry's `[lon, lat]` through the same
+    `project()` the bands use, draw a dot. Only entries that have a `loc`.
+  - **Export.** Already there, unchanged.
+  Two pre-existing quirks worth knowing before porting, both in the current tool:
+  - `buildBands` pairs `nSegs[i]` with `sSegs[i]` by index under `Math.min`. If a band's north
+    and south edges split into different segment counts at the antimeridian, pieces are
+    silently dropped — a wrong-map-no-error failure.
+  - The filter requires BOTH `umbra_n` and `umbra_s`, so every one-limit eclipse (`A+`, `Tn`,
+    `As`… ~187 of them) is excluded outright. Fine for a t-shirt, but it is a choice rather
+    than an accident.
 
 ---
 
