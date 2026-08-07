@@ -1150,21 +1150,28 @@
     /* A proper tap target. At 1.3rem of glyph with 0.2rem of padding this was
        well under the 44px minimum, and on a phone it is the main way out — the
        backdrop is only the top ~12% of the screen. */
+    /* A LABELLED button, not a bare glyph. A lone × in the corner of a sheet
+       was reported as "no indication of how to escape" — the word is what makes
+       it read as a way out. Full 44px tap target, bordered so it reads as a
+       control rather than decoration. */
     .sheet-close {
       margin-left:     auto;
       display:         flex;
       align-items:     center;
       justify-content: center;
-      width:           2.75rem;
-      height:          2.75rem;
-      margin-right:    -0.5rem;
-      background:      none;
-      border:          none;
+      gap:             0.1rem;
+      min-height:      2.4rem;
+      padding:         0 0.7rem;
+      background:      transparent;
+      border:          1px solid var(--edge);
+      border-radius:   var(--radius);
       color:           var(--text);
-      font-size:       1.6rem;
+      font-family:     var(--mono);
+      font-size:       0.78rem;
+      letter-spacing:  0.06em;
       line-height:     1;
       cursor:          pointer;
-      padding:         0;
+      flex:            0 0 auto;
     }
     .sheet-close:hover { color: var(--text-pale); }
 
@@ -1500,13 +1507,16 @@
       position:        absolute;
       left:            0;
       right:           0;
-      /* Clear of the iOS home indicator. At bottom:0 the scrubber sits exactly
-         in the system's swipe-up gesture zone, so dragging it switches apps
-         instead of scrubbing — unusable in the installed PWA, which is where
-         shadows matter most. viewport-fit=cover is already set on the viewport
-         meta, so env() reports the real inset; the 0px fallback keeps every
-         other platform pixel-identical to before. */
-      bottom:          env(safe-area-inset-bottom, 0px);
+      /* The PANEL runs to the very bottom of the screen so there is no stripe
+         of map showing beneath it; the CONTROLS are lifted clear of the iOS
+         home indicator by padding instead. At bottom:0 with no padding the
+         scrubber sat in the system's swipe-up gesture zone and dragging it
+         switched apps. viewport-fit=cover is already set on the viewport meta,
+         so env() reports the real inset, and the 0px fallback leaves every
+         other platform pixel-identical. */
+      bottom:          0;
+      padding-bottom:  env(safe-area-inset-bottom, 0px);
+      box-sizing:      content-box;
       z-index:         20;
       display:         flex;
       align-items:     stretch;
@@ -1521,7 +1531,9 @@
        so the SCRUBBER TRACK itself, not just the panel edge, is out of the
        gesture zone. Browsers ignore this (display-mode: browser). */
     @media all and (display-mode: standalone) {
-      .shadow-timeline { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); }
+      /* A little extra so the scrubber TRACK, not just the panel edge, is out
+         of the gesture zone. Browsers ignore this (display-mode: browser). */
+      .shadow-timeline { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); }
     }
 
     .shadow-readout {

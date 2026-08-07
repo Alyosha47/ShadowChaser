@@ -1,7 +1,8 @@
 # ShadowChaser — HANDOFF (consolidated 2026-07-19; §4 terrain shadows WIRED IN 2026-07-28;
 #   §13 basemap/connectivity rewrite + non-central durations 2026-07-29;
 #   §11 pre-ship GATE run and PASSED 2026-08-04;
-#   §14 user log SHIPPED + visual language decided 2026-08-05)
+#   §14 user log SHIPPED + visual language decided 2026-08-05;
+#   §15 renamed to followtheshadow, t-shirt poster, iOS fixes 2026-08-06)
 
 Single authoritative status + knowledge document. Supersedes all prior HANDOFF versions and
 the 2026-07-18 correction block. `TODO.md` owns durable task detail; this file owns status,
@@ -1240,3 +1241,76 @@ the cache says "no coordinates" but the box plainly contains a pair, it re-parse
 Guarded by a literal regex, so it costs nothing normally and cannot invent a location.
 **The underlying trigger was never reproduced** — if this recurs, the stale cache was not the
 mechanism, which is itself worth knowing.
+
+
+---
+
+## 15. followtheshadow — RENAME, POSTER, iOS (2026-08-06)
+
+### 15.1 The app is now "followtheshadow"
+Renamed throughout: page title, `apple-mobile-web-app-title`, on-screen `.app-title`,
+manifest `name`/`short_name`, the offline page, share text, log export filename, module
+headers. The service worker cache is now `followtheshadow-<BUILD>`.
+
+**NOT renamed, deliberately:** the localStorage keys (`sc.log`, `sc_shadow_opacity`). They
+are invisible, and renaming them wipes the log for no gain.
+
+### 15.2 Cesium was still being precached — and hid two real bugs
+`vendor/cesium-1.121/` **does not exist**, but `sw.js` still listed the engine entry in CORE
+and a ~130-file worker array. `precache()` swallows failures, so this was silent: every
+install fired ~130 doomed requests.
+
+Removing it exposed what the list was missing:
+- **MapLibre and deck.gl were never precached** — ~1.9 MB of the engine actually in use,
+  cached only opportunistically after first load. A fresh install that went offline before
+  then had NO MAP. Now in CORE.
+- **`data/basemap/land.geojson.gz` was not precached** either, despite map.js marking it
+  "required (coastline outline)". Now in CORE.
+
+There is now a check that every path in CORE exists on disk. **If you add a vendor path,
+verify the file is there** — that is the whole lesson of this section.
+
+`.gitignore` still lists `vendor/cesium-1.121/`. Harmless, but it is the same residue.
+
+### 15.3 T-shirt poster (#F1a) — SHIPPED, with a known rough edge
+`js/tshirt.js`, opened from the Log panel's "Make map" button; selection is the checkbox
+column in each log row. Seven projections, four palettes, SVG + PNG export, pinch-zoom.
+Land comes from the app's own precached `land.geojson.gz`, not a 1.9 MB embed. Path records
+come through map.js's existing `loadPathChunk`.
+
+**The geometry took days and is still not perfect.** The corridor is built as a ribbon of
+per-timestep quads (not one closed polygon — that flooded polar caps and tore at the seam).
+Limbs are paired by TIME, not proximity. Steps wider than Espenak's maximum path width
+(1419 km = 12.8°) are dropped as failed pairings. Degenerate cross-sections near a pole are
+rebuilt from the centreline.
+
+**Known: `tools/checks/test_tshirt.js` fails 3 catalogue-wide assertions** — one band over 8%
+of the map, some bands extended past their limbs without cause, some centrelines drawn where
+the band doesn't reach. These date from the polar work and were never resolved.
+
+**Two approaches were tried and REJECTED, do not re-attempt without reading why:**
+- *One closed polygon, fill it.* Looks obviously right; produces a huge wrong wedge with the
+  centreline outside it. Verified by rendering.
+- *Extending limbs to the pole.* Produces a ragged notch and a pinch the centreline escapes
+  through, because in point-pole projections the two extensions converge.
+
+**The method that actually works for debugging this: rasterise the SVG and LOOK at it.**
+`cairosvg` + `PIL`. Days were lost measuring polygon area and quad widths — proxies that
+moved while the picture stayed wrong. Every defect was found within minutes of rendering.
+
+### 15.4 iOS
+- **Scrubber vs the home indicator.** The panel runs to `bottom: 0` so no map shows beneath
+  it; the CONTROLS are lifted by `padding-bottom: env(safe-area-inset-bottom)` (+8px in
+  standalone). At bottom:0 with no padding, dragging the scrubber switched apps.
+- **The red error banner during "Add to Home Screen"** was the opaque cross-origin error —
+  `Script error.` with no filename or line, which carries no information and is not ours.
+  iOS Safari raises one every time its share sheet is used. Now suppressed; anything with a
+  filename still reports.
+- **Sheet dismissal.** Four ways out: the "× Close" button (LABELLED — a bare glyph was not
+  read as an exit), backdrop tap, Escape, swipe-down. Only the labelled button is genuinely
+  discoverable; the rest are conveniences.
+- **Splash images are NOT declared.** iOS ignores any `apple-touch-startup-image` whose pixel
+  size doesn't match the device exactly, so full coverage needs 28 files. Sizes and naming
+  are in `icons/splash/README.md`. Until the artwork exists there are no tags — declaring
+  links to absent files is exactly the Cesium mistake. The home-screen ICON already works:
+  iOS 16.4+ takes it from the manifest.

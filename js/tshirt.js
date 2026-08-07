@@ -376,6 +376,37 @@ function limbAt(limb, f) {
   return [a[0] + dLon * t, a[1] + (b[1] - a[1]) * t];
 }
 
+/* ── Repairing the pole ────────────────────────────────────────────────
+   Cross-sections degenerate near a pole: for 2015-03-20 the last pair sits at
+   longitude -53 and +111 — 164 degrees apart, though only 3.7 degrees apart on
+   the globe. Any quad joining them is a long thin sliver, which is the notch at
+   the tip and the centreline escaping through it.
+
+   The CENTRELINE never degenerates: it is a smooth track all the way up. So
+   where the cross-section misbehaves, keep the centreline and rebuild the pair
+   as centre +- half the last good width, offset PERPENDICULAR to the track.
+
+   This is the cartoon part, and it is deliberate: the poster is a print, not a
+   navigation chart. Away from the pole the real limbs are used unchanged, so
+   the band is exact everywhere it can be. */
+
+/* Bearing from a to b, degrees clockwise from north. */
+function bearing(a, b) {
+  var la1 = a[1]*DEG, la2 = b[1]*DEG, dl = (b[0]-a[0])*DEG;
+  var y = Math.sin(dl)*Math.cos(la2);
+  var x = Math.cos(la1)*Math.sin(la2) - Math.sin(la1)*Math.cos(la2)*Math.cos(dl);
+  return Math.atan2(y, x) / DEG;
+}
+
+/* Point `d` degrees of great circle from `p` along `brg`. */
+function offsetPt(p, brg, d) {
+  var la = p[1]*DEG, lo = p[0]*DEG, ad = d*DEG, th = brg*DEG;
+  var la2 = Math.asin(Math.sin(la)*Math.cos(ad) + Math.cos(la)*Math.sin(ad)*Math.cos(th));
+  var lo2 = lo + Math.atan2(Math.sin(th)*Math.sin(ad)*Math.cos(la),
+                            Math.cos(ad) - Math.sin(la)*Math.sin(la2));
+  return [lo2/DEG, la2/DEG];
+}
+
 function pairWalk(nLimb, sLimb) {
   var steps = Math.max(nLimb.length, sLimb.length) - 1;
   if (steps < 1) return [];
@@ -384,7 +415,67 @@ function pairWalk(nLimb, sLimb) {
     var f = i / steps;
     pairs.push([limbAt(nLimb, f), limbAt(sLimb, f)]);
   }
+  pairs = repairDegenerate(pairs, centreOf(pairs));
+  /* Drop the final cross-section when it was reconstructed. It is the most
+     extreme one — the very tip of the track — and its outer corner is what
+     leaves a V-notch in the band's edge. One step is ~0.02 degrees of track;
+     losing it is invisible, keeping it is not. */
+  if (pairs.length > 3 && pairs[pairs.length - 1].rebuilt) pairs.pop();
   return pairs;
+}
+
+/* The track's own centreline, from the midpoint of each cross-section. Used
+   only where the cross-section is sane; that is exactly where the midpoint is
+   trustworthy. */
+function centreOf(pairs) {
+  return pairs.map(function (pr) {
+    var d = pr[1][0] - pr[0][0];
+    while (d >  180) d -= 360;
+    while (d < -180) d += 360;
+    return [pr[0][0] + d/2, (pr[0][1] + pr[1][1]) / 2];
+  });
+}
+
+/* A cross-section is degenerate when its two ends are far apart in longitude
+   while being close on the globe — the signature of straddling the pole. */
+function isDegenerate(pr) {
+  var d = Math.abs(pr[0][0] - pr[1][0]);
+  while (d > 180) d = 360 - d;
+  return d > 60 && angSep(pr[0], pr[1]) < MAX_CORRIDOR_DEG;
+}
+
+function repairDegenerate(pairs, centre) {
+  /* Rebuild a few steps BEFORE the first degenerate one as well. Switching
+     construction abruptly leaves a notch in the band's edge where the measured
+     cross-section and the reconstructed one don't line up; easing in over a few
+     steps hides the join. */
+  var bad = pairs.map(isDegenerate);
+  for (var i = 0; i < bad.length; i++) {
+    if (!bad[i]) continue;
+    for (var k = Math.max(0, i - 4); k < i; k++) bad[k] = true;
+    break;
+  }
+  /* Last width measured on a well-behaved cross-section, carried forward.
+     Width changes slowly along a track, so this is a good approximation
+     exactly where the measurement itself has broken down. */
+  var lastW = null, out = [];
+  for (var i = 0; i < pairs.length; i++) {
+    if (!bad[i]) {
+      lastW = angSep(pairs[i][0], pairs[i][1]);
+      out.push(pairs[i]);
+      continue;
+    }
+    if (lastW === null) { out.push(pairs[i]); continue; }  /* nothing to go on */
+
+    /* Rebuild as centre +- half the carried width, square to the track. */
+    var c  = centre[i];
+    var pv = centre[Math.max(0, i - 1)], nx = centre[Math.min(centre.length - 1, i + 1)];
+    var brg = bearing(pv, nx);
+    var pr2 = [offsetPt(c, brg - 90, lastW / 2), offsetPt(c, brg + 90, lastW / 2)];
+    pr2.rebuilt = true;      /* so the midline can stop before this section */
+    out.push(pr2);
+  }
+  return out;
 }
 
 /* Put a quad's longitudes in one local frame: no vertex more than 180 from the
@@ -417,8 +508,9 @@ function quadStrips(q) {
 }
 
 /* The ribbon: one quad per step of the paired walk. */
-function ribbonQuads(nLimb, sLimb) {
+function ribbonQuads(nLimb, sLimb, outPairs) {
   var pairs = pairWalk(nLimb, sLimb);
+  if (outPairs) pairs.forEach(function (pr) { outPairs.push(pr); });
   var quads = [];
 
   for (var i = 1; i < pairs.length; i++) {
@@ -513,34 +605,13 @@ function lerpPt(a, b, t) {
   return [a[0] + dLon * t, a[1] + (b[1] - a[1]) * t];
 }
 
-/* Continue a limb to the pole when the centreline goes beyond it. Returns the
-   limb unchanged when it doesn't, so ordinary eclipses are untouched. */
-function extendToPole(limb, centre, limbMax){
-  if(!centre||!centre.length||limb.length<2) return limb;
-  const centreMax = Math.max(...centre.map(q=>Math.abs(q[1])));
-  if(centreMax <= limbMax + 0.05) return limb;      /* not a polar run-off */
-
-  const end = limb[limb.length-1];
-  /* Only if THIS limb actually ENDS at the shared poleward extreme — otherwise
-     its data stopped for some other reason and extending would invent it. */
-  if(Math.abs(Math.abs(end[1]) - limbMax) > 0.05) return limb;
-
-  const pole = end[1] > 0 ? 90 : -90;
-  const out  = limb.slice();
-  const steps = Math.max(2, Math.ceil(Math.abs(pole - end[1]) / 0.15));
-  for(let i=1;i<=steps;i++){
-    out.push([end[0], end[1] + (pole - end[1]) * (i/steps)]);
-  }
-  return out;
-}
-
 function buildBands(records){
   const typeMap={T:'total',A:'annular',H:'hybrid'};
   return records
     .filter(r=>'TAH'.includes((r.type||'')[0])&&
                r.umbra_n&&r.umbra_s&&r.umbra_n[0]&&r.umbra_s[0])
     .map(r=>{
-      let nRaw=r.umbra_n[0], sRaw=r.umbra_s[0];
+      const nRaw=r.umbra_n[0], sRaw=r.umbra_s[0];
       if(nRaw.length<2||sRaw.length<2)return null;
       /* Where the CENTRELINE runs closer to the pole than either limb, the limb
          data has simply stopped — both limbs end at their own poleward extreme
@@ -548,33 +619,36 @@ function buildBands(records){
          centreline reaching the top with no band around it. Extend each limb
          along its own final longitude to the pole so the ribbon closes the gap;
          the quads stay contiguous, so no striping. */
-      /* Compare against BOTH limbs. A centreline that outreaches only ONE limb
-         means nothing — that is the normal asymmetry of a corridor, and testing
-         limb-by-limb extended bands 9 degrees past where they belong. Only when
-         the centreline goes beyond BOTH has the limb data genuinely run out. */
-      {
-        const limbMax = Math.max(
-          ...nRaw.map(q=>Math.abs(q[1])), ...sRaw.map(q=>Math.abs(q[1])));
-        nRaw = extendToPole(nRaw, r.centreline&&r.centreline[0], limbMax);
-        sRaw = extendToPole(sRaw, r.centreline&&r.centreline[0], limbMax);
-      }
+      /* NOT extended to the pole. Appending points along each limb's final
+         longitude was tried (both limbs run to latitude 90): in projections
+         where the pole is a point the two extensions converge, leaving a ragged
+         notch at the tip and a pinch the centreline shows through. The band is
+         drawn only where the limb data actually is; the centreline is trimmed
+         to match, below, so nothing is left hanging. */
       /* One quad per time step. No unwrapping, no ring assembly, no polar caps,
          no annulus, no thresholds — see the ribbon note above. */
-      const pieces=ribbonQuads(rotRing(nRaw), rotRing(sRaw));
+      const pairs=[];
+      const pieces=ribbonQuads(rotRing(nRaw), rotRing(sRaw), pairs);
       if(!pieces.length)return null;
       const date=`${r.year}-${String(r.month).padStart(2,'0')}-${String(r.day).padStart(2,'0')}`;
-      /* Never draw centreline where there is no band. Where a limb ENDS at its
-         poleward extreme the band is extended to the pole above (2015-03-20).
-         Where the limb passes near the pole MID-track and comes back
-         (2753-07-22) there is no honest way to extend it — the data stops and
-         inventing it is what went wrong repeatedly — so the centreline is
-         trimmed to the latitudes the band actually covers instead. Either way
-         no bare centreline is left running to the top of the map. */
-      const bandMaxLat=Math.max(...pieces.flat().map(q=>Math.abs(q[1])));
-      const clRaw=r.centreline&&r.centreline[0];
-      const clSegs=clRaw
-        ? splitEdge(rotRing(clRaw.filter(q=>Math.abs(q[1])<=bandMaxLat+0.02)))
-            .filter(x=>x.length>1)
+      /* The centreline is the RIBBON'S OWN midline — the midpoint of each
+         cross-section — not the separately-supplied centreline track. Drawn
+         from the same pairs that build the band, it is inside it by
+         construction, so it can never poke out at the tip. (It coincides with
+         the supplied centreline wherever the cross-sections are real, which is
+         everywhere except the polar tail.) The two end points are dropped so
+         the line stops just short of the band's blunt end rather than touching
+         it. */
+      /* Stop the midline before the rebuilt section. Through the polar tail the
+         cross-sections are reconstructed rather than measured, and the midline
+         there swings as the construction takes over — a visible hook at the
+         tip. The band still runs to the end; the line just doesn't chase it
+         into the part that is drawn rather than computed. */
+      let lastReal=pairs.length;
+      while(lastReal>0 && pairs[lastReal-1].rebuilt) lastReal--;
+      const mid=centreOf(pairs.slice(0,lastReal));
+      const clSegs=mid.length>4
+        ? splitEdge(mid.slice(1,-1)).filter(x=>x.length>1)
         : null;
       return{id:r.cat_no||date,date,year:r.year,
              type:typeMap[r.type[0]]||'total',pieces,clSegs};
@@ -768,6 +842,8 @@ function tsOpen() {
   document.body.classList.add('sheet-open');
   document.addEventListener('keydown', tsKeydown);
   tsAttachSwipe();
+  tsAttachZoom();
+  tsResetZoom();
   body.innerHTML = '<div class="ts-wait">Building\u2026</div>';
 
   /* Locations the user saved, one dot each. */
@@ -801,6 +877,7 @@ function tsRedraw() {
      redrawn — clipping happens at build time. */
   if (lon0 !== currentLon0) { currentLon0 = lon0; if (_tsRecs) _tsBands = buildBands(_tsRecs); }
   body.innerHTML = tsRenderSVG(_tsBands, proj, pal, _tsLand, _tsMarks);
+  tsApplyZoom();     /* keep the current zoom across a projection change */
   body.style.background = (PALETTES[pal] || {}).bg || 'transparent';
   var n = document.getElementById('ts-count');
   if (n) n.textContent = _tsBands.length + ' band' + (_tsBands.length === 1 ? '' : 's');
@@ -818,6 +895,82 @@ function tsKeydown(e) {
   if (e.key === 'Escape' || e.key === 'Esc') tsClose();
 }
 
+/* ── Pinch-zoom the poster ──────────────────────────────────────────────
+   The app disables page zoom globally (user-scalable=no on the viewport meta,
+   so the map doesn't fight the browser), which also freezes the poster at one
+   size. This gives the sheet its own zoom: pinch to scale, drag to pan, double
+   tap to reset. It only ever transforms the SVG inside .sheet-content, so it
+   cannot affect the page.
+
+   Deliberately not a library: two touches and a transform is the whole job. */
+var _tsZoom = { k: 1, x: 0, y: 0 };
+
+function tsApplyZoom() {
+  var svg = document.querySelector('#tshirt-canvas svg');
+  if (!svg) return;
+  svg.style.transformOrigin = '50% 50%';
+  svg.style.transform = 'translate(' + _tsZoom.x + 'px,' + _tsZoom.y + 'px) scale(' + _tsZoom.k + ')';
+}
+
+function tsResetZoom() {
+  _tsZoom = { k: 1, x: 0, y: 0 };
+  tsApplyZoom();
+}
+
+function tsAttachZoom() {
+  var el = document.getElementById('tshirt-canvas');
+  if (!el || el.dataset.zoom) return;
+  el.dataset.zoom = '1';
+
+  var start = null, lastTap = 0;
+
+  var dist = function (t) {
+    return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  };
+  var mid = function (t) {
+    return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
+  };
+
+  el.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 2) {
+      start = { d: dist(e.touches), k: _tsZoom.k,
+                m: mid(e.touches), x: _tsZoom.x, y: _tsZoom.y };
+    } else if (e.touches.length === 1 && _tsZoom.k > 1) {
+      start = { pan: true, sx: e.touches[0].clientX, sy: e.touches[0].clientY,
+                x: _tsZoom.x, y: _tsZoom.y };
+    } else {
+      /* Double tap resets — the usual way out of a zoom. */
+      var now = Date.now();
+      if (now - lastTap < 320) { tsResetZoom(); lastTap = 0; }
+      else lastTap = now;
+      start = null;
+    }
+  }, { passive: true });
+
+  el.addEventListener('touchmove', function (e) {
+    if (!start) return;
+    if (start.pan && e.touches.length === 1) {
+      _tsZoom.x = start.x + (e.touches[0].clientX - start.sx);
+      _tsZoom.y = start.y + (e.touches[0].clientY - start.sy);
+      tsApplyZoom();
+      e.preventDefault();                 /* don't let it scroll or dismiss */
+      return;
+    }
+    if (e.touches.length === 2) {
+      var k = start.k * (dist(e.touches) / start.d);
+      _tsZoom.k = Math.max(1, Math.min(8, k));
+      var m = mid(e.touches);
+      _tsZoom.x = start.x + (m.x - start.m.x);
+      _tsZoom.y = start.y + (m.y - start.m.y);
+      if (_tsZoom.k === 1) { _tsZoom.x = 0; _tsZoom.y = 0; }
+      tsApplyZoom();
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  el.addEventListener('touchend', function () { start = null; }, { passive: true });
+}
+
 /* Swipe DOWN on the sheet to dismiss — the gesture people already expect from
    an iOS sheet, and on a phone the backdrop is only the top ~12% of the screen,
    so tapping outside is a poor target. Only fires on a clear downward drag
@@ -828,8 +981,10 @@ function tsAttachSwipe() {
   body.dataset.swipe = '1';
   var y0 = null;
   body.addEventListener('touchstart', function (e) {
-    /* Ignore drags that begin on a control. */
+    /* Ignore drags that begin on a control, and any drag while the poster is
+       zoomed in — there a one-finger drag is a pan, not a dismiss. */
     if (e.target.closest('select, button, input')) { y0 = null; return; }
+    if (_tsZoom.k > 1) { y0 = null; return; }
     y0 = e.touches[0].clientY;
   }, { passive: true });
   body.addEventListener('touchend', function (e) {
@@ -901,6 +1056,7 @@ function tsDownload(blob, ext) {
   window.tsRedraw    = tsRedraw;
   window.tsExportSVG = tsExportSVG;
   window.tsExportPNG = tsExportPNG;
+  window.tsResetZoom = tsResetZoom;
 
   /* Test seam: the checks assert that every <option> in the sheet resolves to
      a real palette and projection. Read-only. */

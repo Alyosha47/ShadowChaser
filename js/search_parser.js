@@ -1,5 +1,5 @@
 /**
- * search_parser.js  —  ShadowChaser
+ * search_parser.js  —  followtheshadow
  * ──────────────────────────────────────────────────────────────────────────
  * Unified search parser and filter for the eclipse catalogue.
  *

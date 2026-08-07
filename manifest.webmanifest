@@ -1,6 +1,6 @@
 {
-  "name": "ShadowChaser",
-  "short_name": "ShadowChaser",
+  "name": "followtheshadow",
+  "short_name": "followtheshadow",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

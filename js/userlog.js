@@ -450,7 +450,7 @@ function scLogExport() {
   var a    = document.createElement('a');
   var d    = new Date();
   a.href     = URL.createObjectURL(blob);
-  a.download = 'shadowchaser-log-' + d.getFullYear()
+  a.download = 'followtheshadow-log-' + d.getFullYear()
              + String(d.getMonth() + 1).padStart(2, '0')
              + String(d.getDate()).padStart(2, '0') + '.json';
   document.body.appendChild(a);
@@ -470,7 +470,7 @@ function scLogImportPrompt() {
     fr.onload = function () {
       try {
         var obj = JSON.parse(fr.result);
-        if (!obj || !obj.entries) throw new Error('not a ShadowChaser log');
+        if (!obj || !obj.entries) throw new Error('not a followtheshadow log');
         var merged = scLogLoad();
         var added  = 0, updated = 0;
         for (var k in obj.entries) {

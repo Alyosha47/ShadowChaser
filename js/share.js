@@ -47,7 +47,7 @@ function buildShareText() {
   lines.push('');
   lines.push(buildShareUrl());
   lines.push('');
-  lines.push('ShadowChaser app by followtheshadow.com');
+  lines.push('followtheshadow.com');
   return lines.join('\n');
 }
 

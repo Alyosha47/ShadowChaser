@@ -1,5 +1,5 @@
 /**
- * cities.js  —  ShadowChaser
+ * cities.js  —  followtheshadow
  * ──────────────────────────────────────────────────────────────────────────
  * City lookup against the basemap's loaded cities GeoJSON. Used by the
  * search parser to let users type a city name in place of explicit coords:

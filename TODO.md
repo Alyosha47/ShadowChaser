@@ -14,7 +14,13 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-08-05 — **user log (#F1) SHIPPED** (`js/userlog.js`, HANDOFF §14.1) and the
+Last touched: 2026-08-06 — **renamed to followtheshadow**; **t-shirt poster (#F1a) SHIPPED**
+(HANDOFF §15.3, geometry still has 3 failing catalogue assertions); Cesium purged from the
+service worker, which exposed that **MapLibre, deck.gl and land.geojson were never precached**
+(§15.2); iOS fixes — scrubber clear of the home indicator, sheet dismissal, share-sheet error
+banner suppressed, install advice in About (§15.4). BUILD `2026-08-06n`.
+
+Prior: 2026-08-05 — **user log (#F1) SHIPPED** (`js/userlog.js`, HANDOFF §14.1) and the
 **visual language DECIDED and enforced** (HANDOFF §14.2, `test_hygiene.js` §7). Also: basemap
 picker collapses on phones and animates open; Topo-at-high-zoom blank fixed (§14.3); search
 hint strip and separate coordinate line removed, the location pill now carries the
@@ -44,16 +50,18 @@ HANDOFF §2. Kept for history.)
 *(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. Terrain
 shadows are DONE and wired in (HANDOFF §4). Priorities are the USER's to set — this is a
 suggestion.)*
-1. **#F1a t-shirt / multi-eclipse map module** — the log shipped, so this is unblocked and
-   is the next build. See FEATURES — HARD.
-2. **Settings → Info.** Almost nothing in that tab is a setting: the timezone control is
+1. **Settings → Info.** Almost nothing in that tab is a setting: the timezone control is
    redundant (the contacts-table header already toggles time mode inline) and the shadow
    slider belongs with the overlay it drives, not in a settings list. Rename, drop the
-   timezone row, rehome the slider.
-3. **Overlay sheet pattern.** Three overlays are coming; the iOS sheet paradigm applied on
-   desktop too. The share modal is already that pattern — reuse it rather than growing three
-   bespoke control clusters competing with the basemap picker for the top strip. Do this
-   ONCE, before the overlays land.
+   timezone row, rehome the slider. Small, self-contained, visible — a good re-entry after
+   a long session on geometry.
+2. **Overlay sheet pattern.** Three overlays are coming; the sheet already exists and works
+   (`.sheet` in app.css, built for the poster and deliberately generic). Reuse it rather than
+   growing three bespoke control clusters competing with the basemap picker for the top
+   strip. Do this ONCE, before the overlays land.
+3. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
+   Deliberately NOT first: it is the least visible and the most likely to consume a whole
+   session. Read HANDOFF §15.3 before starting.
 4. **Search temporal tokens** — needs a design decision before any code (low priority; not
    currently bothering the user).
 5. Remaining open bugs → UX deliberations → Features.
@@ -328,47 +336,17 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   that scrubs *terrain* shadows at one place; #F3 animates the *umbra/penumbra footprint*
   sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
   clean precedent for the time-plumbing.
-- **#F1a T-shirt / multi-eclipse map module — NEXT, and now unblocked.** The log shipped
-  (HANDOFF §14.1), so `scLogRows()` exists and the selection source is real. Port
-  `tshirt/umbral_paths.html` into `js/` as a module.
-  **It is a smaller job than tshirt/HANDOFF_umbral_map.md implies** — that doc describes the
-  ORIGINAL Python/shapely build. The tool already has a working runtime JS path: `fetchAll()`
-  pulls the `.json.gz` chunks, `DecompressionStream` unzips, `buildBands()` builds the rings,
-  and **`splitEdge()` already handles the antimeridian** by normalising into ±180 and cutting
-  where the jump exceeds 180°. No clipping library, no shapely, nothing to vendor.
-  What actually changes:
-  - **Data source.** Swap `fetchAll()`'s two hardcoded raw.githubusercontent URLs for the
-    app's `loadChunk()`. This is the change that matters: as written it is network-only and
-    hits GitHub, which breaks the offline promise. Reading the precached chunks also drops the
-    decompress step entirely.
-  - **Selection.** Replace the year-range filter with the saved log. Selection checkboxes go
-    in the column left of the type icon in each log row — **that column is already reserved
-    and commented for exactly this** (`app.css` `.log-row`, and the render function).
-  - **Locations.** New, and small: project each entry's `[lon, lat]` through the same
-    `project()` the bands use, draw a dot. Only entries that have a `loc`.
-  - **Export.** Already there, unchanged.
-  Two pre-existing quirks worth knowing before porting, both in the current tool:
-  - **Seam/pole handling — SOLVED 2026-08-06 by changing the MODEL, after four failed
-    patches.** The corridor was treated as one closed polygon (north limb out, south limb
-    back), which forces global reasoning about winding number, antimeridian crossings and
-    polar caps — each needing a threshold that is wrong for some eclipse. That produced, in
-    order: torn bands, wedges to the seam, caps flooding the pole, and an even-odd annulus
-    with a hand-tuned trigger. **The corridor is not a polygon; it is a RIBBON of quads**,
-    one per time step between the two limbs. Each quad is a couple of degrees across, so it
-    cannot wrap, wind, or enclose a pole, and all the special cases vanish. The last real bug
-    was pairing the limbs by array-index fraction: they are sampled independently and a limb
-    running off the disc is much shorter (109-02-17 has 564 north points to 90 south), so
-    pairing must be by POSITION — a monotonic two-pointer walk. Result: **zero of 7,517 bands
-    cover more than 5% of the map**, versus a badly broken tail before. Guarded by
-    `tools/checks/test_tshirt.js` §8, which sweeps the entire catalogue.
-    Note the stored path data uses UNWRAPPED longitudes (values past +-180); anything
-    consuming it must normalise first.
-    Related: `map.js` DISABLES umbra fill for exactly the reasons above ("Umbra fill
-    (disabled)") and drops 23 polar ovals. **The ribbon is the technique that would let the
-    globe fill corridors too**, if that is ever wanted.
-  - The filter requires BOTH `umbra_n` and `umbra_s`, so every one-limit eclipse (`A+`, `Tn`,
-    `As`… ~187 of them) is excluded outright. Fine for a t-shirt, but it is a choice rather
-    than an accident.
+- **#F1b T-shirt poster — finish the geometry.** SHIPPED and usable (HANDOFF §15.3), but
+  `tools/checks/test_tshirt.js` **fails 3 catalogue-wide assertions**: one band over 8% of the
+  map, some bands drawn past their own limbs, some centrelines drawn where the band doesn't
+  reach. All in the polar tail, all from the same root: near a pole the corridor's
+  cross-section degenerates (for 2015-03-20 the last pair is 164° apart in longitude but 3.7°
+  apart on the globe).
+  **Before touching it, read §15.3 — two obvious-looking approaches were tried and produce
+  visibly worse output.** And rasterise the SVG and LOOK; measuring polygon area cost days.
+- **Splash images.** 28 PNGs, sizes in `icons/splash/README.md`, then add the `<link>` tags.
+  One design exported at many sizes — or hand a master image over and have it generated.
+  Cosmetic: without it iOS opens on the manifest background colour, which matches the app.
 
 ---
 

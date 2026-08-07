@@ -84,7 +84,7 @@ function renderData(rec, _tz, _lat, _lon) {
     var _e = selectedEntry;
     var _iso = _e.year + '-' + String(_e.month).padStart(2, '0') + '-' + String(_e.day).padStart(2, '0');
     var _tc = { T: 'TSE', A: 'ASE', H: 'HSE', P: 'PSE' }[(_e.eclipse_type || 'P')[0]] || 'SE';
-    document.title = _tc + ' ' + _iso + ' \u2014 ShadowChaser';
+    document.title = _tc + ' ' + _iso + ' \u2014 followtheshadow';
   } catch (e) {}
   /* Fall back to the cached Besselian record for this eclipse — callers
      that re-render without recomputing (pill toggles, URL restore) don't

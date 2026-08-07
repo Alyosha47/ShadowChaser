@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="build" content="">   <!-- filled from BUILD at runtime -->
-  <title>ShadowChaser</title>
+  <title>followtheshadow</title>
   <style>
     @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
       src: url('./fonts/CormorantGaramond-Light.woff2') format('woff2'); }
@@ -17,6 +17,78 @@
   </style>
   <link href="vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
   <link rel="manifest" href="manifest.webmanifest">
+  <!-- iOS home-screen behaviour. The ICON already comes from the manifest
+       (iOS 16.4+ reads manifest icons), so no apple-touch-icon is needed; the
+       SPLASH does not — apple-touch-startup-image is the only route, and iOS
+       ignores any image whose pixel size doesn't match the device exactly,
+       which is why there is one tag per device per orientation.
+       Missing sizes simply fall back to the manifest background_color, so an
+       incomplete set degrades quietly rather than breaking. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="followtheshadow">
+  <!-- Launch images. iOS ignores any apple-touch-startup-image whose pixel
+       size does not match the device exactly, hence one tag per device per
+       orientation. Files are in icons/splash/ — see the README there.
+       A device not listed falls back to the manifest background_color
+       (#0b0e14), which matches the app. -->
+  <link rel="apple-touch-startup-image" href="icons/splash/1290x2796.png"
+        media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2796x1290.png"
+        media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1179x2556.png"
+        media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2556x1179.png"
+        media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1284x2778.png"
+        media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2778x1284.png"
+        media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1170x2532.png"
+        media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2532x1170.png"
+        media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1125x2436.png"
+        media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2436x1125.png"
+        media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1242x2688.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2688x1242.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/828x1792.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1792x828.png"
+        media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/750x1334.png"
+        media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1334x750.png"
+        media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1242x2208.png"
+        media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2208x1242.png"
+        media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2048x2732.png"
+        media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2732x2048.png"
+        media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1668x2388.png"
+        media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2388x1668.png"
+        media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1620x2160.png"
+        media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2160x1620.png"
+        media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1668x2224.png"
+        media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2224x1668.png"
+        media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+  <link rel="apple-touch-startup-image" href="icons/splash/1536x2048.png"
+        media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <link rel="apple-touch-startup-image" href="icons/splash/2048x1536.png"
+        media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+
   <meta name="theme-color" content="#0b0e14">
   <script src="vendor/maplibre-gl-csp-5.5.0.js"></script>
   <!-- deck.gl renders ALL eclipse geometry (PathLayer / SolidPolygonLayer) as a
@@ -36,14 +108,14 @@
   </script>
     <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-08-06i">
+  <link rel="stylesheet" href="css/app.css?v=2026-08-06o">
 </head>
 <body>
 
   <!-- ── Header ──────────────────────────────────────────────────────── -->
 
   <header class="app-header">
-    <div class="app-title">ShadowChaser</div>
+    <div class="app-title">followtheshadow</div>
   </header>
   <!-- 1px indeterminate progress bar: sits on the banner's bottom hairline and crawls
        whenever any tracked asset fetch is in flight (chunks, paths, basemap). -->
@@ -71,7 +143,7 @@
     <div class="sheet-head">
       <span class="sheet-title">Umbral paths</span>
       <span class="sheet-sub" id="ts-count"></span>
-      <button class="sheet-close" onclick="tsClose()" aria-label="Close">&times;</button>
+      <button class="sheet-close" onclick="tsClose()" aria-label="Close">&times;&nbsp;Close</button>
     </div>
     <div class="sheet-content" id="tshirt-canvas"></div>
     <div class="sheet-foot">
@@ -422,6 +494,7 @@
         <div class="about-text">
           <p>My name is Guy, and I have been following eclipses since a fateful camping trip back in <a href="https://followtheshadow.com/app/#e=9495&amp;q=1994%20annular%20(39.48110%2C%20-88.68215)">May 1994</a>. We all ate mushrooms and sat in a circle with drums between our knees, silver glasses on our faces, grinning like fools and staring upwards at the ring of fire. That kind of sealed the deal, and certainly changed my life. Since then, I have always had a direction &mdash; an endless series of predictable glorious events &mdash; to pursue: across mountains, jungles, and deserts, to the very farthest corners of the globe.</p>
           <p>Although there are many eclipse-adventure-planning tools out there (Thank you, Mr. Espenak! Merci, M. Jubier!), I still missed certain features: search-by-date (all the eclipses on your birthday), search-by-location (what, no TSEs in <a href="https://followtheshadow.com/app/#e=6927&amp;q=ouagadougou%20total%20900-2026">Ouagadougou</a> since the year 913&#8253;), search-by-vibe (was there a total eclipse right near but not in <a href="https://followtheshadow.com/app/#e=9408&amp;q=1950-1960%20total%20%3E50%25%20oslo">Oslo</a> sometime in the 50s?), historical cloud data overlays (did he just use the C-word?), shadow-mapping from local topographies (d&rsquo;oh that hill is in the way!), and offline map caching for in-the-field use. This app tries to cover all the bases in one convenient package, to help plan syzygystic adventures more efficiently. I also learned a <em>ton</em> about Besselian geometry while making it, which is always so much fun.</p>
+          <p><strong>On a phone, add it to your home screen.</strong> Use your browser&rsquo;s share button and choose &ldquo;Add to Home Screen&rdquo;. Installed, it runs full-screen, keeps its offline data, and behaves like an app rather than a web page &mdash; which is the point, since it is built to work in a field with no signal.</p>
           <p>Tuned to Chrome + iOS and never tested on Android &mdash; if you have any suggestions or find any bugs, <a href="mailto:app@followtheshadow.com">drop me a line</a> &mdash; <strong>and don&rsquo;t stare at the sun!</strong></p>
         </div>
       </div>
@@ -440,10 +513,10 @@
 
 
 <!-- search_parser.js provides parseSearch(), applyFilter(), filterToString() -->
-<script src="js/search_parser.js?v=2026-08-06i"></script>
+<script src="js/search_parser.js?v=2026-08-06o"></script>
 
 <!-- eclipse.js provides computeEclipse(), fundamentalArgs(), sunAltAz(), findMaximum() -->
-<script src="js/eclipse.js?v=2026-08-06i"></script>
+<script src="js/eclipse.js?v=2026-08-06o"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
      Single source of truth for BUILD. The <meta> and build stamp auto-populate from it.
@@ -476,6 +549,15 @@
   }
   window.__scShowError = show;
   addEventListener('error', function (e) {
+    /* "Script error." with no filename or line is the OPAQUE cross-origin
+       error: the browser refuses to say anything about a script from another
+       origin. It carries zero information and is not from our code. iOS Safari
+       raises one every time its own share sheet is used, which put a red error
+       banner across the app during "Add to Home Screen" — the one moment we
+       most want to look trustworthy. Anything with a filename still reports. */
+    var opaque = (!e.filename || e.filename === '') && !e.lineno
+                 && /^script error/i.test(e.message || '');
+    if (opaque) return;
     show('error', (e.message || 'error') + '  @' + (e.filename || '?') + ':' + (e.lineno || '?')
       + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
   }, true);
@@ -525,7 +607,7 @@ window.scFlagFreshDetails = function () {
 };
 
 var DATA_BASE = './data';
-var BUILD     = '2026-08-06i';   /* ← THE single source. Everything below follows it. */
+var BUILD     = '2026-08-06o';   /* ← THE single source. Everything below follows it. */
 
 /* Propagate BUILD so it never has to be typed twice. The <meta name="build"> and
    every element with [data-build-stamp] are filled from this one constant, so a
@@ -552,21 +634,21 @@ if ('serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD, { updateViaCache: 'none' }));
 }
 </script>
-<script src="js/format.js?v=2026-08-06i"></script>
-<script src="js/state.js?v=2026-08-06i"></script>
-<script src="js/cities.js?v=2026-08-06i"></script>
-<script src="js/tabs.js?v=2026-08-06i"></script>
-<script src="js/search.js?v=2026-08-06i"></script>
-<script src="js/list.js?v=2026-08-06i"></script>
-<script src="js/local.js?v=2026-08-06i"></script>
-<script src="js/details.js?v=2026-08-06i"></script>
-<script src="js/url.js?v=2026-08-06i"></script>
-<script src="js/map.js?v=2026-08-06i"></script>
-<script src="js/shadow-layer.js?v=2026-08-06i"></script>
-<script src="js/shadow-ui.js?v=2026-08-06i"></script>
-<script src="js/tshirt.js?v=2026-08-06i"></script>
-<script src="js/userlog.js?v=2026-08-06i"></script>
-<script src="js/share.js?v=2026-08-06i"></script>
-<script src="js/init.js?v=2026-08-06i"></script>
+<script src="js/format.js?v=2026-08-06o"></script>
+<script src="js/state.js?v=2026-08-06o"></script>
+<script src="js/cities.js?v=2026-08-06o"></script>
+<script src="js/tabs.js?v=2026-08-06o"></script>
+<script src="js/search.js?v=2026-08-06o"></script>
+<script src="js/list.js?v=2026-08-06o"></script>
+<script src="js/local.js?v=2026-08-06o"></script>
+<script src="js/details.js?v=2026-08-06o"></script>
+<script src="js/url.js?v=2026-08-06o"></script>
+<script src="js/map.js?v=2026-08-06o"></script>
+<script src="js/shadow-layer.js?v=2026-08-06o"></script>
+<script src="js/shadow-ui.js?v=2026-08-06o"></script>
+<script src="js/tshirt.js?v=2026-08-06o"></script>
+<script src="js/userlog.js?v=2026-08-06o"></script>
+<script src="js/share.js?v=2026-08-06o"></script>
+<script src="js/init.js?v=2026-08-06o"></script>
 </body>
 </html>
