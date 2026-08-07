@@ -970,9 +970,9 @@
        checkboxes — do not put anything there. */
     .log-row {
       display:               grid;
-      grid-template-columns: auto 1fr auto;
-      grid-template-areas:   "ico date acts"
-                             "ico loc  loc";
+      grid-template-columns: auto auto 1fr auto;
+      grid-template-areas:   "pick ico date acts"
+                             "pick ico loc  loc";
       align-items:           center;
       column-gap:            0.5rem;
       row-gap:               0.1rem;
@@ -1047,14 +1047,202 @@
     .log-del:hover       { border-color: var(--red); color: var(--red); }
     .log-goto:hover      { color: var(--text); }
 
+    /* Grid, not wrapped flex: "Make map" spans the full width as the primary
+       action, then the four secondaries sit two-by-two. Wrapped flex left
+       Import stranded alone on its own row, because wrapping depends on text
+       width rather than on any intent. */
     .log-tools {
-      display:     flex;
-      gap:         0.5rem;
-      padding:     0.85rem 0.75rem;
-      border-top:  1px solid var(--border);
+      display:               grid;
+      grid-template-columns: 1fr 1fr;
+      gap:                   0.4rem;
+      padding:               0.85rem 0.75rem;
+      border-top:            1px solid var(--border);
     }
-    .log-tools .log-btn { flex: 1; text-align: center; }
+    /* The base rule. It was lost in a rewrite of this block, which left every
+       button in the panel as a bare <button> — browser-default grey-on-silver.
+       If these ever look like OS buttons again, this rule has gone missing. */
+    .log-btn {
+      font-family:    var(--mono);
+      font-size:      0.72rem;
+      letter-spacing: 0.06em;
+      padding:        0.4rem 0.5rem;
+      cursor:         pointer;
+      background:     transparent;
+      border:         1px solid var(--border);
+      border-radius:  var(--radius);
+      color:          var(--text-dim);
+      white-space:    nowrap;
+      text-align:     center;
+    }
+    .log-btn:hover { border-color: var(--edge); color: var(--text); }
+    /* "Make map" is the primary action here, so it takes the full first row
+       rather than being squeezed to a fifth of the width with four siblings —
+       which is what made it unreadable. */
+    .log-btn-map {
+      grid-column:  1 / -1;
+      color:        var(--text);
+      border-color: var(--edge);
+      font-size:    0.78rem;
+      padding:      0.55rem 0.6rem;
+    }
+    .log-btn-map:hover { color: var(--text); border-color: var(--gold); }
 
+
+    /* ── Sheet ────────────────────────────────────────────────────────
+       A reusable overlay. The three map overlays are queued to use this same
+       pattern, so dismissal, backdrop and z-index are settled once here.
+       Slides up on mobile, centres on desktop. */
+    .sheet {
+      position: fixed;
+      inset:    0;
+      z-index:  1100;
+      display:  none;
+    }
+    .sheet.open { display: block; }
+    .sheet-backdrop {
+      position:   absolute;
+      inset:      0;
+      background: rgba(0,0,0,0.72);
+    }
+    .sheet-body {
+      position:       absolute;
+      left:           0;
+      right:          0;
+      bottom:         0;
+      /* DEFINITE height, not just a max. .sheet-content is flex:1 1 0, so it
+         contributes nothing to intrinsic height — with max-height alone the
+         whole sheet collapses to head + foot and the map disappears. The two
+         must be changed together. */
+      height:         88vh;
+      max-height:     92vh;
+      display:        flex;
+      flex-direction: column;
+      background:     var(--bg2);
+      border-top:     1px solid var(--border2);
+      border-radius:  var(--radius) var(--radius) 0 0;
+      transform:      translateY(100%);
+      transition:     transform 0.22s ease;
+    }
+    .sheet.open .sheet-body { transform: translateY(0); }
+
+    .sheet-head, .sheet-foot {
+      display:     flex;
+      align-items: center;
+      gap:         0.5rem;
+      padding:     0.7rem 0.85rem;
+      flex:        0 0 auto;
+    }
+    .sheet-head { border-bottom: 1px solid var(--border); }
+    .sheet-foot { border-top:    1px solid var(--border); flex-wrap: wrap; }
+    .sheet-title {
+      font-family:    var(--mono);
+      font-size:      0.8rem;
+      font-weight:    700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color:          var(--gold);
+    }
+    .sheet-sub {
+      font-family: var(--mono);
+      font-size:   0.7rem;
+      color:       var(--text-dim);
+    }
+    /* A proper tap target. At 1.3rem of glyph with 0.2rem of padding this was
+       well under the 44px minimum, and on a phone it is the main way out — the
+       backdrop is only the top ~12% of the screen. */
+    .sheet-close {
+      margin-left:     auto;
+      display:         flex;
+      align-items:     center;
+      justify-content: center;
+      width:           2.75rem;
+      height:          2.75rem;
+      margin-right:    -0.5rem;
+      background:      none;
+      border:          none;
+      color:           var(--text);
+      font-size:       1.6rem;
+      line-height:     1;
+      cursor:          pointer;
+      padding:         0;
+    }
+    .sheet-close:hover { color: var(--text-pale); }
+
+    /* Grab handle: the standard signal that a sheet can be pulled down. Mobile
+       only — on desktop this is a centred dialog with Escape and a backdrop. */
+    .sheet-body::before {
+      content:       '';
+      display:       block;
+      width:         2.5rem;
+      height:        0.25rem;
+      margin:        0.45rem auto 0;
+      border-radius: 999px;
+      background:    var(--border2);
+      flex:          0 0 auto;
+    }
+    @media (min-width: 900px) {
+      .sheet-body::before { display: none; }
+    }
+
+    .sheet-content {
+      flex:            1 1 0;
+      overflow:        hidden;   /* the map is scaled to fit, never scrolled */
+      padding:         0.85rem;
+      min-height:      0;        /* lets a flex child actually shrink */
+      display:         flex;
+      align-items:     center;
+      justify-content: center;
+    }
+    /* Fit the poster INSIDE the sheet in both axes. width:100% alone overflows
+       any projection taller than it is wide, which is why the maps ran off the
+       bottom; max-height plus the SVG's own preserveAspectRatio letterboxes it
+       instead. */
+    .sheet-content svg {
+      display:    block;
+      width:      auto;
+      height:     auto;
+      max-width:  100%;
+      max-height: 100%;
+    }
+    .sheet-foot select { width: auto; min-width: 9rem; font-size: 0.72rem; }
+    .ts-wait {
+      font-family: var(--mono);
+      font-size:   0.78rem;
+      color:       var(--text-dim);
+      text-align:  center;
+      padding:     2rem 1rem;
+      line-height: 1.7;
+    }
+
+    @media (min-width: 900px) {
+      /* Centred dialog on desktop — a bottom sheet on a wide screen wastes the
+         width the poster actually needs. */
+      .sheet-body {
+        top:            50%;
+        left:           50%;
+        right:          auto;
+        bottom:         auto;
+        width:          min(980px, 92vw);
+        height:         86vh;
+        max-height:     86vh;
+        border:         1px solid var(--border2);
+        border-radius:  var(--radius);
+        transform:      translate(-50%, -46%);
+        opacity:        0;
+        transition:     transform 0.18s ease, opacity 0.18s ease;
+      }
+      .sheet.open .sheet-body { transform: translate(-50%, -50%); opacity: 1; }
+    }
+
+    /* The reserved column, now used: t-shirt selection. */
+    .log-pick {
+      grid-area:  pick;
+      align-self: start;
+      margin:     0.3rem 0 0;
+      accent-color: var(--gold);
+      cursor:     pointer;
+      flex:       0 0 auto;
+    }
 
     .share-modal-backdrop {
       display: none;
@@ -1312,7 +1500,13 @@
       position:        absolute;
       left:            0;
       right:           0;
-      bottom:          0;
+      /* Clear of the iOS home indicator. At bottom:0 the scrubber sits exactly
+         in the system's swipe-up gesture zone, so dragging it switches apps
+         instead of scrubbing — unusable in the installed PWA, which is where
+         shadows matter most. viewport-fit=cover is already set on the viewport
+         meta, so env() reports the real inset; the 0px fallback keeps every
+         other platform pixel-identical to before. */
+      bottom:          env(safe-area-inset-bottom, 0px);
       z-index:         20;
       display:         flex;
       align-items:     stretch;
@@ -1323,6 +1517,12 @@
       backdrop-filter: blur(4px);
     }
     .shadow-timeline[hidden] { display: none; }
+    /* Installed PWA on a device with a home indicator: a little extra clearance
+       so the SCRUBBER TRACK itself, not just the panel edge, is out of the
+       gesture zone. Browsers ignore this (display-mode: browser). */
+    @media all and (display-mode: standalone) {
+      .shadow-timeline { bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); }
+    }
 
     .shadow-readout {
       flex:          0 0 auto;

@@ -185,7 +185,11 @@ let H = w.document.getElementById('log-list').innerHTML;
 ok('no expander state exists', typeof w._scLogExpanded === 'undefined');
 ok('no row-click handler', typeof w.scLogRowClick === 'undefined');
 ok('no textarea anywhere', !/<textarea/.test(H));
-ok('no checkbox anywhere', !/type="checkbox"/.test(H));
+/* Exactly one checkbox per row: the t-shirt selection in the reserved left
+   column. The old "seen" checkbox is gone — seen is the flag now. */
+ok('one selection checkbox per row',
+   (H.match(/type="checkbox"/g) || []).length === (H.match(/class="log-item/g) || []).length);
+ok('the only checkbox is the picker', !/type="checkbox"[^>]*log-seen/.test(H));
 ok('no full-width remove button', !/Remove from log</.test(H));
 ok('coordinates appear exactly ONCE per row',
    (H.match(/11\.250\u00b0S/g) || []).length === 1,

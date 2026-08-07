@@ -118,7 +118,8 @@ const BRANDING = ['.app-header::before', '.app-title'];   // deliberate exceptio
 // .pill-loc marks the pill for the CURRENT location — a selected state whose
 // class name doesn't say so.
 const SELECTED = /(\.active|\.selected|\.saved|\.on|\.pill-loc|aria-pressed="true")/;
-const HEADINGS = ['.detail-section-h', '.detail-sub-h', '.top-section-header'];
+const HEADINGS = ['.detail-section-h', '.detail-sub-h', '.top-section-header',
+                  '.sheet-title'];
 const strays = goldText('--gold').filter(s =>
   !BRANDING.includes(s) && !HEADINGS.includes(s) && !SELECTED.test(s));
 ok('--gold as text means SELECTED (or branding)', strays.length === 0, strays.join(', '));

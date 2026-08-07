@@ -206,6 +206,19 @@ function scIcon(name, filled) {
    the cache on floating-point noise. */
 var _scLocalCache = {};
 
+/* Which rows are ticked for the t-shirt map. Deliberately NOT persisted: it is
+   a transient choice about one poster, not part of the log. Empty means "all",
+   handled by tsOpen. */
+var _scPicked = {};
+function scLogPicked(key)       { return !!_scPicked[key]; }
+function scLogPick(key, on)     { if (on) _scPicked[key] = true; else delete _scPicked[key];
+                                  renderLogList(); }
+function scLogPickAll(on) {
+  _scPicked = {};
+  if (on) scLogRows().forEach(function (r) { _scPicked[r.key] = true; });
+  renderLogList();
+}
+
 function scLogLocalKey(key, loc) {
   return key + '@' + loc[0].toFixed(4) + ',' + loc[1].toFixed(4);
 }
@@ -312,6 +325,9 @@ function renderLogList() {
     return ''
     + '<div class="log-item' + (sel ? ' selected' : '') + '">'
     + '  <div class="log-row">'
+    + '    <input type="checkbox" class="log-pick" ' + (scLogPicked(r.key) ? 'checked' : '')
+    + '      onchange="scLogPick(\'' + r.key + '\', this.checked)"'
+    + '      title="Include on the t-shirt map" aria-label="Include on the map">'
     + '    <span class="log-ico">' + ico + '</span>'
     + '    <div class="log-date">' + fmtDate(rec) + '</div>'
     + '    <div class="log-acts">'
@@ -350,8 +366,11 @@ function scLogRenderTools() {
   var el = document.getElementById('log-tools');
   if (!el) return;
   el.innerHTML =
-    '<button class="log-btn" onclick="scLogExport()">\u2913 Export log</button>'
-  + '<button class="log-btn" onclick="scLogImportPrompt()">\u2912 Import log</button>';
+    '<button class="log-btn log-btn-map" onclick="tsOpen()">Make map</button>'
+  + '<button class="log-btn" onclick="scLogPickAll(true)">All</button>'
+  + '<button class="log-btn" onclick="scLogPickAll(false)">None</button>'
+  + '<button class="log-btn" onclick="scLogExport()">\u2913 Export</button>'
+  + '<button class="log-btn" onclick="scLogImportPrompt()">\u2912 Import</button>';
 }
 
 

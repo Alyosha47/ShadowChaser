@@ -98,6 +98,15 @@ actually clears · landscape space reclaim · mobile install note · banner slim
 ---
 
 ## OPEN — UI / COPY
+- **Star on an already-saved eclipse should UPDATE its location, not just unsave.** Today the
+  star is a pure toggle: press it on a saved eclipse and the entry is deleted. If a location is
+  set and it differs from the saved one, saving over the top should overwrite the location —
+  that is what "save it again from here" plainly means. Unsaving then needs its own affordance
+  (the bin in the log row already exists, so possibly the star simply never unsaves).
+- **Share button output needs work.** The shared text/URL is thin. Decide what a shared eclipse
+  should actually carry — date, type, the recipient's local circumstances or the sender's,
+  duration, a map image? — before touching the code; this is a content decision, not a
+  formatting one.
 
 - **Where do map options belong? — MOSTLY DECIDED, shipped 2026-07-29.** On-map controls now
   exist: basemap picker top-right (Street/Topo/Sat), shadow/cloud toggles top-left (HANDOFF
@@ -339,9 +348,24 @@ The data-key and safety-rail traps are renderer-agnostic.)*
     `project()` the bands use, draw a dot. Only entries that have a `loc`.
   - **Export.** Already there, unchanged.
   Two pre-existing quirks worth knowing before porting, both in the current tool:
-  - `buildBands` pairs `nSegs[i]` with `sSegs[i]` by index under `Math.min`. If a band's north
-    and south edges split into different segment counts at the antimeridian, pieces are
-    silently dropped — a wrong-map-no-error failure.
+  - **Seam/pole handling — SOLVED 2026-08-06 by changing the MODEL, after four failed
+    patches.** The corridor was treated as one closed polygon (north limb out, south limb
+    back), which forces global reasoning about winding number, antimeridian crossings and
+    polar caps — each needing a threshold that is wrong for some eclipse. That produced, in
+    order: torn bands, wedges to the seam, caps flooding the pole, and an even-odd annulus
+    with a hand-tuned trigger. **The corridor is not a polygon; it is a RIBBON of quads**,
+    one per time step between the two limbs. Each quad is a couple of degrees across, so it
+    cannot wrap, wind, or enclose a pole, and all the special cases vanish. The last real bug
+    was pairing the limbs by array-index fraction: they are sampled independently and a limb
+    running off the disc is much shorter (109-02-17 has 564 north points to 90 south), so
+    pairing must be by POSITION — a monotonic two-pointer walk. Result: **zero of 7,517 bands
+    cover more than 5% of the map**, versus a badly broken tail before. Guarded by
+    `tools/checks/test_tshirt.js` §8, which sweeps the entire catalogue.
+    Note the stored path data uses UNWRAPPED longitudes (values past +-180); anything
+    consuming it must normalise first.
+    Related: `map.js` DISABLES umbra fill for exactly the reasons above ("Umbra fill
+    (disabled)") and drops 23 polar ovals. **The ribbon is the technique that would let the
+    globe fill corridors too**, if that is ever wanted.
   - The filter requires BOTH `umbra_n` and `umbra_s`, so every one-limit eclipse (`A+`, `Tn`,
     `As`… ~187 of them) is excluded outright. Fine for a t-shirt, but it is a choice rather
     than an accident.
