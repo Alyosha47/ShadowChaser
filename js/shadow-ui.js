@@ -28,6 +28,9 @@
 var SHADOW_MIN_ZOOM   = 6;                         /* below this zoom: keep globe, show hint */
 var SHADOW_PX_PER_MIN = 6;                         /* horizontal scale of the scrubber ruler */
 var SHADOW_TINT       = [0.02, 0.05, 0.16, 0.55];  /* deep navy; alpha (index 3) = strength  */
+                                                   /* A constant, not a setting: the slider that
+                                                      drove it is gone and this value is the one
+                                                      that looked right. Change it here.        */
 
 /* ---- state ---- */
 var _shadowLayer       = null;   /* the live custom layer, or null                */
@@ -40,23 +43,6 @@ var _rulerWinKey       = null;   /* window the ruler ticks were built for       
 var _drivingSunTrack   = false;  /* guard: a SUNTRACK-originated move is applied    */
 var _shadowZoomHandler = null;   /* map 'zoom' listener installed while armed      */
 var _shadowStyleHooked = false;  /* style.load reattach hook installed once        */
-
-/* Persisted shadow strength (alpha). */
-(function () {
-  try {
-    var v = localStorage.getItem('sc_shadow_opacity');
-    if (v != null) SHADOW_TINT[3] = Math.max(0, Math.min(1, parseFloat(v)));
-  } catch (e) {}
-})();
-
-/* Live-adjust shadow darkness (0..100 from the Settings slider); persisted. */
-function setShadowOpacity(pct) {
-  SHADOW_TINT[3] = Math.max(0, Math.min(1, pct / 100));
-  try { localStorage.setItem('sc_shadow_opacity', String(SHADOW_TINT[3])); } catch (e) {}
-  if (_shadowLayer && _shadowLayer.setOptions) {
-    try { _shadowLayer.setOptions({ shadowColor: SHADOW_TINT }); } catch (e) {}
-  }
-}
 
 /* Zero-pad to two digits. */
 function _p2(n) { return (n < 10 ? '0' : '') + n; }
@@ -468,12 +454,6 @@ function initShadowUI() {
       if (ev.key === 'ArrowLeft')  { setShadowTime(_shadowWin.curms - 60000); ev.preventDefault(); }
       if (ev.key === 'ArrowRight') { setShadowTime(_shadowWin.curms + 60000); ev.preventDefault(); }
     });
-  }
-  var op = document.getElementById('shadow-opacity');
-  if (op && !op._scWired) {
-    op._scWired = true;
-    op.value = Math.round(SHADOW_TINT[3] * 100);
-    op.addEventListener('input', function () { setShadowOpacity(parseInt(op.value, 10)); });
   }
   refreshShadowAvailability();
 }

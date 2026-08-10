@@ -158,10 +158,24 @@ const html = fs.readFileSync(ROOT + '/index.html', 'utf8');
 // Emoji tab icons were reinstated after review — they read better at small
 // sizes than the flat SVG set. Icons must still exist, whichever kind.
 const tabLine = html.split('\n').filter(l => /class="tab-btn|class="sidebar-tab-btn/.test(l)).join('');
-const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2699}]/u;
+/* The BMP symbols are whitelisted one at a time as they get used: U+2699 gear,
+   U+24D8 circled i. Both are icons by any reading — they simply sit outside the
+   1F300+ pictographic block, so a range check alone misses them. */
+const TAB_ICON = /<svg|[\u{1F300}-\u{1FAFF}\u{2699}\u{24D8}]/gu;
 ok('every tab carries an icon of some kind',
-   (tabLine.match(/<svg|[\u{1F300}-\u{1FAFF}\u{2699}]/gu) || []).length >= 9,
-   String((tabLine.match(/<svg|[\u{1F300}-\u{1FAFF}\u{2699}]/gu) || []).length));
+   (tabLine.match(TAB_ICON) || []).length >= 9,
+   String((tabLine.match(TAB_ICON) || []).length));
+
+/* Portability: nothing may link to the deployed copy of the app itself. The
+   three About deep links were absolute (followtheshadow.com/app/#e=…), so from
+   a copy in any other folder — or offline — they silently jumped the user to
+   production instead of driving the app they were sitting in. Bare '#e=…' works
+   everywhere: the hashchange handler in url.js and the deep-link click handler
+   in tabs.js both act on the current page. mailto: is fine, hence the anchor on
+   href="http. */
+const selfLinks = (html.match(/href="https?:\/\/(www\.)?followtheshadow\.com/g) || []);
+ok('no absolute links back to the deployed app', selfLinks.length === 0,
+   selfLinks.length + ' found');
 
 
 /* ═══ DOM CONTRACT ════════════════════════════════════════════════════════

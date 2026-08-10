@@ -1047,13 +1047,15 @@
     .log-del:hover       { border-color: var(--red); color: var(--red); }
     .log-goto:hover      { color: var(--text); }
 
-    /* Grid, not wrapped flex: "Make map" spans the full width as the primary
-       action, then the four secondaries sit two-by-two. Wrapped flex left
-       Import stranded alone on its own row, because wrapping depends on text
-       width rather than on any intent. */
+    /* Grid, not wrapped flex: four equal icon buttons on one row. It was five
+       text buttons in a 2-column grid with "Make map" spanning both — wrapped
+       flex before that, which left Import stranded alone because wrapping
+       depends on text width rather than on any intent. Grid keeps the intent
+       explicit at any label length, which is why it stays now the labels are
+       gone. */
     .log-tools {
       display:               grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(4, 1fr);
       gap:                   0.4rem;
       padding:               0.85rem 0.75rem;
       border-top:            1px solid var(--border);
@@ -1075,17 +1077,15 @@
       text-align:     center;
     }
     .log-btn:hover { border-color: var(--edge); color: var(--text); }
-    /* "Make map" is the primary action here, so it takes the full first row
-       rather than being squeezed to a fifth of the width with four siblings —
-       which is what made it unreadable. */
-    .log-btn-map {
-      grid-column:  1 / -1;
-      color:        var(--text);
-      border-color: var(--edge);
-      font-size:    0.78rem;
-      padding:      0.55rem 0.6rem;
+    /* Icon-only now, so the button is a box for one 20px mark rather than a run
+       of text: centre it and let the padding set the hit area, which stays
+       comfortably past the 44px touch minimum at this padding. */
+    .log-btn svg {
+      width:   20px;
+      height:  20px;
+      display: block;
+      margin:  0 auto;
     }
-    .log-btn-map:hover { color: var(--text); border-color: var(--gold); }
 
 
     /* ── Sheet ────────────────────────────────────────────────────────

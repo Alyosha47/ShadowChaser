@@ -108,7 +108,7 @@
   </script>
     <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-08-06o">
+  <link rel="stylesheet" href="css/app.css?v=2026-08-09i">
 </head>
 <body>
 
@@ -129,7 +129,7 @@
     <button class="tab-btn active" data-tab="map">🌍<span class="tab-label"> Map</span></button>
     <button class="tab-btn"        data-tab="eclipse"><svg class="tab-icon-svg" viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="4"  width="16" height="2.4" rx="1.2"/><rect x="2" y="8.8" width="16" height="2.4" rx="1.2"/><rect x="2" y="13.6" width="16" height="2.4" rx="1.2"/></svg><span class="tab-label"> Details</span></button>
     <button class="tab-btn"        data-tab="log"><svg class="tab-icon-svg" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3.4"/><path d="M10 10.8c-3.6 0-6.4 2.2-6.4 5.1v1.3h12.8v-1.3c0-2.9-2.8-5.1-6.4-5.1z"/></svg><span class="tab-label"> Log</span></button>
-    <button class="tab-btn"        data-tab="settings">⚙️<span class="tab-label"> Settings</span></button>
+    <button class="tab-btn"        data-tab="settings">ⓘ<span class="tab-label"> Info</span></button>
   </nav>
 
 
@@ -261,7 +261,7 @@
         <button class="sidebar-tab-btn" data-sidebar-tab="search">🔍 Search</button>
         <button class="sidebar-tab-btn active" data-sidebar-tab="eclipse"><svg class="tab-icon-svg" viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="4"  width="16" height="2.4" rx="1.2"/><rect x="2" y="8.8" width="16" height="2.4" rx="1.2"/><rect x="2" y="13.6" width="16" height="2.4" rx="1.2"/></svg> Details</button>
         <button class="sidebar-tab-btn" data-sidebar-tab="log"><svg class="tab-icon-svg" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3.4"/><path d="M10 10.8c-3.6 0-6.4 2.2-6.4 5.1v1.3h12.8v-1.3c0-2.9-2.8-5.1-6.4-5.1z"/></svg> Log</button>
-        <button class="sidebar-tab-btn" data-sidebar-tab="settings">⚙️ Settings</button>
+        <button class="sidebar-tab-btn" data-sidebar-tab="settings">ⓘ Info</button>
       </nav>
 
 
@@ -325,7 +325,11 @@
       </div><!-- #tab-log -->
 
 
-      <!-- ── Settings tab ────────────────────────────────────── -->
+      <!-- ── Info tab ────────────────────────────────────────── -->
+      <!-- Renamed from Settings: almost nothing in it is a setting. The
+           data-tab / id / class hooks all still say "settings" on purpose —
+           renaming those touches tabs.js, url.js and the CSS for no user-
+           visible gain. Only the LABEL changed. -->
 
       <div class="tab-panel" id="tab-settings">
 
@@ -454,23 +458,15 @@
       <div class="settings-section">
         <!-- The basemap pulldown moved onto the map itself (top right), where
              it is one tap instead of three and shows a live tile of each style
-             rather than naming it. -->
-        <div class="settings-row">
-          <label for="shadow-opacity">Shadow strength</label>
-          <input type="range" id="shadow-opacity" min="0" max="100" value="55" step="1"
-                 style="max-width:12rem;cursor:pointer;accent-color:var(--gold)">
-        </div>
-        <div class="about-text" style="margin-top:0.5rem">
-          How dark the terrain shadows are drawn on the map.
-        </div>
-
-        <div class="settings-row" style="margin-top:1rem">
-          <label for="tz">Time zone</label>
-          <select id="tz" style="max-width:18rem"></select>
-        </div>
-        <div class="about-text" style="margin-top:0.5rem">
-          <p><em>Auto</em> uses the device timezone for your own location, and a polygon timezone lookup for map selections. It falls back to a longitude estimate sometimes mid-ocean.</p>
-        </div>
+             rather than naming it. Shadow strength went the same way — out: one
+             number nobody needed to argue with. It is now a plain constant,
+             SHADOW_TINT in shadow-ui.js. -->
+        <!-- TIME ZONE: dropped from the UI, NOT from the app. The contacts
+             table toggles UT/local inline, one tap from where the times are,
+             which made this row a second way to say the same thing in a place
+             nobody looks. The selection now lives in _tzChoice in tabs.js
+             (getTz/setTz) rather than in a hidden <select>, so a shared link
+             carrying #tz= still restores its zone with no widget to maintain. -->
         <div class="settings-row" style="margin-top:1rem">
           <label for="search-range">Search range</label>
           <select id="search-range" style="max-width:18rem">
@@ -492,8 +488,8 @@
 
       <div class="settings-section">
         <div class="about-text">
-          <p>My name is Guy, and I have been following eclipses since a fateful camping trip back in <a href="https://followtheshadow.com/app/#e=9495&amp;q=1994%20annular%20(39.48110%2C%20-88.68215)">May 1994</a>. We all ate mushrooms and sat in a circle with drums between our knees, silver glasses on our faces, grinning like fools and staring upwards at the ring of fire. That kind of sealed the deal, and certainly changed my life. Since then, I have always had a direction &mdash; an endless series of predictable glorious events &mdash; to pursue: across mountains, jungles, and deserts, to the very farthest corners of the globe.</p>
-          <p>Although there are many eclipse-adventure-planning tools out there (Thank you, Mr. Espenak! Merci, M. Jubier!), I still missed certain features: search-by-date (all the eclipses on your birthday), search-by-location (what, no TSEs in <a href="https://followtheshadow.com/app/#e=6927&amp;q=ouagadougou%20total%20900-2026">Ouagadougou</a> since the year 913&#8253;), search-by-vibe (was there a total eclipse right near but not in <a href="https://followtheshadow.com/app/#e=9408&amp;q=1950-1960%20total%20%3E50%25%20oslo">Oslo</a> sometime in the 50s?), historical cloud data overlays (did he just use the C-word?), shadow-mapping from local topographies (d&rsquo;oh that hill is in the way!), and offline map caching for in-the-field use. This app tries to cover all the bases in one convenient package, to help plan syzygystic adventures more efficiently. I also learned a <em>ton</em> about Besselian geometry while making it, which is always so much fun.</p>
+          <p>My name is Guy, and I have been following eclipses since a fateful camping trip back in <a href="#e=9495&amp;q=1994%20annular%20(39.48110%2C%20-88.68215)">May 1994</a>. We all ate mushrooms and sat in a circle with drums between our knees, silver glasses on our faces, grinning like fools and staring upwards at the ring of fire. That kind of sealed the deal, and certainly changed my life. Since then, I have always had a direction &mdash; an endless series of predictable glorious events &mdash; to pursue: across mountains, jungles, and deserts, to the very farthest corners of the globe.</p>
+          <p>Although there are many eclipse-adventure-planning tools out there (Thank you, Mr. Espenak! Merci, M. Jubier!), I still missed certain features: search-by-date (all the eclipses on your birthday), search-by-location (what, no TSEs in <a href="#e=6927&amp;q=ouagadougou%20total%20900-2026">Ouagadougou</a> since the year 913&#8253;), search-by-vibe (was there a total eclipse right near but not in <a href="#e=9408&amp;q=1950-1960%20total%20%3E50%25%20oslo">Oslo</a> sometime in the 50s?), historical cloud data overlays (did he just use the C-word?), shadow-mapping from local topographies (d&rsquo;oh that hill is in the way!), and offline map caching for in-the-field use. This app tries to cover all the bases in one convenient package, to help plan syzygystic adventures more efficiently. I also learned a <em>ton</em> about Besselian geometry while making it, which is always so much fun.</p>
           <p><strong>On a phone, add it to your home screen.</strong> Use your browser&rsquo;s share button and choose &ldquo;Add to Home Screen&rdquo;. Installed, it runs full-screen, keeps its offline data, and behaves like an app rather than a web page &mdash; which is the point, since it is built to work in a field with no signal.</p>
           <p>Tuned to Chrome + iOS and never tested on Android &mdash; if you have any suggestions or find any bugs, <a href="mailto:app@followtheshadow.com">drop me a line</a> &mdash; <strong>and don&rsquo;t stare at the sun!</strong></p>
         </div>
@@ -513,14 +509,21 @@
 
 
 <!-- search_parser.js provides parseSearch(), applyFilter(), filterToString() -->
-<script src="js/search_parser.js?v=2026-08-06o"></script>
+<script src="js/search_parser.js?v=2026-08-09i"></script>
 
 <!-- eclipse.js provides computeEclipse(), fundamentalArgs(), sunAltAz(), findMaximum() -->
-<script src="js/eclipse.js?v=2026-08-06o"></script>
+<script src="js/eclipse.js?v=2026-08-09i"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
      Single source of truth for BUILD. The <meta> and build stamp auto-populate from it.
-     Cache-busts all data fetches AND the external JS files below. -->
+     Cache-busts all data fetches AND the external JS files below.
+
+     BUMP IT WITH `node tools/set_build.js` — NOT by hand. The ?v= stamps on the
+     stylesheet and the <script src> tags are separate literals, and sw.js serves
+     same-origin files cache-first with ignoreSearch:true, so a BUILD bumped here
+     alone renames the cache while every asset URL still points at the old string
+     and the stale copies keep being served. tools/test_hygiene.js fails if any
+     stamp drifts. -->
 <script>
 'use strict';
 /* ── On-screen error catcher ───────────────────────────────────────────────
@@ -607,13 +610,13 @@ window.scFlagFreshDetails = function () {
 };
 
 var DATA_BASE = './data';
-var BUILD     = '2026-08-06o';   /* ← THE single source. Everything below follows it. */
+var BUILD     = '2026-08-09i';   /* ← THE single source. Everything below follows it. */
 
 /* Propagate BUILD so it never has to be typed twice. The <meta name="build"> and
    every element with [data-build-stamp] are filled from this one constant, so a
    build bump means editing this line alone. (The ?v= on the external script
    tags still cache-bust independently, but under the service worker the cache
-   name — keyed to BUILD via sw.js?v=BUILD — already busts them on every bump.) */
+   name — keyed to BUILD via sw.js?v=2026-08-09i — already busts them on every bump.) */
 (function () {
   var m = document.querySelector('meta[name="build"]');
   if (m) m.content = BUILD;
@@ -634,21 +637,21 @@ if ('serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD, { updateViaCache: 'none' }));
 }
 </script>
-<script src="js/format.js?v=2026-08-06o"></script>
-<script src="js/state.js?v=2026-08-06o"></script>
-<script src="js/cities.js?v=2026-08-06o"></script>
-<script src="js/tabs.js?v=2026-08-06o"></script>
-<script src="js/search.js?v=2026-08-06o"></script>
-<script src="js/list.js?v=2026-08-06o"></script>
-<script src="js/local.js?v=2026-08-06o"></script>
-<script src="js/details.js?v=2026-08-06o"></script>
-<script src="js/url.js?v=2026-08-06o"></script>
-<script src="js/map.js?v=2026-08-06o"></script>
-<script src="js/shadow-layer.js?v=2026-08-06o"></script>
-<script src="js/shadow-ui.js?v=2026-08-06o"></script>
-<script src="js/tshirt.js?v=2026-08-06o"></script>
-<script src="js/userlog.js?v=2026-08-06o"></script>
-<script src="js/share.js?v=2026-08-06o"></script>
-<script src="js/init.js?v=2026-08-06o"></script>
+<script src="js/format.js?v=2026-08-09i"></script>
+<script src="js/state.js?v=2026-08-09i"></script>
+<script src="js/cities.js?v=2026-08-09i"></script>
+<script src="js/tabs.js?v=2026-08-09i"></script>
+<script src="js/search.js?v=2026-08-09i"></script>
+<script src="js/list.js?v=2026-08-09i"></script>
+<script src="js/local.js?v=2026-08-09i"></script>
+<script src="js/details.js?v=2026-08-09i"></script>
+<script src="js/url.js?v=2026-08-09i"></script>
+<script src="js/map.js?v=2026-08-09i"></script>
+<script src="js/shadow-layer.js?v=2026-08-09i"></script>
+<script src="js/shadow-ui.js?v=2026-08-09i"></script>
+<script src="js/tshirt.js?v=2026-08-09i"></script>
+<script src="js/userlog.js?v=2026-08-09i"></script>
+<script src="js/share.js?v=2026-08-09i"></script>
+<script src="js/init.js?v=2026-08-09i"></script>
 </body>
 </html>

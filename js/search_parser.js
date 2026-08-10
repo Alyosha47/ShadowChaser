@@ -489,11 +489,33 @@
 
       /* Obscuration */
       if (filter.obscRange) {
-        var mag = e.local_mag != null ? e.local_mag
-                : e.magnitude   != null ? e.magnitude : null;
-        if (mag === null) return false;
-        var osc = mag >= 1 ? 100
-                : (Math.acos(1 - 2*mag) - Math.sin(Math.acos(1 - 2*mag))) / Math.PI * 100;
+        var osc = null;
+        if (e.local_osc != null) {
+          /* Scanned rows carry the real thing: computeEclipse's lens area for the
+             Moon and Sun as the two DIFFERENT-sized circles they are. */
+          osc = e.local_osc;
+        } else {
+          /* Catalogue-only rows (no location scanned) have magnitude alone, and
+             obscuration cannot be recovered from magnitude without the radius
+             ratio. Assume equal discs — exact lens area for k = 1, which is
+             within a couple of points across the range that matters.
+
+             The previous approximation treated the Moon's limb as a STRAIGHT
+             edge, i.e. a circular segment of the Sun, and ran badly low
+             everywhere: magnitude 0.9657 (2015-03-20 from 57.910N 5.165W, truly
+             96.6% obscured) came out as 76.6%, so ">90" and ">80" both missed an
+             eclipse that ">70" found. */
+          var mag = e.local_mag != null ? e.local_mag
+                  : e.magnitude   != null ? e.magnitude : null;
+          if (mag === null) return false;
+          if (mag >= 1) osc = 100;
+          else if (mag <= 0) osc = 0;
+          else {
+            var sep = 2 - 2 * mag;                        /* centres apart, radii = 1 */
+            osc = (2 * Math.acos(sep / 2)
+                   - (sep / 2) * Math.sqrt(4 - sep * sep)) / Math.PI * 100;
+          }
+        }
         if (osc < filter.obscRange.min || osc > filter.obscRange.max) return false;
       }
 

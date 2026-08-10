@@ -184,7 +184,24 @@ var SC_ICON = {
   trash: '<path d="M4.5 6.2h11"/><path d="M8.2 6.2V4.6a.8.8 0 0 1 .8-.8h2a.8.8 0'
        + ' 0 1 .8.8v1.6"/><path d="M6.4 6.2 7.2 16.2a1 1 0 0 0 1 .9h3.6a1 1 0 0 0'
        + ' 1-.9L13.6 6.2"/>',
-  goto:  '<path d="M4 10h11.2"/><path d="M11.4 6.2 15.2 10l-3.8 3.8"/>'
+  goto:  '<path d="M4 10h11.2"/><path d="M11.4 6.2 15.2 10l-3.8 3.8"/>',
+
+  /* Toolbar. These replace five text buttons, so each has to carry its whole
+     meaning alone — hence the title/aria-label on every one in
+     scLogRenderTools. The three pick-* marks are ONE control in three states
+     (none / some / all), drawn as a checkbox because that is what it behaves
+     like; the box is identical in all three so only the mark inside changes. */
+  tshirt:   '<path d="M7.3 3.2 3.6 5.4l1.5 3.1 2.2-1.1v9.4h5.4V7.4l2.2 1.1 1.5-3.1-3.7-2.2z"/>'
+          + '<path d="M7.3 3.2a2.7 2.7 0 0 0 5.4 0"/>',
+  pickNone: '<rect x="3.6" y="3.6" width="12.8" height="12.8" rx="2.6"/>',
+  pickSome: '<rect x="3.6" y="3.6" width="12.8" height="12.8" rx="2.6"/>'
+          + '<path d="M6.9 10h6.2"/>',
+  pickAll:  '<rect x="3.6" y="3.6" width="12.8" height="12.8" rx="2.6"/>'
+          + '<path d="M6.7 10.1 8.9 12.4l4.4-4.9"/>',
+  download: '<path d="M10 3.4v8.8"/><path d="M6.3 8.6 10 12.3l3.7-3.7"/>'
+          + '<path d="M4.4 15.8h11.2"/>',
+  upload:   '<path d="M10 12.3V3.5"/><path d="M6.3 7.2 10 3.5l3.7 3.7"/>'
+          + '<path d="M4.4 15.8h11.2"/>'
 };
 
 function scIcon(name, filled) {
@@ -365,12 +382,36 @@ function renderLogList() {
 function scLogRenderTools() {
   var el = document.getElementById('log-tools');
   if (!el) return;
+
+  /* All / None collapsed into one tri-state checkbox: it shows what the
+     selection IS (empty / dash / tick) and clicking it does the obvious thing —
+     anything short of all becomes all, all becomes none. Two buttons could not
+     show state at all, and one of them was always a no-op.
+     Note "none picked" and "all picked" are the same instruction to the poster
+     (tsOpen reads an empty set as "use everything"), so the dash state is the
+     only one that actually narrows it. */
+  var rows   = scLogRows();
+  var picked = 0;
+  for (var i = 0; i < rows.length; i++) if (_scPicked[rows[i].key]) picked++;
+  var all   = rows.length > 0 && picked === rows.length;
+  var mark  = all ? 'pickAll' : picked ? 'pickSome' : 'pickNone';
+  var label = all ? 'Clear selection'
+                  : picked ? 'Select all (' + picked + ' of ' + rows.length + ' picked)'
+                           : 'Select all';
+
+  /* Icon-only, so every button states itself twice: title for the pointer,
+     aria-label for the screen reader. */
+  function btn(icon, action, text, extra) {
+    return '<button class="log-btn' + (extra ? ' ' + extra : '') + '"'
+         + ' onclick="' + action + '" title="' + text + '" aria-label="' + text + '">'
+         + scIcon(icon) + '</button>';
+  }
+
   el.innerHTML =
-    '<button class="log-btn log-btn-map" onclick="tsOpen()">Make map</button>'
-  + '<button class="log-btn" onclick="scLogPickAll(true)">All</button>'
-  + '<button class="log-btn" onclick="scLogPickAll(false)">None</button>'
-  + '<button class="log-btn" onclick="scLogExport()">\u2913 Export</button>'
-  + '<button class="log-btn" onclick="scLogImportPrompt()">\u2912 Import</button>';
+    btn('tshirt', 'tsOpen()', 'Make map')
+  + btn(mark, 'scLogPickAll(' + (all ? 'false' : 'true') + ')', label)
+  + btn('download', 'scLogExport()', 'Export log')
+  + btn('upload', 'scLogImportPrompt()', 'Import log');
 }
 
 
@@ -407,6 +448,20 @@ function scLogGoto(key) {
       && window.matchMedia('(max-width: 899px)').matches) {
     switchTab('map');
   }
+
+  /* Point the camera at the entry. updateMapState's own framing does this too,
+     but ONLY when the selected eclipse actually changes — so hitting the arrow
+     on the entry that is already selected moved nothing, and if that eclipse
+     was round the back of the globe it stayed there. Done last, after
+     switchTab, so the map is on screen. Zoom is deliberately untouched.
+
+     Saved location first; failing that the greatest-eclipse point, which every
+     index entry carries. The earlier version only handled the saved-location
+     case, so an entry logged without a location never rotated at all. */
+  var ctr = null;
+  if (e && e.loc)                              ctr = [e.loc[0], e.loc[1]];
+  else if (typeof rec.lng_dd_ge === 'number')  ctr = [rec.lng_dd_ge, rec.lat_dd_ge];
+  if (ctr && map) map.easeTo({ center: ctr, duration: 800 });
 }
 
 /* Commit the search box's current coordinates onto the entry. */

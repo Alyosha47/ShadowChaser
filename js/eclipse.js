@@ -378,14 +378,29 @@
        degrees CLOCKWISE FROM THE LOCAL ZENITH (12 o'clock = up) — the angle
        the contact-icon renderer consumes directly (bead at sin/−cos of V).
 
-       Derivation (validated against Jubier 2023-04-20 from 8.356°S 127.063°E):
+       Derivation:
          P = atan2(u, v)  — contact PA from celestial north, CCW (east).
-         q = atan2(sin H, cos φ·tan δ − sin φ·cos H)  — Meeus 14.1 parallactic.
-         V = 180 − P − q.
-       The 180 − (…) folds two frame conventions in one step: subtracting q
-       rotates from the celestial-north frame into the zenith frame, and the
-       180−/negation converts that astronomical PA (CCW-east, on-sky) into the
-       icon's clockwise-from-top screen convention.
+         q = atan2(sin H, tan φ·cos δ − sin δ·cos H)  — Meeus 14.1 parallactic.
+         V = q − P.
+       Subtracting q rotates from the celestial-north frame into the zenith
+       frame; the negation converts that astronomical PA (CCW-east, on-sky)
+       into the icon's clockwise-from-top screen convention.
+
+       CORRECTED 2026-08-08. The previous form was
+         q = atan2(sin H, cos φ·tan δ − sin φ·cos H);  V = 180 − P − q
+       — φ and δ transposed in q, and an offset that is exact only when
+       q = −90°, drifting by 2(q + 90°) everywhere else. It survived because
+       the one validation site (2023-04-20, 8.356°S 127.063°E, Sun near the
+       zenith) happens to have q ≈ −90°, where both forms agree to ~1°. At
+       2012-11-13 from 16.609°S 145.997°E, q ≈ −105° and every icon came out
+       ~30° — one clock hour — off.
+
+       Verification of this form:
+         vs Jubier V column (clock)  C1 10.9/10.8  C2 5.5/5.5  C3 10.4/10.3
+                                     C4 5.1/5.1    MAX 2.0/2.0   [2012-11-13]
+         vs Stellarium Sun/Moon Az/Alt offsets, same site: 05:51 local
+           expected 326.6° cw, got 326.6; 07:39 expected 151.6, got 151.5.
+         The 2023-04-20 reference above is unchanged (345.1 / 92.0 / 288.8).
 
        NB Jubier's printed "V" column is a CLOCK POSITION (0–12, no degree
        sign), i.e. V_deg / 30. Earlier sessions compared our degrees against
@@ -410,8 +425,8 @@
       var H_r  = o.H * Math.PI / 180;
       var d_r  = o.d * Math.PI / 180;
       var q    = Math.atan2(Math.sin(H_r),
-                            Math.cos(latR) * Math.tan(d_r) - Math.sin(latR) * Math.cos(H_r));
-      var V    = 180 - (P + q) * 180 / Math.PI;
+                            Math.tan(latR) * Math.cos(d_r) - Math.sin(d_r) * Math.cos(H_r));
+      var V    = (q - P) * 180 / Math.PI;
       if (interior) V += 180;   /* C2/C3 bead on opposite limb — see above */
       return ((V % 360) + 360) % 360;
     }
@@ -467,8 +482,8 @@
     /* limb angle V (clockwise from zenith) */
     var P = Math.atan2(o.u, o.v);
     var q = Math.atan2(Math.sin(H),
-                       Math.cos(phi)*Math.tan(dec) - Math.sin(phi)*Math.cos(H));
-    var V = 180 - (P + q) / DEG;
+                       Math.tan(phi)*Math.cos(dec) - Math.sin(dec)*Math.cos(H));
+    var V = (q - P) / DEG;
     V = ((V % 360) + 360) % 360;
     return { alt: alt, az: az, mag: mag, sep: sep, moonRatio: moonRatio, v: V, phase: phase };
   }

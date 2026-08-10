@@ -14,7 +14,17 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-08-06 — **renamed to followtheshadow**; **t-shirt poster (#F1a) SHIPPED**
+Last touched: 2026-08-09 — **contact angles were wrong everywhere and are fixed**
+(HANDOFF §16.1: V = q − P, not 180 − (P + q); verified against both Jubier and Stellarium).
+**Obscuration in search was computed with the wrong solid** (§16.2 — `>90%` missed a 96.6%
+eclipse). Marker occlusion restructured so a marker cannot exist untested (§16.3); relief
+fades at high zoom and city dots lie flat on the sphere (§16.4); camera moves on locate and
+on the log's jump-to arrow (§16.5); log toolbar is four icons (§16.6); **Settings → Info**,
+shadow slider and timezone select both deleted (§16.7); About deep links made relative
+(§16.8). **`node tools/set_build.js` is now the only way to bump — read §16.0 first, a whole
+session's work was invisible to the user because of the SW cache.** BUILD `2026-08-09i`.
+
+Prior: 2026-08-06 — **renamed to followtheshadow**; **t-shirt poster (#F1a) SHIPPED**
 (HANDOFF §15.3, geometry still has 3 failing catalogue assertions); Cesium purged from the
 service worker, which exposed that **MapLibre, deck.gl and land.geojson were never precached**
 (§15.2); iOS fixes — scrubber clear of the home indicator, sheet dismissal, share-sheet error
@@ -50,21 +60,27 @@ HANDOFF §2. Kept for history.)
 *(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. Terrain
 shadows are DONE and wired in (HANDOFF §4). Priorities are the USER's to set — this is a
 suggestion.)*
-1. **Settings → Info.** Almost nothing in that tab is a setting: the timezone control is
-   redundant (the contacts-table header already toggles time mode inline) and the shadow
-   slider belongs with the overlay it drives, not in a settings list. Rename, drop the
-   timezone row, rehome the slider. Small, self-contained, visible — a good re-entry after
-   a long session on geometry.
-2. **Overlay sheet pattern.** Three overlays are coming; the sheet already exists and works
-   (`.sheet` in app.css, built for the poster and deliberately generic). Reuse it rather than
-   growing three bespoke control clusters competing with the basemap picker for the top
-   strip. Do this ONCE, before the overlays land.
+1. **#R5 iOS pinch-zoom not blocked** (detail under BUGS). Known cause, known fix —
+   `touch-action: pan-y` on the scrollable panels, LEAVING the map container alone. Small and
+   contained, but needs a real iPhone to confirm, so it is the user's to verify.
+2. **Scan ignores non-location filters** (detail under BUGS). TODO's own note calls this the
+   REAL scan win: filter by date/type BEFORE loading chunks instead of walking ~30 of them on
+   every first scan. No user-visible change, no data restructuring.
 3. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
    Deliberately NOT first: it is the least visible and the most likely to consume a whole
    session. Read HANDOFF §15.3 before starting.
 4. **Search temporal tokens** — needs a design decision before any code (low priority; not
    currently bothering the user).
 5. Remaining open bugs → UX deliberations → Features.
+
+**Dropped 2026-08-09 — "Overlay sheet pattern".** It was premised on three overlays arriving
+at once, each growing its own control cluster. That premise is gone: the shadow scrubber
+stays where it is (the user likes it there), shadow-on-globe is shelved, cloud cover is
+undesigned, and the planned desirability heatmap may need no controls at all. Building a
+generic control pattern for imagined consumers produces an abstraction that fits none of
+them. **`.sheet` already exists, works, and has a real consumer in the poster** — it will
+still be there when an overlay actually needs a panel, and by then its contents will be
+known. Do not resurrect this as speculative work.
 
 ---
 
@@ -115,6 +131,17 @@ actually clears · landscape space reclaim · mobile install note · banner slim
   should actually carry — date, type, the recipient's local circumstances or the sender's,
   duration, a map image? — before touching the code; this is a content decision, not a
   formatting one.
+
+- **Poster picks: none and all send the same instruction.** `tsOpen` reads an empty pick set as
+  "use everything", so the log toolbar's tri-state checkbox has two states that mean the same
+  thing to the poster — only the dash (some picked) actually narrows it. Harmless today, but the
+  control now *shows* the distinction it does not have. Fix in `tsOpen` if it ever matters, not
+  in the toolbar (HANDOFF §16.6).
+
+- **Polar ice caps do not participate in the relief fade.** They are opaque fills drawn ABOVE
+  `relief`, so past ±85° the map stays solid ice-white while everything else eases back to the
+  flat vector fills at high zoom (HANDOFF §16.4). Defensible — it IS ice — and rarely visited,
+  but it is an inconsistency in a deliberate visual rule.
 
 - **Where do map options belong? — MOSTLY DECIDED, shipped 2026-07-29.** On-map controls now
   exist: basemap picker top-right (Street/Topo/Sat), shadow/cloud toggles top-left (HANDOFF
@@ -280,6 +307,43 @@ The data-key and safety-rail traps are renderer-agnostic.)*
 - KMZ download.
 
 ## FEATURES — MEDIUM
+- **#F4 "Cache this spot" — offline tiles around the pin.** With a location and an eclipse
+  selected, one press downloads basemap and terrain tiles for a small box round the pin, so the
+  detail you need on the day survives having no signal. Plan at home, navigate in a field.
+
+  **DESIGN DECISION, already taken — 10 km radius, max zoom 15.** Everything about whether this
+  is a button or a project follows from those two numbers, so do not quietly widen them.
+  A tile covers `40075·cos(φ) / 2^z` km, and because that shrinks in BOTH axes the count scales
+  as **1/cos²φ** — Scotland costs 2.5× Ecuador for the same box. For a 20 km box, one raster
+  layer, all zooms up to the cap, at ~40 KB/tile:
+
+  | max z | ground res | equator | lat 45 | lat 57 |
+  |---|---|---|---|---|
+  | 14 | 2.4 m/px | 161 · 6 MB | 243 · 9 MB | 404 · 16 MB |
+  | **15** | **1.2 m/px** | **485 · 19 MB** | **868 · 34 MB** | **1,428 · 56 MB** |
+  | 16 | 0.6 m/px | 1,641 · 64 MB | 3,172 · 124 MB | 5,272 · 206 MB |
+  | 17 | 0.3 m/px | 6,130 · 239 MB | 12,008 · 469 MB | 20,156 · 787 MB |
+
+  z15 shows the field you will park in. z16 quadruples the cost for detail nobody uses at 4 a.m.
+  **Terrain is nearly free on top** — Terrarium tops out ~z15 and shadows do not need better
+  than z13, so ~115 tiles / 4 MB.
+
+  **The one real blocker is `sw.js:117`:**
+  ```js
+  if (url.origin !== self.location.origin) return;   // online Esri tiles etc. → untouched
+  ```
+  Every basemap is Esri or OSM and terrain is `s3.amazonaws.com/elevation-tiles-prod/terrarium/`
+  — all cross-origin, all currently passed straight through, so nothing cached would ever be
+  served back. That line is also the current guarantee that the SW never interferes with live
+  tiles, so the branch that replaces it wants care and its own test.
+
+  **The rest, in order:** bbox → tile list (~15 lines of arithmetic); fetch with concurrency into
+  a named cache — **reuse `precache()` in sw.js, do not write a second one**; cancellable
+  progress UI, because a minute of downloading must be stoppable; and per-area "cached · 34 MB ·
+  delete". At tens of MB per spot that is enough — a storage MANAGER would be over-building, but
+  shipping with no way to see or delete what was stored turns a good feature into a phone that
+  quietly fills up.
+
 - **Compass built into the sky tracker.** Guy has ideas for how it should function and look —
   discuss the design before coding.
 - Server-side share page (`followtheshadow.com/share?e=XXXXX`) — static HTML reading the
@@ -387,6 +451,16 @@ The data-key and safety-rail traps are renderer-agnostic.)*
 ---
 
 ## INFRA (durable; keystones of the offline goal)
+- **The test suites cannot run as checked out.** `tools/*.js` compute `ROOT` as
+  `__dirname/../..`, which assumes they live in `tools/checks/`; in the current tree they sit in
+  `tools/`, so `ROOT` lands one level above the repo and every suite dies on ENOENT. Every run
+  on 2026-08-09 was from a throwaway `tools/checks/` copy. Move the files or change the constant
+  — but do it once and deliberately, because `run.js` and all five suites share the assumption.
+- **Cache skew is a solved problem now, but only if the tool is used.** `node tools/set_build.js`
+  rewrites `var BUILD` and all 20 `?v=` stamps together. Bumping BUILD by hand renames the SW
+  cache while leaving every asset URL on the old string, and `sw.js` matches with
+  `ignoreSearch: true`, so the old files keep being served. This cost a full session (HANDOFF
+  §16.0). `test_hygiene` fails on drift.
 - **Git-LFS vs GitHub-release bundle** for the large path-chunk files — decide before
   open-sourcing.
 - **Open-source prep** — licensing/attribution for the **live stack**: MapLibre GL JS (BSD-3),

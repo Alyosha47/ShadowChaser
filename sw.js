@@ -25,8 +25,8 @@ const CACHE = 'followtheshadow-' + VERSION;
 const CORE = [
   'index.html',
   'favicon.ico',
-  'icons/icon-192.png',
-  'icons/icon-512.png',
+  'icons/icon-192-v2.png',
+  'icons/icon-512-v2.png',
   'css/app.css',
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
       'search','list','local','details','tshirt','userlog','share','map','url','init'].map(n => `js/${n}.js`),

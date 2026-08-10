@@ -63,6 +63,15 @@ document.getElementById('btn-locate').addEventListener('click', function () {
     setStatus(''); setMapStatus('');
     var lat = pos.coords.latitude;
     var lon = pos.coords.longitude;
+    /* Bring the camera to the pin — on a globe that means rotating the Earth
+       round to it — and zoom in if we're further out than LOCATE_ZOOM. Never
+       zooms back OUT, so a user already looking closely keeps their view.
+       Same easeTo pattern as onMapClick, which is the other "user set the
+       pin explicitly" path. */
+    var LOCATE_ZOOM = 6;
+    if (map) map.easeTo({ center: [lon, lat],
+                          zoom: Math.max(map.getZoom(), LOCATE_ZOOM),
+                          duration: 1200 });
     var search = document.getElementById('search');
     var f = parseSearch(search.value);
     search.value = filterToString(Object.assign({}, f, { coords: { lat: lat, lon: lon } }));
@@ -107,11 +116,6 @@ document.getElementById('btn-locate').addEventListener('click', function () {
   });
 })();
 
-document.getElementById('tz').addEventListener('change', function () {
-  pushState();
-  if (localResult) renderData();
-});
-
 
 /* ── URL sharing ─────────────────────────────────────────────────────── */
 
@@ -130,7 +134,7 @@ function pushState() {
   }
   var q = document.getElementById('search').value.trim();
   if (q) parts.push('q=' + encodeURIComponent(q));
-  var tz = document.getElementById('tz').value;
+  var tz = getTz();
   if (tz !== 'auto') parts.push('tz=' + encodeURIComponent(tz));
   var hash = parts.length ? '#' + parts.join('&') : '';
   /* Use replaceState to avoid polluting browser history on every keystroke */
@@ -171,13 +175,10 @@ AppState.on('selectedEntry', pushState);
 function restoreFromHash() {
   var h = readHash();
 
-  /* Restore timezone */
-  if (h.tz) {
-    var sel = document.getElementById('tz');
-    for (var i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === h.tz) { sel.value = h.tz; break; }
-    }
-  }
+  /* Restore timezone. setTz validates against TZ_ZONES and ignores anything
+     else, so an unknown zone in the link leaves the app on 'auto' rather than
+     on a value nothing can resolve. */
+  if (h.tz) setTz(h.tz);
 
   /* Restore search string (overrides default) */
   if (h.q) {

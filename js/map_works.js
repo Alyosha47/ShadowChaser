@@ -460,9 +460,7 @@ function buildLocalStyle(data) {
         /* FADE AT HIGH ZOOM. The image is 4096x4096 — the whole world at 256px
            tiles, i.e. native zoom 4. By z8 it is upscaled 16x and carries no
            information, only a smear that the path edge, pin and sun arrow have
-           to compete with. The fade therefore begins at z3.5, just before the
-           imagery stops being real, and spreads the transition over five and a
-           half zoom levels so no single step is visible. Fading it back lets the flat land/lake fills below
+           to compete with. Fading it back lets the flat land/lake fills below
            carry the map, which is what the coastlines, borders, rivers and city
            dots are already drawn on top of anyway.
            It stops at 0.35, NOT 0: a residual tint keeps the coarse
@@ -472,7 +470,7 @@ function buildLocalStyle(data) {
            between vertices, so it is wrong by kilometres at this zoom too.
            No online check needed: when online the basemap tiles draw above this
            layer and hide it entirely, so the expression is invisible. */
-        'raster-opacity': ['interpolate', ['linear'], ['zoom'], 3.5, 1, 9, 0.35],
+        'raster-opacity': ['interpolate', ['linear'], ['zoom'], 6, 1, 9, 0.35],
         'raster-fade-duration': 0
       } });
 
@@ -543,17 +541,6 @@ function buildLocalStyle(data) {
         'circle-opacity': 0.9,
         'circle-stroke-width': 0.5,
         'circle-stroke-color': '#ffffff',
-        /* Lie the dots ON the sphere. The default alignment is 'viewport', i.e.
-           billboarded: every dot faces the camera regardless of where it sits on
-           the globe, so near the limb — where the surface is edge-on — the disc
-           stood proud of the silhouette and the terminator crawled over a rash
-           of them as the planet turned. Aligned to the map, a limb dot is seen
-           edge-on too: it foreshortens to a sliver and goes.
-           pitch-scale stays 'viewport' so the radius remains the screen-pixel
-           size the zoom ramp above specifies; 'map' (the default) would scale
-           them with the ground and swell them at low zoom. */
-        'circle-pitch-alignment': 'map',
-        'circle-pitch-scale': 'viewport'
       };
     };
     layers.push({ id: 'cities-r1', type: 'circle', source: 'cities',
@@ -1069,34 +1056,19 @@ function loadPathChunk(entry) {
    predicate for both hiding and disabling interaction, so the two can never
    disagree (the prior bug: a hand-rolled 90° test diverged from the true
    horizon, leaving a band that was clickable but visually behind the globe).
-   Runs on every 'render', and — via registerMarker — on every marker at birth. */
-function applyMarkerOcclusion(m) {
-  if (!map || !map.transform || !map.transform.isLocationOccluded) return;
-  var occluded = map.transform.isLocationOccluded(m.getLngLat());
-  var el  = m.getElement();
-  var vis = occluded ? 'hidden' : 'visible';
-  var pe  = occluded ? 'none'   : 'auto';
-  if (el.style.visibility    !== vis) el.style.visibility    = vis;
-  if (el.style.pointerEvents !== pe)  el.style.pointerEvents = pe;
-}
-
+   Runs on every 'render'. */
 function updateMarkerOcclusion() {
-  mapMarkers.forEach(applyMarkerOcclusion);
-  pathMarkers.forEach(applyMarkerOcclusion);
-}
-
-/* THE single registration point for HTML markers — nothing pushes to these
-   arrays directly. Adding a marker does not cause a render, so a marker created
-   while the camera is idle was never reached by the sweep above and sat at
-   MapLibre's opacityWhenCovered (0.2): faintly visible THROUGH the globe, and
-   clickable. (Seen by pressing the log's jump-to arrow on the eclipse that was
-   already selected, on the far side — no camera move, so no render, so no test.)
-   Testing at birth means no marker can exist in an untested state; the sweep
-   then only has to keep up with camera movement. */
-function registerMarker(list, m) {
-  list.push(m);
-  applyMarkerOcclusion(m);
-  return m;
+  if (!map || !map.transform || !map.transform.isLocationOccluded) return;
+  function update(m) {
+    var occluded = map.transform.isLocationOccluded(m.getLngLat());
+    var el  = m.getElement();
+    var vis = occluded ? 'hidden' : 'visible';
+    var pe  = occluded ? 'none'   : 'auto';
+    if (el.style.visibility    !== vis) el.style.visibility    = vis;
+    if (el.style.pointerEvents !== pe)  el.style.pointerEvents = pe;
+  }
+  mapMarkers.forEach(update);
+  pathMarkers.forEach(update);
 }
 
 function clearMapMarkers()  { _arrowEls = []; _pinEls = []; mapMarkers.forEach(function(m){m.remove();}); mapMarkers=[]; }
@@ -1242,7 +1214,7 @@ function addObserverMarker(lat, lon, sunAz) {
     _arrowEls.push(arrow);
     var ma = new maplibregl.Marker({ element: wrap, anchor: 'center' })
       .setLngLat([lon, lat]).addTo(map);
-    registerMarker(mapMarkers, ma);
+    mapMarkers.push(ma);
   }
 
   /* The pin hangs inside a WRAPPER, exactly as the arrow does. MapLibre writes
@@ -1273,7 +1245,7 @@ function addObserverMarker(lat, lon, sunAz) {
       anchor:  'bottom',
       offset:  [0, PIN_H - PIN_TIP_Y]
     }).setLngLat([lon, lat]).addTo(map);
-  registerMarker(mapMarkers, m);
+  mapMarkers.push(m);
 }
 
 /* Rasterise the drawn pin once; every marker reuses the same data URL. */
@@ -1290,7 +1262,7 @@ function addGEMarker(lat, lon) {
   d.className = 'ge-diamond';
   var m = new maplibregl.Marker({ element: d, anchor: 'center' })
     .setLngLat([lon, lat]).addTo(map);
-  registerMarker(pathMarkers, m);
+  pathMarkers.push(m);
 }
 
 function onMapClick(lat, lon) {

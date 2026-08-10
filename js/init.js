@@ -1,6 +1,5 @@
 /* ── Initialisation ──────────────────────────────────────────────────── */
 
-buildTzSelect();
 initMap(); /* Map is the default tab — initialise immediately */
 
 /* Search-range select */

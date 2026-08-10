@@ -197,7 +197,11 @@ function scanLocation() {
         if (e.year===rec.year && e.month===rec.month && e.day===rec.day) { entry=e; break; }
       }
       if (!entry) continue;
-      results.push(Object.assign({}, entry, { local_type: r.type, local_mag: r.mag }));
+      /* local_osc is computed by computeEclipse from the exact two-circle lens
+         area; carry it rather than letting consumers re-derive obscuration from
+         magnitude, which cannot be done without the Moon/Sun radius ratio. */
+      results.push(Object.assign({}, entry,
+        { local_type: r.type, local_mag: r.mag, local_osc: r.osc }));
     }
   }
 

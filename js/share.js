@@ -7,7 +7,7 @@ function buildShareUrl() {
   var coords = parseCoords();
   if (coords)
     parts.push('q=' + encodeURIComponent('(' + coords.lat.toFixed(5) + ',' + coords.lon.toFixed(5) + ')'));
-  var tz = document.getElementById('tz').value;
+  var tz = getTz();
   if (tz !== 'auto') parts.push('tz=' + encodeURIComponent(tz));
   var base = window.location.origin + window.location.pathname;
   return parts.length ? base + '#' + parts.join('&') : base;

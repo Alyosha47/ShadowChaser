@@ -80,16 +80,29 @@ var TZ_ZONES = [
   { label: 'UTC+14  (LINT)',       value: 'Pacific/Kiritimati',     off:  14   },
 ];
 
-function buildTzSelect() {
-  document.getElementById('tz').innerHTML = TZ_ZONES.map(function (z) {
-    return '<option value="' + z.value + '">' + z.label + '</option>';
-  }).join('');
+/* THE timezone selection. Formerly a <select id="tz"> in Settings, which the
+   contacts-table header already duplicated inline, one tap from the times it
+   governs. When the control went, the element stayed on as a hidden value
+   holder — a DOM node used as a variable, which is what this is instead.
+
+   'auto' unless a shared link carries #tz=. TZ_ZONES above is still the lookup
+   from that value to an offset, and is still what validates one arriving from a
+   URL: setTz refuses anything not in the table, so a hand-edited link cannot put
+   the app into a zone it cannot resolve. */
+var _tzChoice = 'auto';
+
+function getTz()  { return _tzChoice; }
+function setTz(v) {
+  if (v === 'auto' || TZ_ZONES.some(function (z) { return z.value === v; })) {
+    _tzChoice = v;
+    return true;
+  }
+  return false;
 }
 
 /** Return UTC offset in decimal hours for the current tz selection */
 function getTzOffset() {
-  var sel = document.getElementById('tz');
-  var val = sel.value;
+  var val = _tzChoice;
   if (val === 'auto') return getAutoTzOffset();
   var zone = TZ_ZONES.find(function (z) { return z.value === val; });
   return zone ? zone.off : 0;
