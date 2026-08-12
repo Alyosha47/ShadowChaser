@@ -72,6 +72,28 @@
     .is-standalone { --header-h: 0rem; }      /* .is-standalone sits on <html> = :root */
     .is-standalone .app-header { display: none; }
 
+    /* KEEP THE TAB BUTTONS OUT FROM UNDER THE STATUS BAR. Dropping the header in
+       standalone leaves the tab bar as the topmost element, and body is
+       position:fixed;inset:0 under viewport-fit=cover — so the bar's top edge is
+       the physical top of the screen, with the clock and signal bars sitting on
+       top of the buttons.
+       Pad rather than shift: the bar GROWS by the inset so its background fills
+       the status-bar strip (a shifted bar would leave a transparent gap there),
+       while the buttons inside start below it. env() reports 0 anywhere without
+       an inset, so nothing else moves.
+       Both selectors, as above — the media query for modern browsers, the class
+       for older iOS that lacks display-mode. */
+    @media all and (display-mode: standalone) {
+      .tab-bar {
+        height:      calc(var(--tab-h) + env(safe-area-inset-top, 0px));
+        padding-top: env(safe-area-inset-top, 0px);
+      }
+    }
+    .is-standalone .tab-bar {
+      height:      calc(var(--tab-h) + env(safe-area-inset-top, 0px));
+      padding-top: env(safe-area-inset-top, 0px);
+    }
+
     .app-header::before {
       content:   '\2609';
       font-size: 1.8rem;

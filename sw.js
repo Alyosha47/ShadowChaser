@@ -25,8 +25,8 @@ const CACHE = 'followtheshadow-' + VERSION;
 const CORE = [
   'index.html',
   'favicon.ico',
-  'icons/icon-192-v2.png',
-  'icons/icon-512-v2.png',
+  'icons/icon-192.png',
+  'icons/icon-512.png',
   'css/app.css',
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
       'search','list','local','details','tshirt','userlog','share','map','url','init'].map(n => `js/${n}.js`),
@@ -94,11 +94,23 @@ self.addEventListener('install', e => {
     const c = await caches.open(CACHE);
     // 1) The shell, forced fresh. Small, and nothing runs without it.
     await precache(c, CORE, 'reload', 6);
-    // 2) Field data. Immutable, throttled, and second in line so the first
-    //    paint never waits on 20 MB of eclipse paths.
+
+    /* 2) TAKE OVER NOW — as soon as the shell is complete and BEFORE the 20 MB
+       of field data below. skipWaiting used to be the last line of this block,
+       which meant the old worker stayed in control for the minutes the DATA
+       precache takes on a phone. During that window a page load could be served
+       PART from the old cache and PART from the new one, and a half-old set of
+       scripts is not a working app: init.js from the previous build called
+       buildTzSelect(), which the current tabs.js no longer defines, and the
+       whole app died at parse time before first paint.
+       The DATA precache continues under waitUntil after we claim; it just no
+       longer holds the swap hostage. */
+    await self.skipWaiting();
+
+    // 3) Field data. Immutable, throttled, and last so the first paint never
+    //    waits on 20 MB of eclipse paths.
     const ok = await precache(c, DATA, 'default', 4);
     console.log(`[SW] ${CACHE}: shell + ${ok}/${DATA.length} data files cached`);
-    await self.skipWaiting();
   })());
 });
 

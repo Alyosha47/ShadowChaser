@@ -230,21 +230,6 @@ function _positionRuler(ms) {
 }
 
 function _shadowTimelineEl()  { return document.getElementById('shadow-timeline'); }
-/* Cloud-cover overlay — PLACEHOLDER. The button is in the layout so the pair of
-   overlay toggles can be seen and judged together, but there is no cloud layer
-   yet. It stays visibly inert (dimmed, aria-disabled) rather than silently doing
-   nothing, so nobody mistakes it for broken. Replace this whole block when the
-   real overlay lands; the button id and CSS class are already correct. */
-(function () {
-  var b = document.getElementById('btn-cloud');
-  if (!b) return;
-  b.setAttribute('aria-disabled', 'true');
-  b.addEventListener('click', function (e) {
-    e.preventDefault();
-    b.title = 'Cloud cover — not yet available';
-  });
-})();
-
 function _shadowBtnEl()       { return document.getElementById('btn-shadow'); }
 
 /* Timeline has three modes: 'off' (hidden), 'show' (readout + ruler), and

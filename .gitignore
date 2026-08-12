@@ -11,5 +11,7 @@ __pycache__/
 *.pyc
 .DS_Store
 data/basemap/relief_tiles/
-vendor/cesium-1.121/
 vestigial/
+data/cloud/*.npz
+data build tools/_cloud_cache/
+vendor/cesium-1.121/
