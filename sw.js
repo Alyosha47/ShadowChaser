@@ -28,8 +28,14 @@ const CORE = [
   'icons/icon-192.png',
   'icons/icon-512.png',
   'css/app.css',
+  /* Every script index.html loads. cloud.js and the two shadow files were
+     MISSING — the same failure as the Cesium entry below, in the other
+     direction: shipped code the precache had never heard of. Offline, the
+     cloud button did nothing and shadow-ui threw at parse. If you add a
+     <script> to index.html, add it here in the same commit. */
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
-      'search','list','local','details','tshirt','userlog','share','map','url','init'].map(n => `js/${n}.js`),
+      'search','list','local','details','tshirt','userlog','share','map',
+      'shadow-layer','shadow-ui','cloud','url','init'].map(n => `js/${n}.js`),
   /* The map engine. These were MISSING: the app moved from Cesium to MapLibre
      but the precache list didn't, so ~1.9 MB of engine was only ever cached
      opportunistically after first use — a fresh install that went offline
@@ -61,10 +67,23 @@ const BESSELIAN = [
   '701_800','801_900','901_1000',
 ].map(n => `data/besselian/${n}.json`);
 
+/* Cloud climatology: 12 months x 8 local-solar-time slices = 96 WebP, ~3.3 MB
+   total. The layer fetches at most 16 of them for a given date, but which 16
+   depends on the eclipse the user picks in the field, so precaching a subset
+   would mean the layer works for some eclipses offline and not others — worse
+   than either extreme. 3.3 MB is a sixth of what the two path centuries cost.
+   DATA, never CORE: a missing month degrades to its neighbour (see cloud.js),
+   so a failure here must not fail the install. */
+const CLOUD = [];
+for (let m = 1; m <= 12; m++)
+  for (let hh = 0; hh < 24; hh += 3)
+    CLOUD.push(`data/cloud/cloud_${String(m).padStart(2,'0')}_${String(hh).padStart(2,'0')}.webp`);
+
 const DATA = [
   ...BESSELIAN,
   'data/paths/paths_1901_2000.json.gz',
   'data/paths/paths_2001_2100.json.gz',
+  ...CLOUD,
 ];
 
 // Precache with BOUNDED CONCURRENCY. A flat Promise.all over ~160 URLs opened as

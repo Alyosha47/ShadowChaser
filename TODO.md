@@ -14,7 +14,14 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-08-09 — **contact angles were wrong everywhere and are fixed**
+Last touched: 2026-08-11 — **cloud-cover overlay (#F2 climatology) SHIPPED** (HANDOFF §17).
+ERA5 1991–2020, 0.5°, 8 local-solar-time slices × 12 months, 3.3 MB of WebP; each point
+timed to when the eclipse peaks *there* via `findMaximum()`, not to greatest eclipse.
+Two canvases (world base + sharp viewport) — read §17.3 before touching the render path,
+three plausible alternatives were tried and all lose. **Not precached in `sw.js` yet.**
+`Cloud.version` must be bumped on every change to that file.
+
+Prior: 2026-08-09 — **contact angles were wrong everywhere and are fixed**
 (HANDOFF §16.1: V = q − P, not 180 − (P + q); verified against both Jubier and Stellarium).
 **Obscuration in search was computed with the wrong solid** (§16.2 — `>90%` missed a 96.6%
 eclipse). Marker occlusion restructured so a marker cannot exist untested (§16.3); relief
@@ -69,14 +76,19 @@ suggestion.)*
 3. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
    Deliberately NOT first: it is the least visible and the most likely to consume a whole
    session. Read HANDOFF §15.3 before starting.
-4. **Search temporal tokens** — needs a design decision before any code (low priority; not
+4. **Precache `data/cloud/` in `sw.js`** — the cloud layer currently needs a connection,
+   which breaks the offline-first promise for a feature meant for the field. 96 files,
+   3.3 MB. Goes in the **best-effort DATA loop, never CORE `addAll`**. Small, but `sw.js`
+   is the most fragile file in the repo, so it gets its own change and its own test.
+5. **Search temporal tokens** — needs a design decision before any code (low priority; not
    currently bothering the user).
-5. Remaining open bugs → UX deliberations → Features.
+6. Remaining open bugs → UX deliberations → Features.
 
 **Dropped 2026-08-09 — "Overlay sheet pattern".** It was premised on three overlays arriving
 at once, each growing its own control cluster. That premise is gone: the shadow scrubber
-stays where it is (the user likes it there), shadow-on-globe is shelved, cloud cover is
-undesigned, and the planned desirability heatmap may need no controls at all. Building a
+stays where it is (the user likes it there), shadow-on-globe is shelved, **cloud cover
+shipped with a single toggle and no panel at all** (§17 — which rather makes the point),
+and the planned desirability heatmap may need no controls at all. Building a
 generic control pattern for imagined consumers produces an abstraction that fits none of
 them. **`.sheet` already exists, works, and has a real consumer in the poster** — it will
 still be there when an overlay actually needs a panel, and by then its contents will be
@@ -302,6 +314,21 @@ The data-key and safety-rail traps are renderer-agnostic.)*
 ---
 
 ## FEATURES — EASY
+- **Viewing conditions in the details panel.** With a location set, show two indicators:
+  **terrain-shadow visibility** (is the sun above the local horizon at max, or behind a
+  ridge — the terrain shadow engine already answers this, HANDOFF §4) and **cloud-cover
+  likelihood** (`Cloud.sampleAt(lon, lat)` returns the mean cloud fraction at that point,
+  timed to the local maximum — see §17). Both are already computed; this is presentation.
+  Answers "should I stand here?" without making the user read two overlays and interpolate
+  by eye. Notes for whoever builds it:
+  - `sampleAt` returns null until the cloud layer has been on once, since it reads the
+    slices that render loaded. Either fetch on demand or show the row only when populated —
+    do NOT silently render a zero.
+  - Mean cloud amount is **not** the probability of seeing totality (50% could be
+    half-covered daily or clear on half the days). Whatever wording is used must not
+    imply odds. One qualifying line, not a paragraph.
+  - 0.5 deg is ~55 km: it cannot see sea breezes, lee clearing or valley fog. The terrain
+    indicator is sharp, the cloud one is regional. Do not present them as equally precise.
 - Thumbnail path map per list row (small SVG) — MOBILE ONLY (not desktop).
 - Century scroller on the mobile right edge.
 - KMZ download.
@@ -385,16 +412,18 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   incumbent everywhere. Suggested two-branch discipline: freeze the shipped generator
   (bugfix-only) as stable truth; develop the unified engine as experimental successor.
   ~4–6 phased sessions. Next phase: penumbra onto the engine.
-- **#F2 Cloud-cover / weather overlay** — the killer feature. **TWO data paths, one overlay,
-  with the handover driven by days-to-eclipse.** Climatology (median cloud fraction for that
-  date and place) is the base layer and the only thing available months or years out — it is
-  what makes a site *choosable* in advance. **But inside about a week of an eclipse, switch to
-  live forecast data if a freely available source exists** — no key, no quota, cacheable for
-  offline. That week is when a chaser actually commits to travel, and climatology is worthless
-  at that range; a 40%-cloudy-in-August average tells you nothing about next Tuesday.
-  Still needs data-source choice (the whole feature turns on what can be fetched for free),
-  globe-layer rendering, online/offline behaviour, controls, perf. ~2 sessions of design
-  before code.
+- **#F2b Cloud-cover — the FORECAST half.** The climatology half shipped 2026-08-11
+  (HANDOFF §17); this is what remains. **Inside about a week of an eclipse, switch to live
+  forecast data if a freely available source exists** — no key, no quota, cacheable for
+  offline. That week is when a chaser commits to travel, and climatology is worthless at
+  that range: a 40%-cloudy-in-August average tells you nothing about next Tuesday. The
+  handover should be driven by days-to-eclipse. Rendering is solved — `js/cloud.js` already
+  owns a canvas layer, a palette, a legend-less toggle and a point sampler, and a forecast
+  field is the same shape as a climatology slice. **The open question is entirely the data
+  source**, and it is harder than the climatology one was: forecasts are current-state
+  services with quotas, where ERA5 was a one-time static download. Do not start by writing
+  code. Note the timing subtlety already solved for climatology (§17.2) applies here too —
+  a forecast must be sampled at each point's own local maximum, not at greatest eclipse.
 - **#F3 Animated shadow on globe with time slider** — scrub the umbra/penumbra across the map in
   real time. Most on-brand feature. Distinct from the terrain-shadow scrubber that shipped:
   that scrubs *terrain* shadows at one place; #F3 animates the *umbra/penumbra footprint*
@@ -493,13 +522,16 @@ The data-key and safety-rail traps are renderer-agnostic.)*
     dead `corridorToPolygonData` (harmless; remove only as part of a real verified refactor).
     Also `sunArrowImage()` is now unused (billboard arrow replaced by surface geometry) —
     remove in the next map.js cleanup pass.
-  - `AppState.on()` exists but has no subscribers — wire only when a feature demands it.
+  - `AppState.on()` — **now has real subscribers** (`js/map.js` redraws, `js/cloud.js`).
+    No longer speculative; leave it.
   - **Connectivity state** — now a real subsystem (post 2026-07-29 rewrite): active probe (3 s
     timeout, cache-busted, 15 s poll + event-driven, 3 s reprobe on failure), two-strike debounce,
     `_forceOffline`, and `applyOnlineState()` driving imagery, vectors and the pole filler. Still
-    lives in `js/map.js`, not yet promoted to its own module. A *second*
-    connectivity-dependent feature (cloud-cover #F2) is the trigger to promote it to a module
-    with periodic re-probe + subscribers.
+    lives in `js/map.js`, not yet promoted to its own module. The stated trigger was a
+    *second* connectivity-dependent feature. **Cloud climatology did NOT become one** — it is
+    static files, precacheable, no connectivity logic at all. **#F2b (forecast) will be the
+    real trigger**, since it genuinely needs online/offline handover. Do not promote before
+    then; the module would have one consumer and imagined requirements.
   - **Comment cleanup pass on map.js** — several build-to-build war-story comments could be
     condensed now that the approach is settled.
 
