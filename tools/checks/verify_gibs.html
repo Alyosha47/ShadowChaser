@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>GIBS probe — ShadowChaser #F2c "Now"</title>
+<!--
+  tools/checks/verify_gibs.html — a THROWAWAY probe, not part of the app.
+
+  WHY THIS EXISTS. The "Now" cloud mode needs three strings from NASA GIBS that
+  must not be guessed: the layer identifier, the TileMatrixSet, and a timestamp
+  that actually has imagery behind it. The assistant writing this had no network
+  route to gibs.earthdata.nasa.gov, so rather than hardcode plausible-looking
+  names into js/satellite.js and discover in the field that they 404, this page
+  tries every candidate and reports which ones are real.
+
+  Open it in a browser. It needs nothing from the app and touches nothing.
+  Whatever comes back green gets copied into js/satellite.js as a constant.
+
+  THE TIMESTAMP PROBLEM, which is the non-obvious part. Geostationary layers are
+  "subdaily": GIBS wants YYYY-MM-DDTHH:MM:SSZ, and it does NOT accept "current".
+  Imagery also lands roughly 40 minutes behind real time, so "now rounded to ten
+  minutes" is usually a 404. The only correct way to find the newest frame is the
+  DescribeDomains request, which this page performs and shows.
+-->
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; background: #14171c; color: #dfe4ea; }
+  header { padding: 12px 16px; }
+  h1 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  p  { margin: 4px 0; color: #97a0ad; font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 4px 16px 4px 0; border-bottom: 1px solid #262b33; }
+  th { color: #97a0ad; font-weight: 500; }
+  td:first-child { padding-left: 16px; }
+  .ok   { color: #7bd88f; }
+  .bad  { color: #6b7280; }
+  .work { color: #e0c368; }
+  #ver  { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #e0c368;
+          border: 1px solid #4a4223; background: #2a2513; padding: 1px 6px;
+          border-radius: 3px; margin-left: 8px; vertical-align: middle; }
+  #status.done  { color: #7bd88f; font-size: 14px; font-weight: 600; }
+  #status.going { color: #e0c368; }
+  code  { font-family: ui-monospace, Menlo, monospace; }
+  #map  { height: 62vh; width: 100%; background: #05070a; }
+  #pick { padding: 8px 16px; font-size: 12px; color: #97a0ad; }
+  button { font: inherit; background: #262b33; color: #dfe4ea; border: 1px solid #39404a;
+           border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+</style>
+
+<header>
+  <h1>GIBS probe — which layers are real? <span id="ver">PROBE 2026-08-15b</span></h1>
+  <p id="status">starting…</p>
+  <p id="prog">If the version above is not the one you just uploaded, you are seeing a
+     cached copy — hard-reload (Cmd-Shift-R), or add <code>?x=1</code> to the URL.</p>
+</header>
+<table id="out">
+  <tr><th>layer</th><th>matrix set</th><th>time used</th><th>result</th><th></th></tr>
+</table>
+<div id="pick"></div>
+<div id="map"></div>
+
+<link href="../../vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
+<script src="../../vendor/maplibre-gl-csp-5.5.0.js"></script>
+<script>
+'use strict';
+
+/* Candidates. These ARE guesses — that is the entire point of the page. Nothing
+   here reaches js/satellite.js until it has come back green.
+
+   `probeAt` is the z=2 tile to sample, and it MUST be one the satellite can see.
+   The first run of this page failed Himawari purely because every layer was
+   probed at 2/1/1, which is over the Atlantic — Himawari looks at the Pacific.
+   DescribeDomains returned a real timestamp for it, so the layer was there all
+   along and the probe was pointing the wrong way. At z=2 the world is 4x4:
+   x=0 is the far west, x=3 the far east; y=1 is the northern midlatitudes. */
+var LAYERS = [
+  { id: 'GOES-East_ABI_GeoColor',                 probeAt: [1, 1] },
+  { id: 'GOES-West_ABI_GeoColor',                 probeAt: [0, 1] },
+  { id: 'Himawari_AHI_GeoColor',                  probeAt: [3, 1] },
+  { id: 'GOES-East_ABI_Band13_Clean_Infrared',    probeAt: [1, 1] },
+  { id: 'GOES-West_ABI_Band13_Clean_Infrared',    probeAt: [0, 1] },
+  { id: 'Himawari_AHI_Band13_Clean_Infrared',     probeAt: [3, 1] },
+  { id: 'Himawari_AHI_Band3_Red_Visible_1km',     probeAt: [3, 1] },
+  /* Control. Deliberately dated to yesterday: GIBS warns that a current-date
+     request is often empty because acquisition and processing have not yet run,
+     and the first version of this page failed its own control for that reason. */
+  { id: 'MODIS_Terra_CorrectedReflectance_TrueColor', probeAt: [1, 1], daysAgo: 1 }
+];
+
+/* EPSG:3857 tile matrix sets are named GoogleMapsCompatible_LevelN; the N caps
+   the zoom. Geostationary imagery is ~2 km, so a low level is expected. */
+var SETS = ['GoogleMapsCompatible_Level7', 'GoogleMapsCompatible_Level6',
+            'GoogleMapsCompatible_Level8', 'GoogleMapsCompatible_Level9'];
+
+var ROOT = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/';
+
+function tileUrl(layer, set, time, z, x, y, ext) {
+  return ROOT + layer + '/default/' + time + '/' + set + '/' + z + '/' + y + '/' + x + '.' + ext;
+}
+
+/* An <img> load is a truer test than fetch(): it exercises exactly the path
+   MapLibre will use, including CORS behaviour on the image pipeline. */
+function probe(url) {
+  return new Promise(function (res) {
+    var im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload  = function () { res(im.naturalWidth > 0); };
+    im.onerror = function () { res(false); };
+    im.src = url;
+    setTimeout(function () { res(false); }, 12000);
+  });
+}
+
+/* Newest frame for a layer, straight from GIBS rather than assumed. The Domain
+   element holds comma-separated ISO periods; the end of the last one is the most
+   recent imagery. Returns null when the layer has no time dimension at all. */
+function newestTime(layer) {
+  var url = ROOT + '1.0.0/' + layer + '/default/' + SETS[0] + '/all/all.xml';
+  return fetch(url).then(function (r) {
+    if (!r.ok) throw new Error('describe ' + r.status);
+    return r.text();
+  }).then(function (xml) {
+    var m = xml.match(/<Domain>([^<]*)<\/Domain>/);
+    if (!m) return null;
+    var periods = m[1].split(',');
+    var last = periods[periods.length - 1].split('/');
+    return last.length >= 2 ? last[1] : last[0];
+  }).catch(function () { return null; });
+}
+
+function row(cells, cls) {
+  var tr = document.createElement('tr');
+  cells.forEach(function (c) {
+    var td = document.createElement('td');
+    if (c instanceof Node) td.appendChild(c); else td.innerHTML = c;
+    tr.appendChild(td);
+  });
+  if (cls) tr.className = cls;
+  document.getElementById('out').appendChild(tr);
+  return tr;
+}
+
+var winners = [];
+
+var done = 0;
+function progress(label) {
+  var s = document.getElementById('status');
+  s.className = 'going';
+  s.textContent = 'testing ' + (done + 1) + ' of ' + LAYERS.length + ' — ' + label +
+                  '  (each can take ~20 s if the service is slow)';
+}
+
+function run() {
+  var chain = Promise.resolve();
+  LAYERS.forEach(function (cand) {
+    var layer = cand.id;
+    chain = chain.then(function () {
+      progress(layer);
+      return newestTime(layer).then(function (t) {
+        if (t && cand.daysAgo) {
+          /* A daily layer's newest entry is often today's, which may not have
+             been processed yet. Step back. */
+          var d = new Date(Date.now() - cand.daysAgo * 86400000);
+          t = d.toISOString().slice(0, 10);
+        }
+        /* `default` is tried only as a last resort and is reported as such —
+           for a subdaily layer it is not necessarily anything recent, so it is
+           useful as a diagnosis but must never be shipped. */
+        var times = t ? [t, 'default'] : ['default'];
+        var attempts = [];
+        SETS.forEach(function (set) {
+          times.forEach(function (time) {
+            ['jpg', 'png'].forEach(function (ext) {
+              attempts.push({ set: set, time: time, ext: ext });
+            });
+          });
+        });
+
+        var i = 0;
+        function next() {
+          if (i >= attempts.length) {
+            done++;
+            row(['<code>' + layer + '</code>', '—', t || 'none',
+                 'no combination worked', ''], 'bad');
+            return;
+          }
+          var a = attempts[i++];
+          var px = cand.probeAt[0], py = cand.probeAt[1];
+          return probe(tileUrl(layer, a.set, a.time, 2, px, py, a.ext)).then(function (good) {
+            if (!good) return next();
+            var btn = document.createElement('button');
+            btn.textContent = 'show';
+            btn.onclick = function () { show(layer, a.set, a.time, a.ext); };
+            row(['<code>' + layer + '</code>', '<code>' + a.set + '</code>',
+                 '<code>' + a.time + '</code>',
+                 'OK .' + a.ext + (a.time === 'default' ? ' (default only — do not ship)' : ''),
+                 btn], a.time === 'default' ? 'work' : 'ok');
+            done++;
+            winners.push({ layer: layer, set: a.set, time: a.time, ext: a.ext });
+            if (winners.length === 1) show(layer, a.set, a.time, a.ext);
+          });
+        }
+        return next();
+      });
+    });
+  });
+
+  chain.then(function () {
+    var s = document.getElementById('status');
+    s.className = 'done';
+    s.textContent = 'DONE — all ' + LAYERS.length + ' layers tested. ' +
+      (winners.length ? winners.length + ' working combination(s); copy the green rows.'
+                      : 'Nothing worked — names are wrong, or the service is down.');
+    document.getElementById('prog').textContent =
+      'Screenshot the table above. Amber rows worked only on time=default and must not ship.';
+  });
+}
+
+var map = null;
+function show(layer, set, time, ext) {
+  document.getElementById('pick').innerHTML =
+    'showing <code>' + layer + '</code> at <code>' + time + '</code>';
+
+  var tiles = [ROOT + layer + '/default/' + time + '/' + set + '/{z}/{y}/{x}.' + ext];
+
+  if (!map) {
+    map = new maplibregl.Map({
+      container: 'map', center: [-30, 20], zoom: 2,
+      style: { version: 8, sources: {}, layers: [
+        { id: 'bg', type: 'background', paint: { 'background-color': '#05070a' } }
+      ] }
+    });
+    map.on('load', function () { addSat(tiles); });
+  } else {
+    if (map.getLayer('sat')) map.removeLayer('sat');
+    if (map.getSource('sat')) map.removeSource('sat');
+    addSat(tiles);
+  }
+}
+
+function addSat(tiles) {
+  map.addSource('sat', { type: 'raster', tiles: tiles, tileSize: 256,
+                         attribution: 'NASA EOSDIS GIBS' });
+  map.addLayer({ id: 'sat', type: 'raster', source: 'sat',
+                 paint: { 'raster-opacity': 1 } });
+}
+
+if (window.maplibregl && maplibregl.setWorkerUrl) {
+  maplibregl.setWorkerUrl('../../vendor/maplibre-gl-csp-worker-5.5.0.js');
+}
+run();
+</script>

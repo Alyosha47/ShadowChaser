@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>EUMETView probe — ShadowChaser #F2c "Now", Europe/Africa</title>
+<!--
+  tools/checks/verify_eumetsat.html — THROWAWAY probe, sibling of verify_gibs.html.
+
+  WHY. GIBS gave us the Americas (GOES) and Asia-Pacific (Himawari) but has no
+  Meteosat: NASA does not redistribute EUMETSAT. Europe, Africa, the Middle East
+  and India — roughly -10 to +75 deg — are therefore still uncovered, and that is
+  a lot of eclipse track. EUMETSAT serves it themselves, free and without
+  registration, but as WMS rather than tiles, which is a different code path.
+
+  UNLIKE THE GIBS PROBE, this one does not guess layer names. Meteosat Third
+  Generation replaced MSG as the prime satellite, so any msg_* name recalled from
+  training is plausibly stale. Instead it reads GetCapabilities, enumerates every
+  layer the service actually advertises, and tests the ones that look like cloud
+  imagery. What it finds is what exists today.
+
+  THREE THINGS THIS IS REALLY TESTING, in order of how badly each would bite:
+    1. CORS. If GeoServer does not send Access-Control-Allow-Origin, the
+       capabilities fetch fails from a browser. Raster TILES would still render
+       (images are not subject to CORS unless you read their pixels), so the
+       fallback is to hardcode a layer name — but we would need to learn it some
+       other way. The page reports which of these two worlds we are in.
+    2. Whether EPSG:3857 is advertised. MapLibre is Web Mercator only. A service
+       offering just EPSG:4326 or a geostationary projection cannot be used as a
+       raster source without reprojection we are not going to write.
+    3. The time dimension. Near-real-time layers need an explicit timestamp for
+       the same reason GIBS did, and GeoServer's default may be far from current.
+-->
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; background: #14171c; color: #dfe4ea; }
+  header { padding: 12px 16px; }
+  h1 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  p  { margin: 4px 0; color: #97a0ad; font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 4px 16px 4px 0; border-bottom: 1px solid #262b33;
+           vertical-align: top; }
+  th { color: #97a0ad; font-weight: 500; }
+  td:first-child { padding-left: 16px; }
+  .ok { color: #7bd88f; } .bad { color: #6b7280; } .work { color: #e0c368; }
+  code { font-family: ui-monospace, Menlo, monospace; }
+  #ver { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #e0c368;
+         border: 1px solid #4a4223; background: #2a2513; padding: 1px 6px;
+         border-radius: 3px; margin-left: 8px; vertical-align: middle; }
+  #status.done { color: #7bd88f; font-size: 14px; font-weight: 600; }
+  #status.going { color: #e0c368; }
+  #map { height: 58vh; width: 100%; background: #05070a; }
+  #pick { padding: 8px 16px; font-size: 12px; color: #97a0ad; }
+  button { font: inherit; background: #262b33; color: #dfe4ea; border: 1px solid #39404a;
+           border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+</style>
+
+<header>
+  <h1>EUMETView probe — Europe &amp; Africa <span id="ver">PROBE 2026-08-15b</span></h1>
+  <p id="status">reading GetCapabilities…</p>
+  <p id="prog">If the version above is not the one you just uploaded, you are seeing a
+     cached copy — hard-reload, or add <code>?x=1</code> to the URL.</p>
+</header>
+<table id="out">
+  <tr><th>layer</th><th>title</th><th>time used</th><th>result</th><th></th></tr>
+</table>
+<div id="pick"></div>
+<div id="map"></div>
+
+<link href="../../vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
+<script src="../../vendor/maplibre-gl-csp-5.5.0.js"></script>
+<script>
+'use strict';
+
+var WMS = 'https://view.eumetsat.int/geoserver/wms';
+
+/* What counts as "might be cloud imagery". Broad on purpose — the point is to
+   see what exists, not to prejudge it. Airmass, dust and fire RGBs are excluded
+   because they are diagnostic products, not a picture of cloud. */
+var WANT = /geocolou?r|natural|cloud|clai|hrv|visible|vis006|vis008|ir_?108|ir108|overview|truecolou?r/i;
+var SKIP = /airmass|air_mass|ash|dust|fire|convect|snow|severe|sandwich|mask|quality/i;
+
+/* Metop is a POLAR ORBITER: it images in swaths a couple of times a day, not
+   continuously, so it cannot answer "which way do I drive in the next hour".
+   Run 1 also returned eps:m02 layers timestamped 2021-11-15 — five years stale,
+   rendering perfectly, showing nothing about today. Excluded outright: a layer
+   that looks current and is not is worse than one that fails. */
+var EXCLUDE_SRC = /^eps:/i;
+
+/* A frame older than this is not "now" by any reading. Guards against the
+   stale-but-renderable trap above for any other source that goes quiet. */
+var MAX_AGE_H = 6;
+function tooOld(iso) {
+  if (!iso) return false;
+  var ms = Date.parse(iso);
+  return isFinite(ms) && (Date.now() - ms) > MAX_AGE_H * 3600000;
+}
+
+var MAX_TEST = 16;     /* each test is an image load; do not hammer a public good */
+
+/* PREFERENCE ORDER, learned from the first run. Lower sorts first.
+   A picture of cloud beats a derived field: run 1 surfaced msg_fes:cth (Cloud
+   Top Height) first, which renders as a rainbow and is data rather than imagery.
+   Since eclipses do not happen at night, a daytime natural-colour RGB is the
+   ideal product here, with IR10.8 as the all-hours fallback. */
+function rank(l) {
+  var s = (l.name + ' ' + l.title).toLowerCase();
+  if (/geocolou?r/.test(s))        return 0;
+  if (/natural/.test(s))           return 1;
+  if (/hrv|overview/.test(s))      return 2;
+  if (/visible|vis00/.test(s))     return 3;
+  if (/ir_?108|ir10\.8/.test(s))   return 4;
+  if (/cloud|clai/.test(s))        return 5;
+  return 6;
+}
+
+function el(id) { return document.getElementById(id); }
+function say(t, cls) { var s = el('status'); s.textContent = t; s.className = cls || 'going'; }
+
+function row(cells, cls) {
+  var tr = document.createElement('tr');
+  cells.forEach(function (c) {
+    var td = document.createElement('td');
+    if (c instanceof Node) td.appendChild(c); else td.innerHTML = c;
+    tr.appendChild(td);
+  });
+  if (cls) tr.className = cls;
+  el('out').appendChild(tr);
+}
+
+/* A GetMap for a small box over western Europe. WMS 1.3.0 with CRS=EPSG:3857
+   takes bbox as minx,miny,maxx,maxy in metres. (The notorious axis-order flip in
+   1.3.0 applies to EPSG:4326, which is lat,lon — not to 3857. Using 4326 here
+   without swapping is the classic way to get an empty image and no error.) */
+function getMapUrl(layer, time, bbox, w, h) {
+  return WMS + '?service=WMS&version=1.3.0&request=GetMap' +
+    '&layers=' + encodeURIComponent(layer) +
+    '&styles=&format=image%2Fpng&transparent=true' +
+    '&crs=EPSG%3A3857&width=' + w + '&height=' + h +
+    '&bbox=' + bbox +
+    (time ? '&time=' + encodeURIComponent(time) : '');
+}
+
+/* Western Europe, roughly -11..+5 lon, 40..55 lat, in EPSG:3857 metres. */
+var EUROPE_BBOX = '-1224514,4865942,556597,7361866';
+
+/* An <img> load, not a fetch: it exercises the exact path MapLibre will use and
+   is not subject to CORS. A WMS that returns an XML ServiceException still
+   yields an image-load error, so this correctly reads as failure. */
+function probeImage(url) {
+  return new Promise(function (res) {
+    var im = new Image();
+    im.onload = function () { res(im.naturalWidth > 1); };
+    im.onerror = function () { res(false); };
+    im.src = url;
+    setTimeout(function () { res(false); }, 15000);
+  });
+}
+
+/* Pull layers out of GetCapabilities. Returns [] if CORS blocks the read, which
+   is itself a result worth reporting rather than an error to swallow. */
+function readCapabilities() {
+  var url = WMS + '?service=WMS&version=1.3.0&request=GetCapabilities';
+  return fetch(url).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  }).then(function (xml) {
+    var doc = new DOMParser().parseFromString(xml, 'text/xml');
+    var out = [], nodes = doc.getElementsByTagName('Layer');
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      var nameEl = null, titleEl = null, dim = null;
+      for (var j = 0; j < n.childNodes.length; j++) {
+        var c = n.childNodes[j];
+        if (c.nodeName === 'Name'  && !nameEl)  nameEl  = c;
+        if (c.nodeName === 'Title' && !titleEl) titleEl = c;
+        if (c.nodeName === 'Dimension' && c.getAttribute('name') === 'time') dim = c;
+      }
+      if (!nameEl) continue;
+      /* Last entry of the time dimension is the most recent frame. GeoServer
+         writes either a comma list or start/end/period. */
+      var time = null;
+      if (dim && dim.textContent) {
+        var parts = dim.textContent.trim().split(',');
+        var last = parts[parts.length - 1].split('/');
+        time = last.length >= 2 ? last[1] : last[0];
+      }
+      out.push({ name: nameEl.textContent.trim(),
+                 title: titleEl ? titleEl.textContent.trim() : '',
+                 time: time,
+                 crs3857: xml.indexOf('EPSG:3857') >= 0 });
+    }
+    return out;
+  });
+}
+
+var winners = [];
+
+function testAll(cands, corsNote) {
+  var i = 0;
+  function next() {
+    if (i >= cands.length) {
+      say('DONE — tested ' + cands.length + ' layer(s). ' +
+          (winners.length ? winners.length + ' working; copy the green rows.'
+                          : 'None worked.'), 'done');
+      el('prog').textContent = corsNote +
+        '  Screenshot the table. Amber rows rendered only without an explicit time.';
+      return;
+    }
+    var c = cands[i++];
+    say('testing ' + i + ' of ' + cands.length + ' — ' + c.name);
+
+    var times = c.time ? [c.time, null] : [null];
+    var k = 0;
+    function tryTime() {
+      if (k >= times.length) {
+        row(['<code>' + c.name + '</code>', c.title, c.time || 'none',
+             'no image', ''], 'bad');
+        return next();
+      }
+      var t = times[k++];
+      return probeImage(getMapUrl(c.name, t, EUROPE_BBOX, 256, 256)).then(function (good) {
+        if (!good) return tryTime();
+        var btn = document.createElement('button');
+        btn.textContent = 'show';
+        btn.onclick = function () { show(c.name, t); };
+        var stale = tooOld(t);
+        row(['<code>' + c.name + '</code>', c.title, t || '(no time param)',
+             'OK png' + (t ? (stale ? ' — STALE, older than ' + MAX_AGE_H + ' h' : '')
+                           : ' — no explicit time; check freshness'), btn],
+            (t && !stale) ? 'ok' : 'work');
+        winners.push({ name: c.name, time: t });
+        if (winners.length === 1) show(c.name, t);
+        next();
+      });
+    }
+    tryTime();
+  }
+  next();
+}
+
+function start() {
+  readCapabilities().then(function (all) {
+    var seen = {}, cands = [];
+    all.forEach(function (l) {
+      if (seen[l.name]) return;
+      seen[l.name] = 1;
+      if (EXCLUDE_SRC.test(l.name)) return;
+      if (WANT.test(l.name + ' ' + l.title) && !SKIP.test(l.name + ' ' + l.title)) {
+        cands.push(l);
+      }
+    });
+    cands.sort(function (a, b) { return rank(a) - rank(b); });
+    console.log('ALL ' + cands.length + ' candidates, in preference order:\n' +
+      cands.map(function (l) { return rank(l) + '  ' + l.name + '  |  ' + l.title +
+                                      '  |  ' + (l.time || 'no time'); }).join('\n'));
+    var note = 'GetCapabilities read OK (CORS is fine): ' + all.length +
+               ' layers advertised, ' + cands.length + ' candidates after excluding polar orbiters' +
+               ' (full list in the browser console, in preference order).' +
+               (all.length && !all[0].crs3857 ? '  WARNING: EPSG:3857 not found in capabilities.' : '');
+    if (!cands.length) {
+      say('Capabilities read, but nothing matched the cloud-imagery filter. ' +
+          'First 40 layer names logged to the console.', 'work');
+      console.log(all.slice(0, 40).map(function (l) { return l.name + '  |  ' + l.title; }).join('\n'));
+      el('prog').textContent = note;
+      return;
+    }
+    testAll(cands.slice(0, MAX_TEST), note);
+  }).catch(function (e) {
+    /* CORS is the likely cause, and it is not fatal for rendering — only for
+       discovery. Fall back to names seen in EUMETSAT's own documentation. */
+    say('Could not read GetCapabilities (' + e.message + ') — probably CORS. ' +
+        'Falling back to documented layer names.', 'work');
+    testAll([
+      { name: 'meteosat:msg_clai',    title: 'documented guess', time: null },
+      { name: 'meteosat:msg_natural', title: 'documented guess', time: null },
+      { name: 'meteosat:msg_hrv',     title: 'documented guess', time: null },
+      { name: 'mtg_fd:rgb_geocolour', title: 'documented guess', time: null },
+      { name: 'mtg_fd:rgb_naturalcolor', title: 'documented guess', time: null }
+    ], 'GetCapabilities was NOT readable from the browser — CORS blocked. ' +
+       'Tiles may still render; discovery must happen out of band.');
+  });
+}
+
+var map = null;
+function show(layer, time) {
+  el('pick').innerHTML = 'showing <code>' + layer + '</code>' +
+                         (time ? ' at <code>' + time + '</code>' : ' (no time param)');
+  var tpl = getMapUrl(layer, time, '{bbox-epsg-3857}', 256, 256);
+  if (!map) {
+    map = new maplibregl.Map({
+      container: 'map', center: [5, 46], zoom: 3,
+      style: { version: 8, sources: {}, layers: [
+        { id: 'bg', type: 'background', paint: { 'background-color': '#05070a' } }
+      ] }
+    });
+    map.on('load', function () { add(tpl); });
+  } else {
+    if (map.getLayer('sat')) map.removeLayer('sat');
+    if (map.getSource('sat')) map.removeSource('sat');
+    add(tpl);
+  }
+}
+function add(tpl) {
+  map.addSource('sat', { type: 'raster', tiles: [tpl], tileSize: 256,
+                         attribution: 'EUMETSAT' });
+  map.addLayer({ id: 'sat', type: 'raster', source: 'sat',
+                 paint: { 'raster-opacity': 1 } });
+}
+
+if (window.maplibregl && maplibregl.setWorkerUrl) {
+  maplibregl.setWorkerUrl('../../vendor/maplibre-gl-csp-worker-5.5.0.js');
+}
+start();
+</script>
