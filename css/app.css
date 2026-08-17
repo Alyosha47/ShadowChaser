@@ -1410,6 +1410,88 @@
     .map-overlay-btn:disabled,
     .map-overlay-btn[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
 
+    /* ── Cloud caption strip ──────────────────────────────────────────────
+       Sits directly under the overlay buttons, so the legend is adjacent to the
+       control that summoned it. Chrome matches the basemap picker's — same
+       translucent slab, same border and blur — because it is the same KIND of
+       thing: an on-map control panel. Widths are capped rather than fixed so a
+       long satellite name wraps instead of pushing the strip off a phone. */
+    #cloudbar {
+      position:        absolute;
+      top:             3.2rem;
+      left:            0.6rem;
+      z-index:         200;
+      max-width:       min(17rem, calc(100vw - 1.6rem));
+      padding:         0.4rem;
+      display:         flex;
+      flex-direction:  column;
+      gap:             0.35rem;
+      background:      rgba(10,12,15,0.88);
+      border:          1px solid var(--border2);
+      border-radius:   var(--radius);
+      backdrop-filter: blur(4px);
+      pointer-events:  auto;
+    }
+    #cloudbar[hidden] { display: none; }
+
+    /* The mode switch. A segmented control, deliberately the same idiom as the
+       basemap picker: one of N, mutually exclusive, current state shown by the
+       active cell rather than by a separate indicator. */
+    .cloudbar-modes {
+      display:       flex;
+      gap:           0.25rem;
+    }
+    .cloudbar-cell {
+      flex:            1;
+      padding:         0.25rem 0.45rem;
+      font-family:     inherit;
+      font-size:       0.72rem;
+      letter-spacing:  0.02em;
+      color:           var(--text-dim);
+      background:      transparent;
+      border:          1px solid var(--border2);
+      border-radius:   calc(var(--radius) - 2px);
+      cursor:          pointer;
+      white-space:     nowrap;
+    }
+    .cloudbar-cell:hover:not(:disabled) { color: var(--text); border-color: var(--edge); }
+    .cloudbar-cell.active { color: var(--gold); border-color: var(--gold); }
+    /* Unavailable, not broken: the cell keeps its place and carries a title
+       explaining why, exactly as the shadow button does when offline. */
+    .cloudbar-cell:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* The colour bar. Height is deliberately small — it is a key, not a chart —
+       and the end labels are words rather than numbers because the underlying
+       quantity is a mean fraction, which a percentage scale would make look more
+       exact than it is. */
+    .cloudbar-legend {
+      display:     flex;
+      align-items: center;
+      gap:         0.3rem;
+    }
+    .cloudbar-ramp {
+      flex:          1;
+      height:        0.45rem;
+      border-radius: 2px;
+      border:        1px solid var(--border2);
+    }
+    .cloudbar-end {
+      font-size:   0.62rem;
+      color:       var(--text-dim);
+      white-space: nowrap;
+    }
+    .cloudbar-note {
+      font-size:   0.65rem;
+      line-height: 1.35;
+      color:       var(--text-dim);
+    }
+    .cloudbar-credit { opacity: 0.7; }
+
+    @media (max-width: 900px) {
+      #cloudbar { top: 2.9rem; max-width: min(14rem, calc(100vw - 1.6rem)); }
+      .cloudbar-cell { font-size: 0.68rem; }
+    }
+
     /* Right-hand map controls: basemap picker + locate pin, one row.
        The wrapper owns the anchoring so neither child positions itself — they
        used to share top/right 0.6rem and z-index 200, which meant the picker

@@ -52,7 +52,7 @@
 </style>
 
 <header>
-  <h1>EUMETView probe — Europe &amp; Africa <span id="ver">PROBE 2026-08-15b</span></h1>
+  <h1>EUMETView probe — Europe &amp; Africa <span id="ver">PROBE 2026-08-15d</span></h1>
   <p id="status">reading GetCapabilities…</p>
   <p id="prog">If the version above is not the one you just uploaded, you are seeing a
      cached copy — hard-reload, or add <code>?x=1</code> to the URL.</p>
@@ -73,8 +73,30 @@ var WMS = 'https://view.eumetsat.int/geoserver/wms';
 /* What counts as "might be cloud imagery". Broad on purpose — the point is to
    see what exists, not to prejudge it. Airmass, dust and fire RGBs are excluded
    because they are diagnostic products, not a picture of cloud. */
-var WANT = /geocolou?r|natural|cloud|clai|hrv|visible|vis006|vis008|ir_?108|ir108|overview|truecolou?r/i;
-var SKIP = /airmass|air_mass|ash|dust|fire|convect|snow|severe|sandwich|mask|quality/i;
+/* REVISED after seeing it on the map. Pictures of the Earth (GeoColor, natural
+   colour, visible bands) are mostly GROUND, so compositing them over the basemap
+   muddies it, and the visible ones are black at night. What this feature wants is
+   a cloud MASK or fraction: transparent where clear, opaque where cloudy, derived
+   from several channels so it works day and night. Those rank first now. */
+var WANT = /cloud|clai|cma|mask|fraction|cover|ct$|_ct_|cth|ctt|geocolou?r|natural|hrv|visible|vis006|vis008|ir_?108|ir108|overview/i;
+/* `mask` USED TO BE IN THIS LIST. It was added in the first version to drop
+   quality masks, and survived the later edit that promoted CLOUD masks to the
+   top of the ranking — so the filter was discarding the exact product the
+   ranking was hunting for, and msg_fes:clm never appeared in 116 layers.
+   A skip list and a rank list that disagree will always be won by the skip list,
+   silently. Anything excluded here can never be seen, so keep it narrow. */
+var SKIP = /airmass|air_mass|ash|dust|fire|convect|snow|severe|sandwich|quality/i;
+
+/* Tested FIRST regardless of the filters above, because these are the specific
+   hypotheses this run exists to settle. Discovery already did its job; this is
+   confirmation. */
+var FORCE = [
+  { name: 'msg_fes:clm',              title: 'Cloud Mask - MSG - 0 deg' },
+  { name: 'msg_iodc:clm',             title: 'Cloud Mask - MSG - Indian Ocean' },
+  { name: 'mumi:worldcloudmap_ir108', title: 'GLOBAL geostationary ring IR10.8' },
+  { name: 'mtg_fd:rgb_cloudtype',     title: 'Cloud Type RGB - MTG' },
+  { name: 'msg_fes:cth',              title: 'Cloud Top Height - MSG' }
+];
 
 /* Metop is a POLAR ORBITER: it images in swaths a couple of times a day, not
    continuously, so it cannot answer "which way do I drive in the next hour".
@@ -101,13 +123,14 @@ var MAX_TEST = 16;     /* each test is an image load; do not hammer a public goo
    ideal product here, with IR10.8 as the all-hours fallback. */
 function rank(l) {
   var s = (l.name + ' ' + l.title).toLowerCase();
-  if (/geocolou?r/.test(s))        return 0;
-  if (/natural/.test(s))           return 1;
-  if (/hrv|overview/.test(s))      return 2;
-  if (/visible|vis00/.test(s))     return 3;
-  if (/ir_?108|ir10\.8/.test(s))   return 4;
-  if (/cloud|clai/.test(s))        return 5;
-  return 6;
+  if (/mask|cma\b/.test(s))                    return 0;  /* the ideal: binary cloud/clear */
+  if (/cloud.*(fraction|cover|amount)/.test(s)) return 1;
+  if (/cloud.*(type|analysis)|clai/.test(s))    return 2;
+  if (/cloud.*(top|height|temp)|cth|ctt/.test(s)) return 3;
+  if (/ir_?108|ir10\.8/.test(s))                return 4;  /* all-hours fallback */
+  if (/geocolou?r/.test(s))                     return 5;
+  if (/natural/.test(s))                        return 6;
+  return 7;
 }
 
 function el(id) { return document.getElementById(id); }
@@ -247,9 +270,27 @@ function start() {
       }
     });
     cands.sort(function (a, b) { return rank(a) - rank(b); });
-    console.log('ALL ' + cands.length + ' candidates, in preference order:\n' +
+
+    /* Put the forced candidates in front, carrying whatever time the service
+       advertised for them so freshness can be compared like for like. */
+    var byName = {};
+    all.forEach(function (l) { if (!byName[l.name]) byName[l.name] = l; });
+    cands = FORCE.map(function (f) {
+      return { name: f.name, title: f.title,
+               time: byName[f.name] ? byName[f.name].time : null };
+    }).concat(cands.filter(function (c) {
+      return !FORCE.some(function (f) { return f.name === c.name; });
+    }));
+    console.log('=== ALL ' + all.length + ' LAYERS ADVERTISED (unfiltered) ===\n' +
+      all.map(function (l) { return l.name + '  |  ' + l.title; }).join('\n'));
+    console.log('=== ' + cands.length + ' CANDIDATES, preference order ===\n' +
       cands.map(function (l) { return rank(l) + '  ' + l.name + '  |  ' + l.title +
                                       '  |  ' + (l.time || 'no time'); }).join('\n'));
+
+    /* Rendered over the basemap rather than over black, because the question is
+       no longer "does a tile come back" but "does this ruin the map underneath". */
+    document.getElementById('map').style.background =
+      'repeating-conic-gradient(#2b3038 0% 25%, #1b1f26 0% 50%) 0 0/28px 28px';
     var note = 'GetCapabilities read OK (CORS is fine): ' + all.length +
                ' layers advertised, ' + cands.length + ' candidates after excluding polar orbiters' +
                ' (full list in the browser console, in preference order).' +
@@ -286,8 +327,11 @@ function show(layer, time) {
   if (!map) {
     map = new maplibregl.Map({
       container: 'map', center: [5, 46], zoom: 3,
+      /* A LAND-COLOURED background, not black. The failure that sent us back
+         here was a layer that looked fine over black and turned the basemap to
+         brown mud in the app. Judge transparency against something map-like. */
       style: { version: 8, sources: {}, layers: [
-        { id: 'bg', type: 'background', paint: { 'background-color': '#05070a' } }
+        { id: 'bg', type: 'background', paint: { 'background-color': '#d9cfa8' } }
       ] }
     });
     map.on('load', function () { add(tpl); });
@@ -300,8 +344,10 @@ function show(layer, time) {
 function add(tpl) {
   map.addSource('sat', { type: 'raster', tiles: [tpl], tileSize: 256,
                          attribution: 'EUMETSAT' });
+  /* 0.85 — the opacity the app actually ships, so what is seen here is what
+     will be seen there. */
   map.addLayer({ id: 'sat', type: 'raster', source: 'sat',
-                 paint: { 'raster-opacity': 1 } });
+                 paint: { 'raster-opacity': 0.85 } });
 }
 
 if (window.maplibregl && maplibregl.setWorkerUrl) {

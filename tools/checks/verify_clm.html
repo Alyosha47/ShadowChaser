@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Cloud-mask probe — ShadowChaser #F2c</title>
+<!--
+  tools/checks/verify_clm.html — THROWAWAY probe. PROBE 2026-08-15a
+
+  THE QUESTION. EUMETSAT publishes msg_fes:clm and msg_iodc:clm — "Cloud Mask" —
+  which are CLASSIFICATIONS, not pictures: a small set of exact colours meaning
+  cloud / clear land / clear sea. That is the right input for an overlay, because
+  turning it transparent is a LOOKUP rather than a brightness threshold. Every
+  failure so far came from guessing thresholds on continuous imagery; a
+  classification has none to guess, and "cloud" means the same thing in every
+  provider's mask, so the seams between providers cannot recur.
+
+  EUMETSAT covers 0 deg and the Indian Ocean. This page asks whether NASA GIBS
+  publishes equivalent masks for the Americas and the Pacific, and — critically —
+  reports the ACTUAL PALETTE of each one, since the remap is a table of exact
+  colours and must be read off the data, never assumed.
+-->
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; background: #14171c; color: #dfe4ea; }
+  header { padding: 12px 16px; }
+  h1 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  p  { margin: 4px 0; color: #97a0ad; font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 16px 5px 0; border-bottom: 1px solid #262b33;
+           vertical-align: top; }
+  th { color: #97a0ad; font-weight: 500; }
+  td:first-child { padding-left: 16px; }
+  .ok { color: #7bd88f; } .bad { color: #6b7280; }
+  code { font-family: ui-monospace, Menlo, monospace; }
+  #ver { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #e0c368;
+         border: 1px solid #4a4223; background: #2a2513; padding: 1px 6px;
+         border-radius: 3px; margin-left: 8px; }
+  #status.done { color: #7bd88f; font-size: 14px; font-weight: 600; }
+  .sw { display: inline-block; width: 11px; height: 11px; border: 1px solid #4a5563;
+        vertical-align: -1px; margin-right: 3px; }
+  canvas { image-rendering: pixelated; border: 1px solid #262b33; margin: 2px; }
+</style>
+
+<header>
+  <h1>Cloud-mask probe <span id="ver">PROBE 2026-08-15a</span></h1>
+  <p id="status">starting…</p>
+  <p id="prog">Reports which cloud-mask layers exist, and the exact palette of each —
+     the remap is a colour table, so it must be read off the data, not assumed.</p>
+</header>
+<table id="out">
+  <tr><th>layer</th><th>source</th><th>result</th><th>palette (share of pixels)</th></tr>
+</table>
+<div id="pics"></div>
+
+<script>
+'use strict';
+
+var EUM  = 'https://view.eumetsat.int/geoserver/wms';
+var GIBS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+
+/* EUMETSAT's masks are known good. The GIBS names are guesses — that is what
+   this page is for. Each carries a bbox its own satellite can actually see: the
+   first GIBS probe failed Himawari only because it sampled the Atlantic. */
+var EUROPE   = '-1224514,4865942,556597,7361866';
+var AMERICAS = '-11000000,2000000,-7000000,6000000';
+var PACIFIC  = '13000000,2000000,17000000,6000000';
+
+var TRIES = [
+  { name: 'msg_fes:clm',  src: 'EUMETSAT', wms: EUM,  box: EUROPE,   known: true },
+  { name: 'msg_iodc:clm', src: 'EUMETSAT', wms: EUM,  box: EUROPE,   known: true },
+  { name: 'mtg_fd:clm',   src: 'EUMETSAT', wms: EUM,  box: EUROPE },
+  { name: 'GOES-East_ABI_Cloud_Mask',        src: 'GIBS', wms: GIBS, box: AMERICAS },
+  { name: 'GOES-West_ABI_Cloud_Mask',        src: 'GIBS', wms: GIBS, box: PACIFIC  },
+  { name: 'Himawari_AHI_Cloud_Mask',         src: 'GIBS', wms: GIBS, box: PACIFIC  },
+  { name: 'GOES-East_ABI_Cloud_Top_Height',  src: 'GIBS', wms: GIBS, box: AMERICAS },
+  { name: 'MODIS_Terra_Cloud_Mask',          src: 'GIBS', wms: GIBS, box: AMERICAS },
+  { name: 'VIIRS_SNPP_Cloud_Mask',           src: 'GIBS', wms: GIBS, box: AMERICAS }
+];
+
+function el(id) { return document.getElementById(id); }
+function url(t) {
+  return t.wms + '?service=WMS&version=1.3.0&request=GetMap' +
+    '&layers=' + encodeURIComponent(t.name) +
+    '&styles=&format=image%2Fpng&transparent=true' +
+    '&crs=EPSG%3A3857&width=256&height=256&bbox=' + t.box;
+}
+
+function row(cells, cls) {
+  var tr = document.createElement('tr');
+  cells.forEach(function (c) {
+    var td = document.createElement('td');
+    if (c instanceof Node) td.appendChild(c); else td.innerHTML = c;
+    tr.appendChild(td);
+  });
+  if (cls) tr.className = cls;
+  el('out').appendChild(tr);
+}
+
+/* THE POINT OF THE PAGE. A classification uses a handful of exact colours; a
+   picture uses thousands. Counting distinct colours therefore says which one we
+   are looking at, and lists the exact values the remap will need. */
+function palette(img) {
+  var c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  var g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0);
+  var d;
+  try { d = g.getImageData(0, 0, 256, 256); }
+  catch (e) { return { err: 'CORS: pixels unreadable' }; }
+
+  var counts = {}, total = 0, clear = 0;
+  for (var i = 0; i < d.data.length; i += 4) {
+    if (d.data[i + 3] < 8) { clear++; continue; }
+    var k = d.data[i] + ',' + d.data[i + 1] + ',' + d.data[i + 2];
+    counts[k] = (counts[k] || 0) + 1;
+    total++;
+  }
+  var keys = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+  return { n: keys.length, total: total, clear: clear,
+           top: keys.slice(0, 8).map(function (k) {
+             return { rgb: k, pct: Math.round(counts[k] / total * 100) };
+           }),
+           canvas: c };
+}
+
+function load(u) {
+  return new Promise(function (res, rej) {
+    var im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = function () { res(im); };
+    im.onerror = function () { rej(new Error('load failed')); };
+    im.src = u;
+    setTimeout(function () { rej(new Error('timeout')); }, 15000);
+  });
+}
+
+var i = 0, found = 0;
+function next() {
+  if (i >= TRIES.length) {
+    el('status').className = 'done';
+    el('status').textContent = 'DONE — ' + found + ' of ' + TRIES.length + ' returned data.';
+    return;
+  }
+  var t = TRIES[i++];
+  el('status').textContent = 'testing ' + i + ' of ' + TRIES.length + ' — ' + t.name;
+
+  load(url(t)).then(function (img) {
+    var p = palette(img);
+    if (p.err) { row(['<code>' + t.name + '</code>', t.src, p.err, ''], 'bad'); return next(); }
+    if (!p.total) { row(['<code>' + t.name + '</code>', t.src, 'empty image', ''], 'bad'); return next(); }
+
+    found++;
+    var swatches = p.top.map(function (s) {
+      return '<span class="sw" style="background:rgb(' + s.rgb + ')"></span>' +
+             '<code>' + s.rgb + '</code> ' + s.pct + '%';
+    }).join('<br>');
+    var verdict = p.n <= 24
+      ? 'CLASSIFICATION — ' + p.n + ' distinct colours (remap is a lookup)'
+      : 'picture — ' + p.n + ' distinct colours (no exact palette to key on)';
+    row(['<code>' + t.name + '</code>', t.src, verdict, swatches], p.n <= 24 ? 'ok' : 'bad');
+    el('pics').appendChild(p.canvas);
+    next();
+  }).catch(function () {
+    row(['<code>' + t.name + '</code>', t.src, 'no data / layer does not exist', ''], 'bad');
+    next();
+  });
+}
+next();
+</script>

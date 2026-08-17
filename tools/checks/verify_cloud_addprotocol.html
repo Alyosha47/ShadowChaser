@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Live cloud overlay — addProtocol prototype — PROBE 2026-08-16k</title>
+<link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #111; font: 13px -apple-system, sans-serif; color: #ddd; }
+  #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+  #panel {
+    position: absolute; top: 10px; left: 10px; z-index: 10;
+    background: rgba(17,17,17,0.9); border: 1px solid #333; border-radius: 6px;
+    padding: 10px 14px; max-width: 380px;
+  }
+  #panel h1 { font-size: 14px; margin: 0 0 6px 0; }
+  .badge { display: inline-block; background: #a33; color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: bold; }
+  #status { font-size: 12px; color: #aaa; margin-top: 6px; white-space: pre-wrap; max-height: 140px; overflow-y: auto; }
+  .err { color: #f66; }
+  .ok { color: #6f6; }
+  label { display: block; margin-top: 8px; font-size: 12px; }
+  input[type=range] { width: 100%; }
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <h1>Live cloud overlay &nbsp;<span class="badge">PROBE 2026-08-16k</span></h1>
+  <div>Real transparent tiles, generated per-tile from live GOES-East / EUMETSAT WMS,
+  same measured calibration as the boundary test. Orange line = actual satellite
+  switchover at 20&deg;W. Pan across it — this is the real test, not a screenshot comparison.</div>
+  <label>Cloud opacity <input type="range" id="opacity" min="0" max="100" value="90"></label>
+  <label><input type="checkbox" id="showBoundary" checked> Show satellite boundary line</label>
+  <div id="tileStatus" style="margin-top:6px;color:#fc6;"></div>
+  <div id="status">Initializing map...</div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<script>
+function log(msg, cls) {
+  const el = document.getElementById('status');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+const GIBS_CAPS = `${GIBS_WMS}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+const EUM_WMS = 'https://view.eumetsat.int/geoserver/wms';
+const EUM_CAPS = `${EUM_WMS}?service=WMS&request=GetCapabilities&version=1.3.0`;
+
+const GOES_LAYERS = { dust: 'GOES-East_ABI_Dust', ir: 'GOES-East_ABI_Band13_Clean_Infrared', vis: 'GOES-East_ABI_GeoColor' };
+const EUM_LAYERS  = { ir: 'mumi:worldcloudmap_ir108', dust: 'mumi:wideareacoverage_rgb_dust', vis: 'mumi:wideareacoverage_rgb_natural' };
+const BOUNDARY_LON = -20;
+
+// Measured from the mid-Atlantic boundary probe (2nd/98th percentile of real pixels),
+// not guessed and not borrowed from the other provider. A single global sample per
+// satellite, not per-tile — recalculating per tile would reintroduce exactly the kind
+// of inconsistency this is trying to fix. Broader re-measurement across more
+// regions/times would tighten this further; this is a first real value, not a final one.
+const GOES_IR_RANGE = { floor: 57, ceiling: 179 };
+const EUM_IR_RANGE  = { floor: 42, ceiling: 141 };
+
+let GOES_TIME = null, EUM_TIME = null;
+
+function interpolate(fromA, toA, fromB, toB, input) {
+  if (input < fromA) return fromB;
+  if (input > toA) return toB;
+  const t = (input - fromA) / (toA - fromA);
+  return fromB + (toB - fromB) * t;
+}
+function screen(A, B) { const ax = A/255, bx = B/255; return (1 - (1-ax)*(1-bx)) * 255; }
+function gammaCorrect(g, input) { return 255 * Math.pow(input/255, 1/g); }
+
+async function fetchDims(capsUrl, wantedLayers) {
+  const res = await fetch(capsUrl);
+  if (!res.ok) throw new Error(`Capabilities fetch failed: HTTP ${res.status}`);
+  const xmlText = await res.text();
+  const xml = new DOMParser().parseFromString(xmlText, 'text/xml');
+  const dims = {};
+  for (const layerEl of xml.getElementsByTagName('Layer')) {
+    const nameEl = layerEl.querySelector(':scope > Name');
+    if (!nameEl) continue;
+    const name = nameEl.textContent.trim();
+    if (!Object.values(wantedLayers).includes(name)) continue;
+    const dimEl = layerEl.querySelector('Dimension[name="time"]');
+    if (dimEl) dims[name] = dimEl.textContent.trim();
+  }
+  return dims;
+}
+function latestFromDimension(domainText) {
+  const seg = domainText.split(',');
+  const last = seg[seg.length - 1];
+  const parts = last.split('/');
+  return parts.length >= 2 ? parts[1] : parts[0];
+}
+
+// Standard XYZ tile -> EPSG:3857 bbox (metres)
+function tileBbox3857(z, x, y) {
+  const worldSize = 20037508.342789244 * 2;
+  const tileSize = worldSize / Math.pow(2, z);
+  const minx = -20037508.342789244 + x * tileSize;
+  const maxx = minx + tileSize;
+  const maxy = 20037508.342789244 - y * tileSize;
+  const miny = maxy - tileSize;
+  return { minx, miny, maxx, maxy };
+}
+function merc3857ToLonLat(x, y) {
+  const lon = x * 180 / 20037508.342789244;
+  const lat = (2 * Math.atan(Math.exp(y * Math.PI / 20037508.342789244)) - Math.PI/2) * 180 / Math.PI;
+  return { lon, lat };
+}
+
+function goesTileUrl(layer, bbox, time, size) {
+  const p = new URLSearchParams({
+    SERVICE:'WMS', VERSION:'1.3.0', REQUEST:'GetMap', LAYERS: layer, CRS:'EPSG:3857',
+    BBOX: `${bbox.minx},${bbox.miny},${bbox.maxx},${bbox.maxy}`,
+    WIDTH: size, HEIGHT: size, FORMAT:'image/png', TRANSPARENT:'false', TIME: time
+  });
+  return `${GIBS_WMS}?${p.toString()}`;
+}
+function eumTileUrl(layer, bbox3857, time, size) {
+  const sw = merc3857ToLonLat(bbox3857.minx, bbox3857.miny);
+  const ne = merc3857ToLonLat(bbox3857.maxx, bbox3857.maxy);
+  const p = new URLSearchParams({
+    service:'WMS', request:'GetMap', version:'1.3.0', layers: layer, styles:'',
+    format:'image/png', crs:'EPSG:4326',
+    bbox: `${sw.lat},${sw.lon},${ne.lat},${ne.lon}`,
+    width: size, height: size, time: time
+  });
+  return `${EUM_WMS}?${p.toString()}`;
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('tile fetch failed: ' + url));
+    img.src = url;
+  });
+}
+
+async function buildTile(z, x, y) {
+  const SIZE = 256;
+  const bbox = tileBbox3857(z, x, y);
+  const centerLon = merc3857ToLonLat((bbox.minx+bbox.maxx)/2, 0).lon;
+  const isGoes = centerLon < BOUNDARY_LON;
+
+  const layers = isGoes ? GOES_LAYERS : EUM_LAYERS;
+  const time = isGoes ? GOES_TIME : EUM_TIME;
+  const range = isGoes ? GOES_IR_RANGE : EUM_IR_RANGE;
+  const urlFn = isGoes ? (l => goesTileUrl(l, bbox, time, SIZE)) : (l => eumTileUrl(l, bbox, time, SIZE));
+
+  const [dustImg, irImg, visImg] = await Promise.all([
+    loadImage(urlFn(layers.dust)), loadImage(urlFn(layers.ir)), loadImage(urlFn(layers.vis))
+  ]);
+
+  const c = document.createElement('canvas'); c.width = SIZE; c.height = SIZE;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(dustImg, 0, 0); const dustData = ctx.getImageData(0,0,SIZE,SIZE);
+  ctx.drawImage(irImg, 0, 0);   const irData   = ctx.getImageData(0,0,SIZE,SIZE);
+  ctx.drawImage(visImg, 0, 0);  const visData  = ctx.getImageData(0,0,SIZE,SIZE);
+
+  const out = ctx.createImageData(SIZE, SIZE);
+  for (let i = 0; i < irData.data.length; i += 4) {
+    const dustR = dustData.data[i], dustB = 255 - dustData.data[i+2];
+    const dustMasked = (dustR/255)*(dustB/255)*255;
+    const dust = screen(dustMasked, 0.5*dustB);
+    const irVal = interpolate(range.floor, range.ceiling, 0, 255, irData.data[i]);
+    const irGamma = gammaCorrect(1.46, irVal);
+    let val = gammaCorrect(2.0, screen(dust, irGamma*0.77));
+
+    const vr = visData.data[i], vg = visData.data[i+1], vb = visData.data[i+2];
+    const diff = Math.max(vr,vg,vb) - Math.min(vr,vg,vb);
+    const gbDiff = Math.abs(vg-vb);
+    if (diff < 25 || (vr < vg && gbDiff < 11 && vg > 150)) {
+      val = Math.max(val, gammaCorrect(1.5, Math.max(vr,vg,vb)));
+    }
+    val = Math.max(0, Math.min(255, val));
+    out.data[i] = out.data[i+1] = out.data[i+2] = 255;
+    out.data[i+3] = val; // cloud density becomes alpha — this is the actual overlay
+  }
+  ctx.putImageData(out, 0, 0);
+  let alphaSum = 0;
+  for (let i = 3; i < out.data.length; i += 4) alphaSum += out.data[i];
+  lastMeanAlpha = Math.round(alphaSum / (out.data.length/4));
+  return c;
+}
+let lastMeanAlpha = null;
+
+async function init() {
+  try {
+    log('Reading live capabilities for timestamps...');
+    const [goesDims, eumDims] = await Promise.all([
+      fetchDims(GIBS_CAPS, GOES_LAYERS), fetchDims(EUM_CAPS, EUM_LAYERS)
+    ]);
+    const goesLatest = Object.values(GOES_LAYERS).map(l => latestFromDimension(goesDims[l])).sort();
+    const eumLatest  = Object.values(EUM_LAYERS).map(l => latestFromDimension(eumDims[l])).sort();
+    GOES_TIME = goesLatest[0]; EUM_TIME = eumLatest[0];
+    log(`GOES-East TIME=${GOES_TIME}, EUMETSAT TIME=${EUM_TIME}`, 'ok');
+  } catch (err) {
+    log('Capability fetch failed: ' + err.message, 'err');
+    return;
+  }
+
+  let tileErrors = 0, tileOk = 0, lastError = '';
+  function updateTileStatus() {
+    const el = document.getElementById('tileStatus');
+    if (el) el.textContent = `Tiles OK: ${tileOk}  Failed: ${tileErrors}` +
+      (lastError ? `  Last error: ${lastError}` : '') +
+      (lastMeanAlpha !== null ? `  Last tile mean alpha: ${lastMeanAlpha}/255` : '');
+  }
+
+  maplibregl.addProtocol('cloud', async (params, abortController) => {
+    try {
+      const m = params.url.match(/cloud:\/\/(\d+)\/(\d+)\/(\d+)/);
+      if (!m) throw new Error('URL did not match expected pattern: ' + params.url);
+      const z = parseInt(m[1]), x = parseInt(m[2]), y = parseInt(m[3]);
+      const canvas = await buildTile(z, x, y);
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      const buf = await blob.arrayBuffer();
+      tileOk++; updateTileStatus();
+      return { data: buf };
+    } catch (err) {
+      tileErrors++; lastError = err.message; updateTileStatus();
+      const c = document.createElement('canvas'); c.width = 1; c.height = 1;
+      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+      return { data: await blob.arrayBuffer() };
+    }
+  });
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#0a1420' } }] },
+    center: [-20, 15],
+    zoom: 3
+  });
+
+  map.on('load', () => {
+    map.addSource('cloud', { type: 'raster', tiles: ['cloud://{z}/{x}/{y}'], tileSize: 256, minzoom: 1, maxzoom: 6 });
+    map.addLayer({ id: 'cloud-layer', type: 'raster', source: 'cloud', paint: { 'raster-opacity': 0.9 } });
+
+    map.addSource('boundary', {
+      type: 'geojson',
+      data: { type:'Feature', geometry: { type:'LineString', coordinates: [[BOUNDARY_LON,-60],[BOUNDARY_LON,60]] } }
+    });
+    map.addLayer({ id: 'boundary-line', type: 'line', source: 'boundary', paint: { 'line-color': '#f60', 'line-width': 2 } });
+
+    log('Map + cloud layer live. Pan across the orange line.', 'ok');
+  });
+  map.on('error', e => log('Map error: ' + (e.error?.message || JSON.stringify(e)), 'err'));
+
+  document.getElementById('opacity').addEventListener('input', e => {
+    map.setPaintProperty('cloud-layer', 'raster-opacity', e.target.value/100);
+  });
+  document.getElementById('showBoundary').addEventListener('change', e => {
+    map.setLayoutProperty('boundary-line', 'visibility', e.target.checked ? 'visible' : 'none');
+  });
+}
+
+init();
+</script>
+</body>
+</html>

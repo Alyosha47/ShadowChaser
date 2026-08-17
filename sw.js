@@ -35,7 +35,7 @@ const CORE = [
      <script> to index.html, add it here in the same commit. */
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
       'search','list','local','details','tshirt','userlog','share','map',
-      'shadow-layer','shadow-ui','cloud','url','init'].map(n => `js/${n}.js`),
+      'shadow-layer','shadow-ui','cloud','satellite','cloudbar','url','init'].map(n => `js/${n}.js`),
   /* The map engine. These were MISSING: the app moved from Cesium to MapLibre
      but the precache list didn't, so ~1.9 MB of engine was only ever cached
      opportunistically after first use — a fresh install that went offline

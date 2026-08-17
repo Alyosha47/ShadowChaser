@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GOES-East / EUMETSAT boundary test — PROBE 2026-08-16g</title>
+<style>
+  body { font: 14px/1.4 -apple-system, Menlo, monospace; margin: 20px; background: #111; color: #ddd; }
+  h1 { font-size: 16px; }
+  .badge { display: inline-block; background: #a33; color: #fff; padding: 2px 8px; border-radius: 3px; font-weight: bold; }
+  .row { display: flex; gap: 0; margin: 16px 0; align-items: flex-start; }
+  .cell { flex: 0 0 auto; }
+  .cell h2 { font-size: 12px; color: #6cf; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 6px 0; }
+  canvas { display: block; border: 1px solid #333; background: #000; }
+  .divider { width: 3px; background: #f60; align-self: stretch; }
+  .status { padding: 8px; background: #222; border-radius: 4px; margin-bottom: 12px; white-space: pre-wrap; }
+  .err { color: #f66; }
+  .ok { color: #6f6; }
+  .warn { color: #fc6; font-weight: bold; }
+  button { background: #345; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+  .diag { font-size: 12px; color: #aaa; margin-top: 6px; max-width: 420px; }
+</style>
+</head>
+<body>
+
+<h1>GOES-East / EUMETSAT boundary test &nbsp;<span class="badge">PROBE 2026-08-16g</span></h1>
+<p>The actual question: not "does GOES's composite look clean alone" (already answered, yes) but
+"does it meet EUMETSAT's composite cleanly at the seam." West panel is GOES-East, lon -35&deg; to -20&deg;.
+East panel is EUMETSAT, lon -20&deg; to -5&deg;. Same latitude band, mid-Atlantic, panels placed directly
+adjacent with a thin orange line marking the true satellite boundary — look across that line, not at
+either panel alone.</p>
+
+<button onclick="run()">Fetch &amp; composite both sides</button>
+<label style="margin-left:16px;"><input type="checkbox" id="useVisible" checked onchange="if(lastData) rerender()"> Include GeoColor/visible override</label>
+<div class="status" id="status">Idle.</div>
+
+<div class="row">
+  <div class="cell"><h2>GOES-East (composite)</h2><canvas id="cGoes"></canvas></div>
+  <div class="divider"></div>
+  <div class="cell"><h2>EUMETSAT (composite)</h2><canvas id="cEum"></canvas></div>
+</div>
+<div class="diag" id="irDiag"></div>
+<div class="diag" id="calibDiag"></div>
+<div class="diag" id="seamVerdict" style="font-size:14px;color:#fff;margin-top:10px;"></div>
+
+<script>
+const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+const GIBS_CAPS = `${GIBS_WMS}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+const EUM_WMS = 'https://view.eumetsat.int/geoserver/wms';
+const EUM_CAPS = `${EUM_WMS}?service=WMS&request=GetCapabilities&version=1.3.0`;
+
+const GOES_LAYERS = {
+  dust: 'GOES-East_ABI_Dust',
+  ir:   'GOES-East_ABI_Band13_Clean_Infrared',
+  vis:  'GOES-East_ABI_GeoColor'
+};
+const EUM_LAYERS = {
+  ir:   'mumi:worldcloudmap_ir108',
+  dust: 'mumi:wideareacoverage_rgb_dust',
+  vis:  'mumi:wideareacoverage_rgb_natural'
+};
+
+// West (GOES) box and East (EUMETSAT) box share a boundary at lon -20.
+const GOES_BOX = { lonMin: -35, lonMax: -20, latMin: 0, latMax: 30 };
+const EUM_BOX  = { lonMin: -20, lonMax: -5,  latMin: 0, latMax: 30 };
+const PANEL_W = 420;
+
+function log(msg, cls) {
+  const el = document.getElementById('status');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  el.appendChild(line);
+}
+function clearLog() { document.getElementById('status').innerHTML = ''; }
+
+function lonToX(lon) { return lon * 20037508.34 / 180; }
+function latToY(lat) { const r = lat*Math.PI/180; return Math.log(Math.tan(Math.PI/4 + r/2)) * 6378137; }
+
+async function fetchDims(capsUrl, wantedLayers) {
+  const res = await fetch(capsUrl);
+  if (!res.ok) throw new Error(`Capabilities fetch failed (${capsUrl}): HTTP ${res.status}`);
+  const xmlText = await res.text();
+  const xml = new DOMParser().parseFromString(xmlText, 'text/xml');
+  const dims = {};
+  for (const layerEl of xml.getElementsByTagName('Layer')) {
+    const nameEl = layerEl.querySelector(':scope > Name');
+    if (!nameEl) continue;
+    const name = nameEl.textContent.trim();
+    if (!Object.values(wantedLayers).includes(name)) continue;
+    const dimEl = layerEl.querySelector('Dimension[name="time"]');
+    if (dimEl) dims[name] = dimEl.textContent.trim();
+  }
+  return dims;
+}
+
+function latestFromDimension(domainText) {
+  const segments = domainText.split(',');
+  const last = segments[segments.length - 1];
+  const parts = last.split('/');
+  return parts.length >= 2 ? parts[1] : parts[0];
+}
+
+function loadImageToCanvas(url, canvas, w, h) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve();
+    };
+    img.onerror = () => reject(new Error(`image failed to load: ${url}`));
+    img.src = url;
+  });
+}
+
+function goesUrl(layer, time, w, h) {
+  const bbox = [lonToX(GOES_BOX.lonMin), latToY(GOES_BOX.latMin), lonToX(GOES_BOX.lonMax), latToY(GOES_BOX.latMax)];
+  const p = new URLSearchParams({
+    SERVICE:'WMS', VERSION:'1.3.0', REQUEST:'GetMap', LAYERS: layer, CRS:'EPSG:3857',
+    BBOX: bbox.join(','), WIDTH: w, HEIGHT: h, FORMAT:'image/png', TRANSPARENT:'false', TIME: time
+  });
+  return `${GIBS_WMS}?${p.toString()}`;
+}
+
+// EUMETSAT WMS 1.3.0 + CRS=EPSG:4326 uses the axis-order flip: bbox is
+// minLat,minLon,maxLat,maxLon (verified against matteason's own working code,
+// which requests bbox=-90,-180,90,0 for these exact layers).
+function eumUrl(layer, time, w, h) {
+  const bbox = [EUM_BOX.latMin, EUM_BOX.lonMin, EUM_BOX.latMax, EUM_BOX.lonMax];
+  const p = new URLSearchParams({
+    service:'WMS', request:'GetMap', version:'1.3.0', layers: layer, styles:'',
+    format:'image/png', crs:'EPSG:4326', bbox: bbox.join(','), width: w, height: h, time: time
+  });
+  return `${EUM_WMS}?${p.toString()}`;
+}
+
+function interpolate(fromA, toA, fromB, toB, input) {
+  if (input < fromA) return fromB;
+  if (input > toA) return toB;
+  const t = (input - fromA) / (toA - fromA);
+  return fromB + (toB - fromB) * t;
+}
+function screen(A, B) { const ax = A/255, bx = B/255; return (1 - (1-ax)*(1-bx)) * 255; }
+function gammaCorrect(g, input) { return 255 * Math.pow(input/255, 1/g); }
+
+// Measures this satellite's OWN clear-sky-to-thick-cloud IR range from its actual
+// fetched pixels, instead of using a range tuned to a different provider's counts.
+// 2nd/98th percentile, not min/max, so a handful of sensor-noise outlier pixels
+// can't blow out the calibration.
+function measureIrRange(irData, irIsGreyscale) {
+  const values = [];
+  for (let i = 0; i < irData.data.length; i += 4) {
+    const v = irIsGreyscale ? irData.data[i]
+      : (0.299*irData.data[i] + 0.587*irData.data[i+1] + 0.114*irData.data[i+2]);
+    values.push(v);
+  }
+  values.sort((a,b) => a-b);
+  const floor = values[Math.floor(values.length * 0.02)];
+  const ceiling = values[Math.floor(values.length * 0.98)];
+  return { floor, ceiling };
+}
+
+function compositePixels(dustData, irData, visData, w, h, irIsGreyscale, useVisible, irFloor, irCeiling) {
+  const outImg = new ImageData(w, h);
+  for (let i = 0; i < irData.data.length; i += 4) {
+    const dustR = dustData.data[i];
+    const dustB = 255 - dustData.data[i+2];
+    const dustRMasked = (dustR/255) * (dustB/255) * 255;
+    const dust = screen(dustRMasked, 0.5 * dustB);
+
+    const irRaw = irIsGreyscale ? irData.data[i]
+      : (0.299*irData.data[i] + 0.587*irData.data[i+1] + 0.114*irData.data[i+2]);
+    const ir = interpolate(irFloor, irCeiling, 0, 255, irRaw);
+    const irGamma = gammaCorrect(1.46, ir);
+    let outputValue = gammaCorrect(2.0, screen(dust, irGamma * 0.77));
+
+    if (useVisible) {
+      const vr = visData.data[i], vg = visData.data[i+1], vb = visData.data[i+2];
+      const diff = Math.max(vr,vg,vb) - Math.min(vr,vg,vb);
+      const gbDiff = Math.abs(vg - vb);
+      if (diff < 25 || (vr < vg && gbDiff < 11 && vg > 150)) {
+        const visibleValue = gammaCorrect(1.5, Math.max(vr,vg,vb));
+        outputValue = Math.max(visibleValue, outputValue);
+      }
+    }
+    outputValue = Math.max(0, Math.min(255, outputValue));
+    outImg.data[i] = outImg.data[i+1] = outImg.data[i+2] = outputValue;
+    outImg.data[i+3] = 255;
+  }
+  return outImg;
+}
+
+// Cached fetched data so the ablation toggle can re-render without re-fetching.
+let lastData = null;
+
+function rerender() {
+  const useVisible = document.getElementById('useVisible').checked;
+  const { goesDustData, goesIrData, goesVisData, goesGreyPct, goesW, goesH,
+          eumDustData, eumIrData, eumVisData, eumGreyPct, eumW, eumH } = lastData;
+
+  const goesRange = measureIrRange(goesIrData, goesGreyPct > 90);
+  const eumRange  = measureIrRange(eumIrData, eumGreyPct > 90);
+
+  const goesOut = compositePixels(goesDustData, goesIrData, goesVisData, goesW, goesH, goesGreyPct > 90, useVisible, goesRange.floor, goesRange.ceiling);
+  const eumOut  = compositePixels(eumDustData, eumIrData, eumVisData, eumW, eumH, eumGreyPct > 90, useVisible, eumRange.floor, eumRange.ceiling);
+
+  const cGoes = document.getElementById('cGoes'); cGoes.width = goesW; cGoes.height = goesH;
+  cGoes.getContext('2d').putImageData(goesOut, 0, 0);
+  const cEum = document.getElementById('cEum'); cEum.width = eumW; cEum.height = eumH;
+  cEum.getContext('2d').putImageData(eumOut, 0, 0);
+
+  document.getElementById('calibDiag').innerHTML =
+    `Measured IR range (2nd/98th percentile) — GOES: ${goesRange.floor}&ndash;${goesRange.ceiling} &nbsp;|&nbsp; EUMETSAT: ${eumRange.floor}&ndash;${eumRange.ceiling}. ` +
+    `(matteason's fixed constant for this was 72&ndash;178, tuned to EUMETSAT only.)`;
+
+  // Auto-verdict: mean brightness in a strip on each side of the true boundary,
+  // so the seam question is a number, not a screenshot to eyeball.
+  const STRIP = 20;
+  const meanStrip = (imgData, w, h, fromRight) => {
+    let sum = 0, n = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < STRIP; x++) {
+        const col = fromRight ? (w - 1 - x) : x;
+        const idx = (y * w + col) * 4;
+        sum += imgData.data[idx];
+        n++;
+      }
+    }
+    return sum / n;
+  };
+  const goesEdge = meanStrip(goesOut, goesW, goesH, true);
+  const eumEdge  = meanStrip(eumOut, eumW, eumH, false);
+  const seamDelta = Math.abs(goesEdge - eumEdge);
+  const verdictEl = document.getElementById('seamVerdict');
+  verdictEl.innerHTML = `<b>Seam brightness: GOES edge=${goesEdge.toFixed(1)}, EUMETSAT edge=${eumEdge.toFixed(1)}, delta=${seamDelta.toFixed(1)}/255.</b> ` +
+    (seamDelta < 15 ? '<span class="ok">Under 15 — no meaningful seam by this measure.</span>'
+      : seamDelta < 40 ? '<span class="warn">15&ndash;40 — a visible but moderate seam.</span>'
+      : '<span class="err">Over 40 — the seam from before is still there.</span>');
+
+  log(useVisible ? 'Re-rendered WITH visible override, per-satellite measured calibration.' : 'Re-rendered WITHOUT visible override, per-satellite measured calibration (IR+Dust only).', 'ok');
+}
+
+function checkGreyscale(imgData) {
+  let sampled = 0, greyish = 0;
+  for (let i = 0; i < imgData.data.length; i += 4 * 997) {
+    const r = imgData.data[i], g = imgData.data[i+1], b = imgData.data[i+2];
+    sampled++;
+    if (Math.abs(r-g) < 8 && Math.abs(g-b) < 8) greyish++;
+  }
+  return sampled ? Math.round(100 * greyish / sampled) : 0;
+}
+
+async function run() {
+  clearLog();
+  document.getElementById('irDiag').innerHTML = '';
+  const goesH = Math.round(PANEL_W * (latToY(GOES_BOX.latMax)-latToY(GOES_BOX.latMin)) / (lonToX(GOES_BOX.lonMax)-lonToX(GOES_BOX.lonMin)));
+  const eumH  = Math.round(PANEL_W * (EUM_BOX.latMax-EUM_BOX.latMin) / (EUM_BOX.lonMax-EUM_BOX.lonMin));
+
+  try {
+    log('Reading live GIBS + EUMETSAT capabilities for exact timestamps...');
+    const [goesDims, eumDims] = await Promise.all([
+      fetchDims(GIBS_CAPS, GOES_LAYERS),
+      fetchDims(EUM_CAPS, EUM_LAYERS)
+    ]);
+    for (const k of Object.keys(GOES_LAYERS)) if (!goesDims[GOES_LAYERS[k]]) throw new Error(`Missing GIBS dimension for ${GOES_LAYERS[k]}`);
+    for (const k of Object.keys(EUM_LAYERS)) if (!eumDims[EUM_LAYERS[k]]) throw new Error(`Missing EUMETSAT dimension for ${EUM_LAYERS[k]}`);
+
+    const goesLatest = {}; for (const k of Object.keys(GOES_LAYERS)) goesLatest[k] = latestFromDimension(goesDims[GOES_LAYERS[k]]);
+    const eumLatest  = {}; for (const k of Object.keys(EUM_LAYERS))  eumLatest[k]  = latestFromDimension(eumDims[EUM_LAYERS[k]]);
+    const goesTime = Object.values(goesLatest).sort()[0];
+    const eumTime  = Object.values(eumLatest).sort()[0];
+    log(`GOES-East common TIME=${goesTime}`);
+    log(`EUMETSAT common TIME=${eumTime}`);
+    log(`Note: these two times will differ (GOES ~10min cadence, EUMETSAT merged product ~3hr per prior session) — this is expected and is itself part of what the boundary test shows.`, 'warn');
+
+    // Fetch GOES side
+    log('Fetching GOES-East Dust/IR/GeoColor...');
+    const goesCanvases = { dust: document.createElement('canvas'), ir: document.createElement('canvas'), vis: document.createElement('canvas') };
+    await Promise.all(Object.keys(GOES_LAYERS).map(k =>
+      loadImageToCanvas(goesUrl(GOES_LAYERS[k], goesTime, PANEL_W, goesH), goesCanvases[k], PANEL_W, goesH)
+    ));
+
+    // Fetch EUMETSAT side
+    log('Fetching EUMETSAT IR/Dust/Natural...');
+    const eumCanvases = { dust: document.createElement('canvas'), ir: document.createElement('canvas'), vis: document.createElement('canvas') };
+    await Promise.all(Object.keys(EUM_LAYERS).map(k =>
+      loadImageToCanvas(eumUrl(EUM_LAYERS[k], eumTime, PANEL_W, eumH), eumCanvases[k], PANEL_W, eumH)
+    ));
+    log('All six tiles loaded.', 'ok');
+
+    // Greyscale diagnostic, both sides — the project already learned not to assume
+    // this either way, for either provider.
+    const goesIrData = goesCanvases.ir.getContext('2d').getImageData(0,0,PANEL_W,goesH);
+    const eumIrData  = eumCanvases.ir.getContext('2d').getImageData(0,0,PANEL_W,eumH);
+    const goesGreyPct = checkGreyscale(goesIrData);
+    const eumGreyPct  = checkGreyscale(eumIrData);
+    document.getElementById('irDiag').innerHTML =
+      `GOES Clean IR: ${goesGreyPct}% near-greyscale ${goesGreyPct>90 ? '(treated as raw brightness)' : '(colour-palette — using luminance fallback, flagged)'}<br>` +
+      `EUMETSAT IR: ${eumGreyPct}% near-greyscale ${eumGreyPct>90 ? '(treated as raw brightness — matches matteason\'s assumption)' : '<span class="warn">(unexpectedly not greyscale — check before trusting this side)</span>'}`;
+
+    // Cache fetched pixel data, then render via the shared path the toggle also uses.
+    lastData = {
+      goesDustData: goesCanvases.dust.getContext('2d').getImageData(0,0,PANEL_W,goesH),
+      goesIrData: goesIrData,
+      goesVisData: goesCanvases.vis.getContext('2d').getImageData(0,0,PANEL_W,goesH),
+      goesGreyPct, goesW: PANEL_W, goesH,
+      eumDustData: eumCanvases.dust.getContext('2d').getImageData(0,0,PANEL_W,eumH),
+      eumIrData: eumIrData,
+      eumVisData: eumCanvases.vis.getContext('2d').getImageData(0,0,PANEL_W,eumH),
+      eumGreyPct, eumW: PANEL_W, eumH
+    };
+    rerender();
+    log('Both panels rendered. Look across the orange divider for a brightness/texture jump.', 'ok');
+
+  } catch (err) {
+    log('FAILED: ' + err.message, 'err');
+    console.error(err);
+  }
+}
+</script>
+</body>
+</html>

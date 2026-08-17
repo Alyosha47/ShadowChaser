@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>GIBS cloud-layer enumeration — ShadowChaser #F2c</title>
+<!--
+  tools/checks/verify_gibs_clm.html — THROWAWAY probe. PROBE 2026-08-16a
+
+  WHY THIS EXISTS. EUMETSAT's cloud masks were found by ENUMERATING its 116
+  advertised layers. For NASA GIBS I instead guessed six plausible names
+  (GOES-East_ABI_Cloud_Mask and friends), got nothing, and concluded the
+  Americas and Pacific had no source. That was not a finding, it was a failure
+  to ask — and it is the same mistake that hid msg_fes:clm behind my own filter
+  earlier in the day.
+
+  So: read GIBS's own GetCapabilities, list EVERY layer whose name or title
+  mentions cloud, and test the promising ones. GIBS advertises well over a
+  thousand layers; the full list goes to the console.
+
+  WHAT COUNTS AS A WIN. Not "an image came back" — a CLASSIFICATION. Cloud masks
+  use a handful of exact colours, so remapping them to transparency is a lookup
+  with nothing to tune. Continuous imagery needs a brightness threshold, which is
+  what failed repeatedly. The palette column tells the two apart.
+-->
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; background: #14171c; color: #dfe4ea; }
+  header { padding: 12px 16px; }
+  h1 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  p  { margin: 4px 0; color: #97a0ad; font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 14px 5px 0; border-bottom: 1px solid #262b33;
+           vertical-align: top; }
+  th { color: #97a0ad; font-weight: 500; }
+  td:first-child { padding-left: 16px; }
+  .ok { color: #7bd88f; } .bad { color: #6b7280; } .work { color: #e0c368; }
+  code { font-family: ui-monospace, Menlo, monospace; }
+  #ver { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #e0c368;
+         border: 1px solid #4a4223; background: #2a2513; padding: 1px 6px;
+         border-radius: 3px; margin-left: 8px; }
+  #status.done { color: #7bd88f; font-size: 14px; font-weight: 600; }
+  #status.going { color: #e0c368; }
+  .sw { display: inline-block; width: 11px; height: 11px; border: 1px solid #4a5563;
+        vertical-align: -1px; margin-right: 3px; }
+  canvas { image-rendering: pixelated; border: 1px solid #262b33; margin: 2px; }
+</style>
+
+<header>
+  <h1>GIBS — what cloud layers actually exist? <span id="ver">PROBE 2026-08-16a</span></h1>
+  <p id="status">reading GetCapabilities (this document is large)…</p>
+  <p id="prog">Full layer list goes to the browser console.</p>
+</header>
+<table id="out">
+  <tr><th>layer</th><th>title</th><th>verdict</th><th>palette (share of pixels)</th></tr>
+</table>
+<div id="pics"></div>
+
+<script>
+'use strict';
+
+var WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+
+/* Probe boxes chosen per region, because a satellite can only be tested where it
+   looks. The first GIBS probe of the day failed Himawari purely by sampling the
+   Atlantic. */
+var AMERICAS = '-11000000,2000000,-7000000,6000000';
+var PACIFIC  = '13000000,2000000,17000000,6000000';
+
+function boxFor(name) {
+  if (/west|himawari|ahi|pacific/i.test(name)) return PACIFIC;
+  return AMERICAS;
+}
+
+/* Anything mentioning cloud. Deliberately broad — the point is to see what is
+   there, not to prejudge it, and narrow filters are what hid the answer twice. */
+var WANT = /cloud|cldmsk|cldprop|clm\b|cmask/i;
+/* Cloud-top pressure, optical depth, effective radius and so on are physical
+   retrievals, not a cloud/clear classification. Kept out of the TESTED set to
+   save requests, but still printed to the console. */
+var LOWER = /pressure|optical|radius|phase|water_path|emissivity|top_temp/i;
+
+var MAX_TEST = 14;
+
+function el(id) { return document.getElementById(id); }
+function say(t, cls) { var s = el('status'); s.textContent = t; s.className = cls || 'going'; }
+
+function row(cells, cls) {
+  var tr = document.createElement('tr');
+  cells.forEach(function (c) {
+    var td = document.createElement('td');
+    if (c instanceof Node) td.appendChild(c); else td.innerHTML = c;
+    tr.appendChild(td);
+  });
+  if (cls) tr.className = cls;
+  el('out').appendChild(tr);
+}
+
+function url(name, time) {
+  return WMS + '?service=WMS&version=1.3.0&request=GetMap' +
+    '&layers=' + encodeURIComponent(name) +
+    '&styles=&format=image%2Fpng&transparent=true' +
+    '&crs=EPSG%3A3857&width=256&height=256&bbox=' + boxFor(name) +
+    (time ? '&time=' + encodeURIComponent(time) : '');
+}
+
+function load(u) {
+  return new Promise(function (res, rej) {
+    var im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = function () { res(im); };
+    im.onerror = function () { rej(new Error('load failed')); };
+    im.src = u;
+    setTimeout(function () { rej(new Error('timeout')); }, 15000);
+  });
+}
+
+/* A classification uses a few exact colours; a picture uses thousands. But
+   server-side resampling blends class edges, so raw distinct-colour counts run
+   into the hundreds even for a true mask — msg_fes:clm reports ~1100 while three
+   colours cover three quarters of it. CONCENTRATION is the real test: how much
+   of the image the top few colours account for. */
+function palette(img) {
+  var c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  var g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0);
+  var d;
+  try { d = g.getImageData(0, 0, 256, 256); }
+  catch (e) { return { err: 'CORS: pixels unreadable' }; }
+
+  var counts = {}, total = 0;
+  for (var i = 0; i < d.data.length; i += 4) {
+    if (d.data[i + 3] < 8) continue;
+    var k = d.data[i] + ',' + d.data[i + 1] + ',' + d.data[i + 2];
+    counts[k] = (counts[k] || 0) + 1;
+    total++;
+  }
+  if (!total) return { empty: true };
+  var keys = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+  var top4 = keys.slice(0, 4).reduce(function (s, k) { return s + counts[k]; }, 0);
+  return { n: keys.length, total: total, conc: top4 / total, canvas: c,
+           top: keys.slice(0, 6).map(function (k) {
+             return { rgb: k, pct: Math.round(counts[k] / total * 100) };
+           }) };
+}
+
+var tested = 0, wins = 0;
+
+function testAll(cands) {
+  var i = 0;
+  function next() {
+    if (i >= cands.length) {
+      say('DONE — tested ' + tested + ', ' + wins + ' look like classifications.', 'done');
+      return;
+    }
+    var c = cands[i++];
+    say('testing ' + i + ' of ' + cands.length + ' — ' + c.name);
+    tested++;
+    load(url(c.name, c.time)).then(function (img) {
+      var p = palette(img);
+      if (p.err)   { row(['<code>' + c.name + '</code>', c.title, p.err, ''], 'bad'); return next(); }
+      if (p.empty) { row(['<code>' + c.name + '</code>', c.title, 'empty image', ''], 'bad'); return next(); }
+
+      var isClass = p.conc >= 0.6;
+      if (isClass) wins++;
+      var sw = p.top.map(function (s) {
+        return '<span class="sw" style="background:rgb(' + s.rgb + ')"></span>' +
+               '<code>' + s.rgb + '</code> ' + s.pct + '%';
+      }).join('<br>');
+      row(['<code>' + c.name + '</code>', c.title,
+           (isClass ? 'CLASSIFICATION — top 4 colours cover '
+                    : 'picture — top 4 cover only ') +
+           Math.round(p.conc * 100) + '% (' + p.n + ' distinct)',
+           sw], isClass ? 'ok' : 'work');
+      el('pics').appendChild(p.canvas);
+      next();
+    }).catch(function () {
+      row(['<code>' + c.name + '</code>', c.title, 'no data', ''], 'bad');
+      next();
+    });
+  }
+  next();
+}
+
+fetch(WMS + '?service=WMS&version=1.3.0&request=GetCapabilities')
+  .then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  })
+  .then(function (xml) {
+    var doc = new DOMParser().parseFromString(xml, 'text/xml');
+    var nodes = doc.getElementsByTagName('Layer'), all = [], seen = {};
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i], nm = null, ti = '', dim = null;
+      for (var j = 0; j < n.childNodes.length; j++) {
+        var ch = n.childNodes[j];
+        if (ch.nodeName === 'Name'  && !nm) nm = ch.textContent.trim();
+        if (ch.nodeName === 'Title' && !ti) ti = ch.textContent.trim();
+        if (ch.nodeName === 'Dimension' && ch.getAttribute('name') === 'time') dim = ch;
+      }
+      if (!nm || seen[nm]) continue;
+      seen[nm] = 1;
+      var time = null;
+      if (dim && dim.textContent) {
+        var parts = dim.textContent.trim().split(',');
+        var last = parts[parts.length - 1].split('/');
+        time = last.length >= 2 ? last[1] : last[0];
+      }
+      all.push({ name: nm, title: ti, time: time });
+    }
+
+    var cloud = all.filter(function (l) { return WANT.test(l.name + ' ' + l.title); });
+    console.log('=== GIBS advertises ' + all.length + ' layers; ' +
+                cloud.length + ' mention cloud ===\n' +
+                cloud.map(function (l) {
+                  return l.name + '  |  ' + l.title + '  |  ' + (l.time || 'no time');
+                }).join('\n'));
+
+    el('prog').textContent = 'GIBS advertises ' + all.length + ' layers; ' +
+      cloud.length + ' mention cloud. Full list in the console. Testing the ' +
+      'classification candidates first.';
+
+    /* Geostationary first — those are the ones that could cover the Americas and
+       Pacific continuously. Polar orbiters (MODIS/VIIRS) only pass twice a day,
+       but are worth knowing about. */
+    cloud.sort(function (a, b) {
+      var ga = /GOES|Himawari|ABI|AHI/i.test(a.name) ? 0 : 1;
+      var gb = /GOES|Himawari|ABI|AHI/i.test(b.name) ? 0 : 1;
+      var la = LOWER.test(a.name) ? 1 : 0, lb = LOWER.test(b.name) ? 1 : 0;
+      return (ga - gb) || (la - lb);
+    });
+
+    if (!cloud.length) {
+      say('Capabilities read, but NO layer mentions cloud. See console.', 'bad');
+      return;
+    }
+    testAll(cloud.slice(0, MAX_TEST));
+  })
+  .catch(function (e) {
+    say('Could not read GetCapabilities: ' + e.message +
+        ' — if this is CORS, the document must be inspected out of band.', 'bad');
+  });
+</script>

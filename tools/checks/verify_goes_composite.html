@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GOES-East cloud composite — PROBE 2026-08-16d</title>
+<style>
+  body { font: 14px/1.4 -apple-system, Menlo, monospace; margin: 20px; background: #111; color: #ddd; }
+  h1 { font-size: 16px; }
+  .badge { display: inline-block; background: #a33; color: #fff; padding: 2px 8px; border-radius: 3px; font-weight: bold; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; margin: 16px 0; }
+  .cell { flex: 1 1 260px; }
+  .cell h2 { font-size: 12px; color: #6cf; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 6px 0; }
+  canvas { width: 100%; max-width: 420px; border: 1px solid #333; background: #000; display: block; }
+  .status { padding: 8px; background: #222; border-radius: 4px; margin-bottom: 12px; white-space: pre-wrap; }
+  .err { color: #f66; }
+  .ok { color: #6f6; }
+  .warn { color: #fc6; font-weight: bold; }
+  .controls { margin-bottom: 12px; }
+  .controls label { margin-right: 12px; }
+  input { background: #222; color: #ddd; border: 1px solid #444; padding: 3px 6px; width: 70px; }
+  button { background: #345; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+  .diag { font-size: 12px; color: #aaa; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>GOES-East cloud composite — matteason formula, real per-satellite inputs &nbsp;<span class="badge">PROBE 2026-08-16d</span></h1>
+<p>Fetches live <code>GOES-East_ABI_Dust</code>, <code>GOES-East_ABI_Band13_Clean_Infrared</code>, and
+<code>GOES-East_ABI_GeoColor</code> tiles for the same bbox and the most recent shared timestamp, then
+runs the same per-pixel combination live-cloud-maps.matteason.co.uk uses on EUMETSAT — but with GOES's
+own products and no borrowed constants beyond his published formula. This answers the open question
+directly: does the technique transfer per-satellite, or does GOES need its own recalibration first.</p>
+
+<div class="controls">
+  Region (lon/lat, degrees):
+  <label>W <input id="lonMin" value="-100"></label>
+  <label>S <input id="latMin" value="15"></label>
+  <label>E <input id="lonMax" value="-70"></label>
+  <label>N <input id="latMax" value="35"></label>
+  <button onclick="run()">Fetch &amp; composite</button>
+</div>
+
+<div class="status" id="status">Idle. Click "Fetch &amp; composite".</div>
+
+<div class="row">
+  <div class="cell"><h2>Dust (raw)</h2><canvas id="cDust"></canvas></div>
+  <div class="cell"><h2>Clean Infrared (raw)</h2><canvas id="cIR"></canvas><div class="diag" id="irDiag"></div></div>
+  <div class="cell"><h2>GeoColor (raw)</h2><canvas id="cVis"></canvas></div>
+  <div class="cell"><h2>Composite output</h2><canvas id="cOut"></canvas></div>
+</div>
+
+<script>
+const WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+const CAPS_URL = `${WMS}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+const LAYERS = {
+  dust: 'GOES-East_ABI_Dust',
+  ir:   'GOES-East_ABI_Band13_Clean_Infrared',
+  vis:  'GOES-East_ABI_GeoColor'
+};
+const SIZE = 640; // output px, square-ish; bbox aspect adjusts height separately if needed
+
+function log(msg, cls) {
+  const el = document.getElementById('status');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  el.appendChild(line);
+}
+function clearLog() { document.getElementById('status').innerHTML = ''; }
+
+// Web Mercator (EPSG:3857) projection, matching the project's own verified fact:
+// WMS 1.3.0 + CRS=EPSG:3857 takes bbox as minx,miny,maxx,maxy in METRES.
+function lonToX(lon) { return lon * 20037508.34 / 180; }
+function latToY(lat) {
+  const rad = lat * Math.PI / 180;
+  return Math.log(Math.tan(Math.PI / 4 + rad / 2)) * 6378137;
+}
+
+async function fetchCapabilitiesDimensions() {
+  const res = await fetch(CAPS_URL);
+  if (!res.ok) throw new Error(`Capabilities fetch failed: HTTP ${res.status}`);
+  const xmlText = await res.text();
+  const xml = new DOMParser().parseFromString(xmlText, 'text/xml');
+  const dims = {};
+  for (const layerEl of xml.getElementsByTagName('Layer')) {
+    if (!layerEl.hasAttribute('queryable')) continue;
+    const nameEl = layerEl.querySelector(':scope > Name');
+    if (!nameEl) continue;
+    const name = nameEl.textContent.trim();
+    if (!Object.values(LAYERS).includes(name)) continue;
+    const dimEl = layerEl.querySelector('Dimension[name="time"]');
+    if (dimEl) dims[name] = dimEl.textContent.trim();
+  }
+  return dims;
+}
+
+// A layer's Dimension text is a comma-separated list of Start/End/PeriodDuration
+// segments. The true latest instant is the End of the LAST segment — never trust
+// a "default" attribute alone (project's own gotcha: catalogue can advertise a
+// frame that 404s).
+function latestFromDimension(domainText) {
+  const segments = domainText.split(',');
+  const last = segments[segments.length - 1];
+  const parts = last.split('/');
+  return parts.length >= 2 ? parts[1] : parts[0];
+}
+
+function loadImageToCanvas(url, canvas) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      resolve();
+    };
+    img.onerror = () => reject(new Error('image failed to load (possibly a 404 — GIBS catalogue can advertise a frame that is not actually rendered yet)'));
+    img.src = url;
+  });
+}
+
+function getMapUrl(layer, bbox, time, w, h) {
+  const [minx, miny, maxx, maxy] = bbox;
+  const p = new URLSearchParams({
+    SERVICE: 'WMS', VERSION: '1.3.0', REQUEST: 'GetMap',
+    LAYERS: layer, CRS: 'EPSG:3857',
+    BBOX: `${minx},${miny},${maxx},${maxy}`,
+    WIDTH: w, HEIGHT: h, FORMAT: 'image/png', TRANSPARENT: 'false',
+    TIME: time
+  });
+  return `${WMS}?${p.toString()}`;
+}
+
+// --- matteason's formulas, verbatim (source: github.com/matteason/live-cloud-maps index.js) ---
+function interpolate(fromA, toA, fromB, toB, input) {
+  if (input < fromA) return fromB;
+  if (input > toA) return toB;
+  const t = (input - fromA) / (toA - fromA);
+  return fromB + (toB - fromB) * t;
+}
+function screen(A, B) { const ax = A/255, bx = B/255; return (1 - (1-ax)*(1-bx)) * 255; }
+function gammaCorrect(g, input) { return 255 * Math.pow(input/255, 1/g); }
+
+async function run() {
+  clearLog();
+  const canvases = ['cDust','cIR','cVis','cOut'].map(id => document.getElementById(id));
+  canvases.forEach(c => { c.width = 1; c.height = 1; c.getContext('2d').clearRect(0,0,1,1); });
+
+  const lonMin = parseFloat(document.getElementById('lonMin').value);
+  const latMin = parseFloat(document.getElementById('latMin').value);
+  const lonMax = parseFloat(document.getElementById('lonMax').value);
+  const latMax = parseFloat(document.getElementById('latMax').value);
+  const bbox = [lonToX(lonMin), latToY(latMin), lonToX(lonMax), latToY(latMax)];
+  const aspect = (bbox[3]-bbox[1]) / (bbox[2]-bbox[0]);
+  const w = SIZE, h = Math.round(SIZE * Math.abs(aspect));
+
+  try {
+    log('Reading live capabilities for exact per-layer timestamps (never TIME=default — see project gotchas)...');
+    const dims = await fetchCapabilitiesDimensions();
+    for (const key of Object.keys(LAYERS)) {
+      if (!dims[LAYERS[key]]) throw new Error(`No time dimension found for ${LAYERS[key]} — layer name may have changed, re-run the enumeration probe.`);
+    }
+    const latest = {};
+    for (const key of Object.keys(LAYERS)) latest[key] = latestFromDimension(dims[LAYERS[key]]);
+    // Use the EARLIEST of the three "latest" times so all three requests are simultaneous.
+    const commonTime = Object.values(latest).sort()[0];
+    log(`Per-layer latest: ${JSON.stringify(latest)}`);
+    log(`Using common TIME=${commonTime} (earliest of the three, so no band is asked for data that doesn't exist yet)`);
+
+    log('Fetching Dust...');
+    await loadImageToCanvas(getMapUrl(LAYERS.dust, bbox, commonTime, w, h), canvases[0]);
+    log('Fetching Clean Infrared...');
+    await loadImageToCanvas(getMapUrl(LAYERS.ir, bbox, commonTime, w, h), canvases[1]);
+    log('Fetching GeoColor...');
+    await loadImageToCanvas(getMapUrl(LAYERS.vis, bbox, commonTime, w, h), canvases[2]);
+    log('All three loaded at ' + commonTime + '.', 'ok');
+
+    // --- Diagnostic: is Clean Infrared actually greyscale, or colour-palette rendered?
+    // The project already found Himawari_AHI_Band13_Clean_Infrared is colour-palette,
+    // not greyscale — never assumed that does or doesn't extend to GOES. Checking here,
+    // not assuming.
+    const irCtx = canvases[1].getContext('2d');
+    const irData = irCtx.getImageData(0, 0, canvases[1].width, canvases[1].height).data;
+    let sampled = 0, greyish = 0;
+    for (let i = 0; i < irData.length; i += 4 * 997) { // prime stride, cheap scattered sample
+      const r = irData[i], g = irData[i+1], b = irData[i+2];
+      sampled++;
+      if (Math.abs(r-g) < 8 && Math.abs(g-b) < 8) greyish++;
+    }
+    const greyPct = sampled ? Math.round(100 * greyish / sampled) : 0;
+    const irDiagEl = document.getElementById('irDiag');
+    if (greyPct > 90) {
+      irDiagEl.innerHTML = `<span class="ok">${greyPct}% of sampled pixels are near-greyscale — safe to treat as raw IR brightness.</span>`;
+    } else {
+      irDiagEl.innerHTML = `<span class="warn">Only ${greyPct}% near-greyscale — this looks colour-palette rendered, ` +
+        `like Himawari's Clean Infrared was. The composite below is using luminance as a fallback and is ` +
+        `NOT trustworthy until this is resolved (different band, or decode the palette).</span>`;
+    }
+
+    // --- Composite: matteason's formula, single-satellite (no antimeridian gap-fill /
+    // pole-mirror needed — this is a bounded regional test, not a global assembly).
+    const dustData = canvases[0].getContext('2d').getImageData(0,0,w,h);
+    const visData  = canvases[2].getContext('2d').getImageData(0,0,w,h);
+    const out = document.getElementById('cOut');
+    out.width = w; out.height = h;
+    const outCtx = out.getContext('2d');
+    const outImg = outCtx.createImageData(w, h);
+
+    for (let i = 0; i < irData.length; i += 4) {
+      const dustR = dustData.data[i];
+      const dustB = 255 - dustData.data[i+2];
+      const dustRMasked = (dustR/255) * (dustB/255) * 255;
+      const dust = screen(dustRMasked, 0.5 * dustB);
+
+      // IR brightness: red channel if greyscale, luminance as a flagged fallback otherwise.
+      const irRaw = greyPct > 90 ? irData[i] : (0.299*irData[i] + 0.587*irData[i+1] + 0.114*irData[i+2]);
+      const ir = interpolate(72, 178, 0, 255, irRaw);
+      const irGamma = gammaCorrect(1.46, ir);
+      let outputValue = gammaCorrect(2.0, screen(dust, irGamma * 0.77));
+
+      const vr = visData.data[i], vg = visData.data[i+1], vb = visData.data[i+2];
+      const diff = Math.max(vr,vg,vb) - Math.min(vr,vg,vb);
+      const gbDiff = Math.abs(vg - vb);
+      if (diff < 25 || (vr < vg && gbDiff < 11 && vg > 150)) {
+        const visibleValue = gammaCorrect(1.5, Math.max(vr,vg,vb));
+        outputValue = Math.max(visibleValue, outputValue);
+      }
+
+      outputValue = Math.max(0, Math.min(255, outputValue));
+      outImg.data[i] = outImg.data[i+1] = outImg.data[i+2] = outputValue;
+      outImg.data[i+3] = 255;
+    }
+    outCtx.putImageData(outImg, 0, 0);
+    log('Composite rendered. Compare against the raw Dust/IR/GeoColor panels — look for banding, patchwork, or a clean cloud field.', 'ok');
+
+  } catch (err) {
+    log('FAILED: ' + err.message, 'err');
+    console.error(err);
+  }
+}
+</script>
+</body>
+</html>

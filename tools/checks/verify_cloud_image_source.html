@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Live cloud overlay (image source) — PROBE 2026-08-16s</title>
+<link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #111; font: 13px -apple-system, sans-serif; color: #ddd; }
+  #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+  #panel {
+    position: absolute; top: 10px; left: 10px; z-index: 10;
+    background: rgba(17,17,17,0.9); border: 1px solid #333; border-radius: 6px;
+    padding: 10px 14px; max-width: 380px;
+  }
+  #panel h1 { font-size: 14px; margin: 0 0 6px 0; }
+  .badge { display: inline-block; background: #a33; color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: bold; }
+  #status { font-size: 12px; color: #aaa; margin-top: 6px; white-space: pre-wrap; max-height: 140px; overflow-y: auto; }
+  .err { color: #f66; }
+  .ok { color: #6f6; }
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <h1>Live cloud overlay &nbsp;<span class="badge">PROBE 2026-08-16s</span></h1>
+  <div>Same composite math as the boundary test (which worked), placed on a real pannable
+  map via image sources instead of the custom tile protocol (which produced correct data
+  but wasn't rendering — not worth debugging further live). Two static georeferenced
+  composites, GOES-East and EUMETSAT, meeting at 20&deg;W.</div>
+  <div id="status">Fetching...</div>
+  <label style="display:block;margin-top:10px;font-size:12px;">
+    Clear-sky cutoff percentile: <span id="floorVal">70</span>%
+    <input type="range" id="floorSlider" min="0" max="95" value="70" style="width:100%;">
+  </label>
+  <div style="font-size:11px;color:#888;">Raises the alpha cutoff. Drag right until clear sky goes fully transparent and only real cloud remains.</div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<script>
+function log(msg, cls) {
+  const el = document.getElementById('status');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  el.appendChild(line);
+}
+
+const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+const GIBS_CAPS = `${GIBS_WMS}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0`;
+const EUM_WMS = 'https://view.eumetsat.int/geoserver/wms';
+const EUM_CAPS = `${EUM_WMS}?service=WMS&request=GetCapabilities&version=1.3.0`;
+
+const GOES_LAYERS = { dust: 'GOES-East_ABI_Dust', ir: 'GOES-East_ABI_Band13_Clean_Infrared', vis: 'GOES-East_ABI_GeoColor' };
+// Per-satellite MSG layers, not the merged mumi:* products. The merged worldcloudmap
+// lags hours behind while GOES is ~10 min old, so the seam showed genuinely different
+// clouds either side. Session notes clocked msg_fes at ~20 min.
+const EUM_LAYERS  = { ir: 'msg_fes:ir108', dust: 'msg_fes:rgb_dust', vis: 'msg_fes:rgb_natural' };
+const GOES_BOX = { lonMin: -35, lonMax: -20, latMin: 0, latMax: 30 };
+const EUM_BOX  = { lonMin: -20, lonMax: -5,  latMin: 0, latMax: 30 };
+const PANEL_W = 500;
+
+function lonToX(lon) { return lon * 20037508.34 / 180; }
+function latToY(lat) { const r = lat*Math.PI/180; return Math.log(Math.tan(Math.PI/4 + r/2)) * 6378137; }
+
+async function fetchDims(capsUrl, wantedLayers) {
+  const res = await fetch(capsUrl);
+  if (!res.ok) throw new Error(`Capabilities fetch failed: HTTP ${res.status}`);
+  const xmlText = await res.text();
+  const xml = new DOMParser().parseFromString(xmlText, 'text/xml');
+  const dims = {};
+  const allNames = [];
+  for (const layerEl of xml.getElementsByTagName('Layer')) {
+    const nameEl = layerEl.querySelector(':scope > Name');
+    if (!nameEl) continue;
+    const name = nameEl.textContent.trim();
+    allNames.push(name);
+    if (!Object.values(wantedLayers).includes(name)) continue;
+    const dimEl = layerEl.querySelector('Dimension[name="time"]');
+    if (dimEl) dims[name] = dimEl.textContent.trim();
+  }
+  // Never guess a layer name silently — report what actually exists.
+  const missing = Object.values(wantedLayers).filter(l => !dims[l]);
+  if (missing.length) {
+    const prefix = missing[0].split(':')[0];
+    const candidates = allNames.filter(n => n.startsWith(prefix)).slice(0, 40);
+    throw new Error(`Layer(s) not found: ${missing.join(', ')}. Available "${prefix}" layers: ${candidates.join(', ') || '(none)'}`);
+  }
+  return dims;
+}
+function latestFromDimension(domainText) {
+  const seg = domainText.split(',');
+  const parts = seg[seg.length-1].split('/');
+  return parts.length >= 2 ? parts[1] : parts[0];
+}
+function loadImageToCanvas(url, w, h) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c);
+    };
+    img.onerror = () => reject(new Error('image failed to load: ' + url));
+    img.src = url;
+  });
+}
+function goesUrl(layer, box, time, w, h) {
+  const bbox = [lonToX(box.lonMin), latToY(box.latMin), lonToX(box.lonMax), latToY(box.latMax)];
+  const p = new URLSearchParams({ SERVICE:'WMS', VERSION:'1.3.0', REQUEST:'GetMap', LAYERS: layer, CRS:'EPSG:3857',
+    BBOX: bbox.join(','), WIDTH: w, HEIGHT: h, FORMAT:'image/png', TRANSPARENT:'false', TIME: time });
+  return `${GIBS_WMS}?${p.toString()}`;
+}
+// EUMETSAT requested in EPSG:3857, NOT 4326. MapLibre image sources interpolate
+// linearly in mercator space, so an equirectangular image placed by lat/lon corners
+// is vertically distorted and cannot align with the mercator-rendered GOES side.
+// (4326 was inherited from matteason, who needed equirectangular for a global PNG.)
+function eumUrl(layer, box, time, w, h) {
+  const bbox = [lonToX(box.lonMin), latToY(box.latMin), lonToX(box.lonMax), latToY(box.latMax)];
+  const p = new URLSearchParams({ service:'WMS', request:'GetMap', version:'1.3.0', layers: layer, styles:'',
+    format:'image/png', crs:'EPSG:3857', bbox: bbox.join(','), width: w, height: h, time: time });
+  return `${EUM_WMS}?${p.toString()}`;
+}
+function interpolate(fromA, toA, fromB, toB, input) {
+  if (input < fromA) return fromB;
+  if (input > toA) return toB;
+  return fromB + (toB-fromB) * ((input-fromA)/(toA-fromA));
+}
+function screen(A, B) { const ax=A/255, bx=B/255; return (1-(1-ax)*(1-bx))*255; }
+function gammaCorrect(g, input) { return 255 * Math.pow(input/255, 1/g); }
+// Geostationary footprints are discs, so a rectangular request returns empty corners.
+// Those zeros must not enter the calibration or they drag the floor to 0 and wreck the
+// stretch. Sample only pixels the satellite actually saw.
+function measureIrRange(irData) {
+  const values = [];
+  for (let i = 0; i < irData.data.length; i += 4) {
+    if (irData.data[i+3] < 250) continue;        // transparent = off-disc
+    if (irData.data[i] === 0) continue;          // pure black = no data
+    values.push(irData.data[i]);
+  }
+  if (values.length < 100) return { floor: 0, ceiling: 255, coverage: 0 };
+  values.sort((a,b)=>a-b);
+  return {
+    floor: values[Math.floor(values.length*0.02)],
+    ceiling: values[Math.floor(values.length*0.98)],
+    coverage: Math.round(100 * values.length / (irData.data.length/4))
+  };
+}
+
+async function buildComposite(layers, urlFn, box, time, w, h) {
+  const [dustC, irC, visC] = await Promise.all([
+    loadImageToCanvas(urlFn(layers.dust, box, time, w, h), w, h),
+    loadImageToCanvas(urlFn(layers.ir, box, time, w, h), w, h),
+    loadImageToCanvas(urlFn(layers.vis, box, time, w, h), w, h)
+  ]);
+  const dustData = dustC.getContext('2d').getImageData(0,0,w,h);
+  const irData   = irC.getContext('2d').getImageData(0,0,w,h);
+  const visData  = visC.getContext('2d').getImageData(0,0,w,h);
+  const range = measureIrRange(irData);
+
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  const outCtx = out.getContext('2d');
+  const outImg = outCtx.createImageData(w,h);
+  for (let i = 0; i < irData.data.length; i += 4) {
+    const dustR = dustData.data[i], dustB = 255 - dustData.data[i+2];
+    const dust = screen((dustR/255)*(dustB/255)*255, 0.5*dustB);
+    const ir = interpolate(range.floor, range.ceiling, 0, 255, irData.data[i]);
+    let val = gammaCorrect(2.0, screen(dust, gammaCorrect(1.46, ir)*0.77));
+    const vr=visData.data[i], vg=visData.data[i+1], vb=visData.data[i+2];
+    const diff = Math.max(vr,vg,vb)-Math.min(vr,vg,vb), gbDiff = Math.abs(vg-vb);
+    if (diff < 25 || (vr<vg && gbDiff<11 && vg>150)) val = Math.max(val, gammaCorrect(1.5, Math.max(vr,vg,vb)));
+    val = Math.max(0, Math.min(255, val));
+    outImg.data[i]=outImg.data[i+1]=outImg.data[i+2]=255;
+    outImg.data[i+3]=val;
+  }
+  outCtx.putImageData(outImg, 0, 0);
+  // Keep the raw alpha values so the floor slider can recompute without refetching.
+  const rawAlpha = new Uint8ClampedArray(w*h);
+  for (let i = 0, p = 0; i < outImg.data.length; i += 4, p++) rawAlpha[p] = outImg.data[i+3];
+  return { canvas: out, range, rawAlpha, w, h };
+}
+
+// Cloud density -> colour. White-on-light is unreadable and hides seams; the app's
+// Average mode already renders through Cloud.stops() with a legend, so Now should use
+// the same ramp. This is a STAND-IN ramp — replace with the real Cloud.stops() values.
+const CLOUD_STOPS = [
+  { t: 0.00, c: [ 60,  90, 130] },  // thin/none - slate blue
+  { t: 0.35, c: [110, 140, 175] },
+  { t: 0.60, c: [175, 195, 215] },
+  { t: 0.80, c: [225, 232, 240] },
+  { t: 1.00, c: [255, 255, 255] }   // thick - white
+];
+function rampColour(t) {
+  for (let i = 1; i < CLOUD_STOPS.length; i++) {
+    if (t <= CLOUD_STOPS[i].t) {
+      const a = CLOUD_STOPS[i-1], b = CLOUD_STOPS[i];
+      const f = (t - a.t) / (b.t - a.t);
+      return [0,1,2].map(k => Math.round(a.c[k] + (b.c[k] - a.c[k]) * f));
+    }
+  }
+  return CLOUD_STOPS[CLOUD_STOPS.length-1].c;
+}
+
+function applyFloor(composite, pct) {
+  const { canvas, rawAlpha, w, h } = composite;
+  if (!composite.sorted) {
+    composite.sorted = Array.from(rawAlpha).sort((a,b)=>a-b);
+  }
+  const floor = composite.sorted[Math.min(composite.sorted.length-1, Math.floor(composite.sorted.length * pct/100))];
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, w, h);
+  for (let p = 0, i = 0; p < rawAlpha.length; p++, i += 4) {
+    const a = rawAlpha[p];
+    if (a <= floor) { img.data[i+3] = 0; continue; }
+    const t = (a - floor) / Math.max(1, 255 - floor);
+    const [r,g,b] = rampColour(t);
+    img.data[i] = r; img.data[i+1] = g; img.data[i+2] = b;
+    // Thin cloud stays semi-transparent so geography reads through; thick cloud goes solid.
+    img.data[i+3] = Math.round(80 + t * 175);
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+async function init() {
+  try {
+    log('Reading live capabilities...');
+    const [goesDims, eumDims] = await Promise.all([fetchDims(GIBS_CAPS, GOES_LAYERS), fetchDims(EUM_CAPS, EUM_LAYERS)]);
+    const goesTime = Object.values(GOES_LAYERS).map(l=>latestFromDimension(goesDims[l])).sort()[0];
+    const eumTime  = Object.values(EUM_LAYERS).map(l=>latestFromDimension(eumDims[l])).sort()[0];
+    log(`GOES TIME=${goesTime}, EUMETSAT TIME=${eumTime}`);
+
+    const goesH = Math.round(PANEL_W * (latToY(GOES_BOX.latMax)-latToY(GOES_BOX.latMin)) / (lonToX(GOES_BOX.lonMax)-lonToX(GOES_BOX.lonMin)));
+    const eumH  = Math.round(PANEL_W * (latToY(EUM_BOX.latMax)-latToY(EUM_BOX.latMin)) / (lonToX(EUM_BOX.lonMax)-lonToX(EUM_BOX.lonMin)));
+
+    log('Building GOES-East composite...');
+    const goesResult = await buildComposite(GOES_LAYERS, goesUrl, GOES_BOX, goesTime, PANEL_W, goesH);
+    log('Building EUMETSAT composite...');
+    const eumResult = await buildComposite(EUM_LAYERS, eumUrl, EUM_BOX, eumTime, PANEL_W, eumH);
+    log(`GOES calibration: ${goesResult.range.floor}-${goesResult.range.ceiling} (coverage ${goesResult.range.coverage}%), EUM calibration: ${eumResult.range.floor}-${eumResult.range.ceiling} (coverage ${eumResult.range.coverage}%)`, 'ok');
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://demotiles.maplibre.org/style.json',
+      center: [-20, 15], zoom: 3
+    });
+
+    map.on('load', () => {
+      map.addSource('goes-img', { type:'image', url: applyFloor(goesResult, 70),
+        coordinates: [[GOES_BOX.lonMin,GOES_BOX.latMax],[GOES_BOX.lonMax,GOES_BOX.latMax],[GOES_BOX.lonMax,GOES_BOX.latMin],[GOES_BOX.lonMin,GOES_BOX.latMin]] });
+      map.addLayer({ id:'goes-layer', type:'raster', source:'goes-img', paint:{'raster-opacity':0.9} });
+
+      map.addSource('eum-img', { type:'image', url: applyFloor(eumResult, 70),
+        coordinates: [[EUM_BOX.lonMin,EUM_BOX.latMax],[EUM_BOX.lonMax,EUM_BOX.latMax],[EUM_BOX.lonMax,EUM_BOX.latMin],[EUM_BOX.lonMin,EUM_BOX.latMin]] });
+      map.addLayer({ id:'eum-layer', type:'raster', source:'eum-img', paint:{'raster-opacity':0.9} });
+
+      map.addSource('boundary', { type:'geojson', data: { type:'Feature', geometry:{ type:'LineString', coordinates:[[-20,-10],[-20,40]] } } });
+      map.addLayer({ id:'boundary-line', type:'line', source:'boundary', paint:{'line-color':'#f60','line-width':2} });
+
+      log('Both composites placed on map. Pan/zoom around -20,15.', 'ok');
+
+      document.getElementById('floorSlider').addEventListener('input', e => {
+        const floor = parseInt(e.target.value);
+        document.getElementById('floorVal').textContent = floor;
+        map.getSource('goes-img').updateImage({ url: applyFloor(goesResult, floor) });
+        map.getSource('eum-img').updateImage({ url: applyFloor(eumResult, floor) });
+      });
+    });
+    map.on('error', e => log('Map error: ' + (e.error?.message || JSON.stringify(e)), 'err'));
+
+  } catch (err) {
+    log('FAILED: ' + err.message, 'err');
+    console.error(err);
+  }
+}
+init();
+</script>
+</body>
+</html>

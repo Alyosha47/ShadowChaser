@@ -45,7 +45,7 @@
 </style>
 
 <header>
-  <h1>GIBS probe — which layers are real? <span id="ver">PROBE 2026-08-15b</span></h1>
+  <h1>GIBS probe — which layers are real? <span id="ver">PROBE 2026-08-15c</span></h1>
   <p id="status">starting…</p>
   <p id="prog">If the version above is not the one you just uploaded, you are seeing a
      cached copy — hard-reload (Cmd-Shift-R), or add <code>?x=1</code> to the URL.</p>
@@ -90,6 +90,47 @@ var SETS = ['GoogleMapsCompatible_Level7', 'GoogleMapsCompatible_Level6',
             'GoogleMapsCompatible_Level8', 'GoogleMapsCompatible_Level9'];
 
 var ROOT = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/';
+
+/* DOES GIBS SPEAK WMS? This decides whether satellite.js needs one code path or
+   two. EUMETSAT is WMS-only, and the canvas alpha-remap the layer now needs
+   wants ONE arbitrary-bbox image per viewport, not a tile pyramid. If GIBS
+   serves WMS too, both providers collapse into a single fetcher. Tested by
+   loading a GetMap over the Atlantic and checking pixels come back. */
+var GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+
+function gibsWmsUrl(layer, time) {
+  return GIBS_WMS + '?service=WMS&version=1.3.0&request=GetMap' +
+    '&layers=' + encodeURIComponent(layer) +
+    '&styles=&format=image%2Fpng&transparent=true' +
+    '&crs=EPSG%3A3857&width=256&height=256' +
+    '&bbox=-1224514,4865942,556597,7361866' +
+    (time ? '&time=' + encodeURIComponent(time) : '');
+}
+
+function testGibsWms() {
+  var tries = [
+    { layer: 'GOES-East_ABI_GeoColor',              time: null },
+    { layer: 'GOES-East_ABI_Band13_Clean_Infrared', time: null },
+    { layer: 'MODIS_Terra_CorrectedReflectance_TrueColor',
+      time: new Date(Date.now() - 86400000).toISOString().slice(0, 10) }
+  ];
+  var i = 0;
+  function next() {
+    if (i >= tries.length) {
+      row(['<b>GIBS WMS endpoint</b>', '—', '—',
+           'NO — GIBS is WMTS only; satellite.js needs two fetchers', ''], 'bad');
+      return;
+    }
+    var t = tries[i++];
+    return probe(gibsWmsUrl(t.layer, t.time)).then(function (good) {
+      if (!good) return next();
+      row(['<b>GIBS WMS endpoint</b>', '<code>' + t.layer + '</code>',
+           t.time || '(none)',
+           'YES — one WMS fetcher can serve BOTH providers', ''], 'ok');
+    });
+  }
+  return next();
+}
 
 function tileUrl(layer, set, time, z, x, y, ext) {
   return ROOT + layer + '/default/' + time + '/' + set + '/' + z + '/' + y + '/' + x + '.' + ext;
@@ -201,6 +242,8 @@ function run() {
       });
     });
   });
+
+  chain = chain.then(testGibsWms);
 
   chain.then(function () {
     var s = document.getElementById('status');

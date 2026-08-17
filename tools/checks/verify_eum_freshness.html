@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EUMETSAT layer freshness — PROBE 2026-08-16t</title>
+<style>
+  body { font: 13px/1.4 Menlo, monospace; margin: 20px; background: #111; color: #ddd; }
+  h1 { font-size: 15px; }
+  .badge { background:#a33;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:bold; }
+  table { border-collapse: collapse; margin-top: 12px; width: 100%; }
+  th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid #262626; vertical-align: top; }
+  th { color:#6cf; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  .fresh { color:#6f6; font-weight:bold; }
+  .stale { color:#fc6; }
+  .old { color:#f66; }
+  .name { color:#9f9; }
+  #status { padding:8px; background:#1c1c1c; border-radius:4px; }
+</style>
+</head>
+<body>
+<h1>EUMETSAT layer freshness &nbsp;<span class="badge">PROBE 2026-08-16t</span></h1>
+<p>Lists every cloud-relevant EUMETSAT layer with the newest timestamp it actually
+advertises, and how many minutes old that is right now. Sorted freshest first. This
+identifies the genuinely rapid layers by enumeration instead of guessing a name.</p>
+<div id="status">Fetching capabilities…</div>
+<table id="out"></table>
+
+<script>
+const EUM_CAPS = 'https://view.eumetsat.int/geoserver/wms?service=WMS&request=GetCapabilities&version=1.3.0';
+
+function latestFromDimension(txt) {
+  const seg = txt.split(',');
+  const parts = seg[seg.length-1].trim().split('/');
+  return parts.length >= 2 ? parts[1] : parts[0];
+}
+
+(async () => {
+  const st = document.getElementById('status');
+  try {
+    const res = await fetch(EUM_CAPS);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
+    const now = Date.now();
+    const rows = [];
+    for (const el of xml.getElementsByTagName('Layer')) {
+      const nameEl = el.querySelector(':scope > Name');
+      if (!nameEl) continue;
+      const name = nameEl.textContent.trim();
+      const dimEl = el.querySelector('Dimension[name="time"]');
+      if (!dimEl) continue;
+      // Only cloud-relevant products: IR, natural/geocolour RGB, dust, cloud mask.
+      if (!/ir|rgb|cloud|clm|geocolour|natural|dust/i.test(name)) continue;
+      const latest = latestFromDimension(dimEl.textContent);
+      const t = Date.parse(latest);
+      if (isNaN(t)) continue;
+      rows.push({ name, latest, ageMin: Math.round((now - t)/60000) });
+    }
+    rows.sort((a,b) => a.ageMin - b.ageMin);
+    st.innerHTML = `<span style="color:#6f6">Loaded.</span> ${rows.length} cloud-relevant layers with time dimensions. Current UTC: ${new Date().toISOString()}`;
+
+    const tbl = document.getElementById('out');
+    tbl.innerHTML = '<tr><th>Age</th><th>Layer</th><th>Newest advertised frame</th></tr>' +
+      rows.map(r => {
+        const cls = r.ageMin <= 30 ? 'fresh' : r.ageMin <= 90 ? 'stale' : 'old';
+        return `<tr><td class="${cls}">${r.ageMin} min</td><td class="name">${r.name}</td><td>${r.latest}</td></tr>`;
+      }).join('');
+  } catch (e) {
+    st.innerHTML = `<span style="color:#f66">Failed: ${e.message}</span>`;
+  }
+})();
+</script>
+</body>
+</html>

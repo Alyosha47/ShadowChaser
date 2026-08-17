@@ -615,6 +615,10 @@
   function _syncBtn() {
     var b = document.getElementById('btn-cloud');
     if (!b) return;
+    /* CloudBar owns the button's pressed state once it exists, because "on" then
+       means "some cloud mode is showing", which may be satellite rather than
+       this layer. Leaving both to write it would make the two fight on toggle. */
+    if (window.CloudBar) return;
     b.setAttribute('aria-pressed', _on ? 'true' : 'false');
     b.title = _on ? 'Cloud cover — hide'
                   : 'Mean cloud cover at the eclipse hour (ERA5 1991-2020)';
@@ -628,7 +632,14 @@
     var b = document.getElementById('btn-cloud');
     if (b) {
       b.removeAttribute('aria-disabled');
-      b.addEventListener('click', function (e) { e.preventDefault(); toggle(); });
+      b.addEventListener('click', function (e) {
+        e.preventDefault();
+        /* Delegate when the mode strip is present. The strip turns this layer on
+           and off among others, so it must own the click; without a strip the
+           button stays exactly the plain toggle it has always been. */
+        if (window.CloudBar && CloudBar.handleButton) CloudBar.handleButton();
+        else toggle();
+      });
     }
     _syncBtn();
 
@@ -666,7 +677,11 @@
   /* Bump on every change. The script tags carry a hardcoded ?v= and the service
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. Check Cloud.version. */
-  window.Cloud = { version: '2026-08-11b',
+  window.Cloud = { version: '2026-08-15a',
                    toggle: toggle, sampleAt: sampleAt,
+                   enable: _enable, disable: _disable,
+                   /* The legend must be built from the same numbers the pixels
+                      are, or the bar and the map drift apart silently. */
+                   stops: function () { return STOPS.slice(); },
                    isOn: function () { return _on; } };
 })();
