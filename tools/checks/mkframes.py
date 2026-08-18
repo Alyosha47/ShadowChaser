@@ -49,8 +49,9 @@ else:
 w=1024; h=int(round(w*(mY(box['n'])-mY(box['s']))/(R*math.radians(box['e']-box['w']))))
 h=min(h,1024)
 parts=[]
-if box['e']>180: parts=[{'w':box['w'],'e':180.0,'s':box['s'],'n':box['n']},{'w':-180.0,'e':box['e']-360,'s':box['s'],'n':box['n']}]
-elif box['w']<-180: parts=[{'w':box['w']+360,'e':180.0,'s':box['s'],'n':box['n']},{'w':-180.0,'e':box['e'],'s':box['s'],'n':box['n']}]
+EPS=(box['e']-box['w'])/w   # one canvas pixel; see stripe finding
+if box['e']>180: parts=[{'w':box['w'],'e':180.0,'s':box['s'],'n':box['n']},{'w':-180.0+EPS,'e':box['e']-360,'s':box['s'],'n':box['n']}]
+elif box['w']<-180: parts=[{'w':box['w']+360,'e':180.0,'s':box['s'],'n':box['n']},{'w':-180.0+EPS,'e':box['e'],'s':box['s'],'n':box['n']}]
 else: parts=[box]
 bgbox={'w':-180.0,'e':180.0,'s':-70.0,'n':70.0}
 bw=1024; bh=int(round(bw*(mY(70)-mY(-70))/(R*math.radians(360))))

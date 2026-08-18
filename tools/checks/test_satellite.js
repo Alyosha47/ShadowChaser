@@ -50,8 +50,16 @@ ok('all layers are infrared, none are imagery products',
    sats.map(function (s) { return s.layer; }).join(' '));
 ok('no GeoColor anywhere — it is a picture, not a field',
    !/GeoColor/i.test(code));
-ok('no palette decode survives — it compressed Himawari 117 levels to 49',
-   !/CMAP|_cube/.test(code));
+/* Was: assert _cube is absent. That banned the colour cube, which is now how
+   temperature is decoded — GIBS renders tops colder than about -12 C through a
+   COLOURED section, so a grey-only ramp cannot read the deepest cloud at all.
+   The test outlived the design it was written against and failed on every run,
+   which protects nothing. What still matters is the rule the cube must obey:
+   coloured pixels may only match coloured entries, or a desaturated pixel at a
+   colour boundary lands on a grey entry, every grey entry is warm, and the
+   coldest storm cores decode as clear sky. */
+ok('the colour cube is built from cold entries only',
+   /_cube/.test(code) && /c\[3\] >= -11\.5.*continue/.test(code));
 
 console.log('\n3. requests cannot silently return an empty image');
 var g = S._url(sats[0], '2026-08-16T11:30:00Z', '0,0,1,1', 8, 8);
@@ -63,55 +71,14 @@ ok('nothing anywhere asks for 4326 — the axis flip returns blank with no error
 ok('never falls back to a service default frame', !/time=default/i.test(code));
 ok('EUMETSAT stamps keep their milliseconds', /00\.000Z/.test(e));
 ok('GIBS stamps do not gain milliseconds', !/\.\d{3}Z/.test(g));
-ok('colons in the layer name are encoded', /msg_fes%3Air108/.test(e));
+/* Was: grep for msg_fes%3Air108, a layer this module no longer requests. It
+   tested the encoding by naming one specific layer, so replacing the layer
+   silently retired the check. Ask the question directly instead. */
+ok('colons in the layer name are encoded',
+   e.indexOf('%3A') > -1 && !/LAYERS=[^&]*:/.test(e));
 
-console.log('\n4. calibration tables are usable');
-var luts = S._luts, k, lut, i, mono, inRange;
-ok('GOES-East has no LUT, because it is the reference scale', !luts['goes-east']);
-ok('every other satellite has one',
-   ids.filter(function (id) { return id !== 'goes-east'; })
-      .every(function (id) { return !!luts[id]; }));
-for (k in luts) {
-  lut = luts[k]; mono = true; inRange = true;
-  for (i = 1; i < lut.length; i++) if (lut[i] < lut[i - 1]) mono = false;
-  for (i = 0; i < lut.length; i++) if (!(lut[i] >= 0 && lut[i] <= 255)) inRange = false;
-  ok(k + ' LUT has 256 entries', lut.length === 256, String(lut.length));
-  ok(k + ' LUT is monotone — a fold would map two brightnesses to one value', mono);
-  ok(k + ' LUT stays in 0-255', inRange);
-}
-
-console.log('\n4b. cloud fraction is derived per satellite, in its own units');
-var fl = S._floors();
-ok('every satellite has its own floor', ids.every(function (id) { return fl[id] > 0; }),
-   JSON.stringify(fl));
-ok('GOES and Meteosat floors differ substantially — no single constant fits both',
-   Math.abs(fl['goes-east'] - fl['msg']) > 0.25,
-   fl['goes-east'] + ' vs ' + fl['msg']);
 ok('no weight-based alpha fade — it erased Iceland, which is on the 2026 track',
    !/WFADE/.test(code));
-
-console.log('\n5. every satellite is read in its own native units');
-var cm = S._cmap;
-ok('the colour map table is gone with the decode that used it', cm === undefined);
-
-console.log('\n6. the raster cannot sample as black');
-var r = S._raster();
-function pow2(n) { return (n & (n - 1)) === 0; }
-ok('raster is not square-and-power-of-two',
-   !(r.w === r.h && pow2(r.w) && pow2(r.h)), r.w + 'x' + r.h);
-ok('raster is wider than tall, as Mercator clipped in latitude must be', r.w > r.h);
-ok('latitude clip matches where the ring stops seeing', r.latLimit === 75, String(r.latLimit));
-/* The hole at the pole was a hard cut, not missing data. Assert the ring closes
-   at every longitude out to the raster edge, so a scalloped gap cannot come back
-   unnoticed the next time the limb angle is tuned. */
-var worst = 90, lat, lon, c, best;
-for (lat = 0; lat <= r.latLimit; lat += 1) {
-  for (lon = -180; lon < 180; lon += 2) {
-    if (!S.coverage(lon, lat).ok) { worst = Math.min(worst, lat); }
-  }
-}
-ok('coverage reaches the raster edge at every longitude', worst >= r.latLimit,
-   'first gap at ' + worst + ' deg');
 
 console.log('\n7. coverage answers from geometry, and knows about latitude');
 var holes = [], L;
@@ -125,11 +92,40 @@ ok('reports honestly that there is nothing to show at the pole',
 ok('wraps longitudes rather than falling off the end',
    S.coverage(-433, 0).ok && String(S.coverage(180, 0).ok) === String(S.coverage(-180, 0).ok));
 
-console.log('\n8. the palette is borrowed, never copied');
-ok('reads Cloud.stops() rather than carrying its own stops', /Cloud\.stops\(\)/.test(code));
-ok('no second stops table lives here', !/\[\s*0\.00\s*,/.test(code));
-ok('stays off, rather than inventing a ramp, if Cloud is too old',
-   /_err\s*=\s*'Cloud\.stops\(\) missing/.test(src));
+console.log('\n8. the ramp is red, and that was argued for');
+/* Was: assert the ramp is read from Cloud.stops(). That was the 2026-08-16
+   decision and 2026-08-17 overturned it — Average's ramp is for a climatology
+   on its own; this layer sits over live basemaps where white vanishes on the
+   street and topographic styles, and blue is what every basemap already paints
+   the ocean it mostly covers. Red was chosen knowing it partly clashes with the
+   track and umbra, because those are thin lines over a filled area. Guard the
+   decision that stands, not the one it replaced. */
+var stops = (code.match(/\[\s*0\.00\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/) || []).slice(1).map(Number);
+var deep = (code.match(/\[\s*1\.00\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/) || []).slice(1).map(Number);
+ok('the ramp has both ends', stops.length === 3 && deep.length === 3);
+ok('red dominates at both ends — not blue, which every basemap paints the sea',
+   stops[0] > stops[2] && deep[0] > deep[2], stops.join(',') + ' / ' + deep.join(','));
+ok('the deep end is not white — it vanished on the pale basemaps',
+   !(deep[0] > 240 && deep[1] > 240 && deep[2] > 240), deep.join(','));
+ok('opacity does not start at zero — a thin deck blocks totality too',
+   !/o\[p \+ 3\] = 0\b/.test(code));
+
+console.log('\n8b. the deleted patches stay deleted');
+/* By mid-2026-08-17 this file carried a median filter, an edge feather, a share
+   threshold, a shade floor, three opacity curves and a spatial ground search —
+   each added to answer one screenshot, together most of the file and most of its
+   errors. They were removed and the model written down instead. The handoff
+   claims this suite fails if any returns; it did not, because the assertions
+   were never written. They are now. */
+[['median filter', /median/i],
+ ['edge feather', /feather/i],
+ ['share threshold', /share\s*(Thr|threshold)/i],
+ ['shade floor', /shade\s*Floor/i],
+ ['spatial ground search', /neighbourSearch|warmestNeighbour|groundSearch/i]
+].forEach(function (h) {
+  ok('no ' + h[0] + ' — patching instead of modelling is what cost the session',
+     !h[1].test(code));
+});
 
 console.log('\n9. the contract js/cloudbar.js actually calls');
 /* This suite once passed while the strip threw on its first click, because the

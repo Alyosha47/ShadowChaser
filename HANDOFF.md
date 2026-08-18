@@ -309,6 +309,8 @@ ShadowChaser/
 └── js/
     ├── cities.js       lookupCity, lazy index from basemapData.cities
     ├── cloud.js        CLOUD OVERLAY — climatology layer, palette, sampleAt (§10)
+    ├── satellite.js    LIVE CLOUD — geostationary IR, temperature model (§10A)
+    ├── cloudbar.js     the Average | Now mode strip (§10A.1)
     ├── details.js      renderData, buildContactRows, contactIcon, lookupElevationAndTz
     ├── eclipse.js      computeEclipse, fundamentalArgs, sunAltAz, findMaximum, findContact,
     │                   getV(t,interior)   — strict-mode UMD
@@ -1046,7 +1048,7 @@ deferred).
 
 The `☁` button draws mean historical cloud cover for the selected eclipse, sampled at each point's
 own local solar time at the moment the eclipse peaks *there*. `js/cloud.js`, ~700 lines,
-self-contained. **The forecast half of #F2 remains open.**
+self-contained. **The live half is §10A; the forecast half (#F2b) is lost and unstarted.**
 
 ### 10.1 Data and the pipeline
 **ERA5 total cloud cover, 1991–2020 mean, 0.5°, by hour of day.** Three stages:
@@ -1180,6 +1182,347 @@ truth for a hillside.
 - **Precached since 2026-08-13** — all 96 slices (~3.3 MB) in the best-effort DATA loop, never CORE.
   Not a subset: the layer needs 16, but *which* 16 depends on the eclipse picked in the field, so a
   subset works for some eclipses offline and not others — worse than either extreme.
+
+---
+
+## 10A. LIVE CLOUD — "Now" (#F2c) — WORKING, NOT FINISHED
+
+`js/satellite.js` (~1070 lines) draws **current** cloud from geostationary infrared, as an overlay
+over the basemap. `js/cloudbar.js` is the mode strip that chooses between this and §10's
+climatology. Four days and roughly ninety versions went into it (2026-08-15 → 18); this section
+replaces the four `SESSION-2026-08-*.md` files, which contradicted each other in resolved ways and
+have been deleted. Where they disagreed, what follows is the surviving answer.
+
+### 10A.1 The mode strip — SETTLED, don't redesign
+
+`☁` keeps its single job: overlay on or off. The strip below it carries the colour bar, the source
+credit and a two-cell segmented control, `Average | Now`.
+
+- **A 3-state cycling button was rejected.** "Now" is unavailable offline and outside coverage, so a
+  cycle would contain a dead state — silently skipped or a no-op tap.
+- **The mode switch IS the source label**, so there is only ever one statement of which dataset is
+  showing. Cells grey individually with an explanatory `title`.
+- `Average` gained a legend at the same time; §10.5 justified banding the palette on the grounds that
+  a value can be read off the map, which was not true without a colour bar. The gradient is built
+  from `Cloud.stops()`, not copied, so bar and pixels cannot drift.
+- Adding a third mode later is a third cell, not a redesign.
+- `js/cloud.js` changed in three places only, all additive: it delegates the button click *if*
+  `CloudBar` exists, stops writing `aria-pressed` *if* `CloudBar` exists, and exports
+  `enable`/`disable`/`stops`. Delete `cloudbar.js` and the button reverts to the toggle it was.
+
+### 10A.2 The model — four steps, every constant traced to a measurement
+
+1. **Pixels → brightness TEMPERATURE, not brightness.** GIBS renders GOES and Himawari as a grey ramp
+   *plus a coloured section for tops colder than about −12 °C*, so brightness is **not monotonic in
+   temperature**: measured over North America, the deepest tops (−90…−50 °C) average channel value
+   131 while mid cloud (−20…0 °C) averages 163 and bare ground 112. Any rule written on brightness
+   erases the deepest cloud.
+2. **Cloud = depression below that pixel's own clear-sky temperature.**
+3. **Depression → probability**, from a curve measured against EUMETSAT's operational mask.
+4. **Satellites combined by viewing geometry**, `cos³` to the limb.
+
+Rendering: opacity is the probability, colour is the depression (cloud-top height). Drawn only where
+P ≥ 0.5 — "more likely cloud than not". At P > 0.02 it painted 96.8% of a real view; at 0.5, 66.4%,
+which is the observed global cloud fraction.
+
+**The palette is red and that was argued.** Not white — sat24's clouds read white because its
+background is black; on the near-white street and topographic basemaps white vanishes. Not blue —
+every basemap paints the sea blue and most of what this layer covers is ocean. Red is accepted with a
+partial clash against track and umbra, because those are thin lines over a filled area. Opacity must
+not start at zero: a thin deck blocks totality as completely as a thunderstorm. An earlier decision
+to borrow `Cloud.stops()` was overturned by this; `test_satellite.js` §8 now guards the red.
+
+### 10A.3 The temperature decode has two silent traps
+
+- **Greys above 178.** The published colour map tabulates its grey ramp only to 179; GOES routinely
+  sends greys to 197. Nearest-colour matching those against the full table returned **grey 190 →
+  +54 °C** and **grey 182 → −64 °C** — the coldest greys decoding as *hot*. The tabulated ramp is
+  linear to within 0.24 °C over its 138 entries, so greys are decoded from that line and
+  extrapolated: `T = -0.38598 * grey + 57.2375`.
+- **Coloured pixels must only match coloured entries.** A desaturated blend at a colour boundary
+  lands nearest a *grey* entry, and every grey entry is warm — measured, coloured pixels decoding as
+  high as **+39 °C**. That turned the coldest storm cores into clear sky and punched white holes
+  through them. The cube is built from entries colder than −11.5 °C only, and the grey test is on
+  **saturation** (`max−min ≤ 12`), not channel differences, so antialiasing between two greys still
+  reads as grey.
+
+### 10A.4 The clear-sky reference — TEMPORAL, never spatial
+
+Cloud moves; terrain does not. The clear-sky value of a pixel is the warmest that pixel has been
+across recent frames — specifically the **second**-warmest, so one bad scan line cannot set it.
+
+- **Spatial reference cannot work.** Taking it from neighbouring pixels cannot distinguish cold cloud
+  from cold ground, so every highland reads as cloud. Denver, at 1600 m and plainly sunny, sat 5.9 °C
+  below the warmest land within reach and was drawn as cloud; against a temporal background it sits
+  1.1 °C below its own value and is correctly clear.
+- **Nothing spatial belongs on top of it.** An intermediate version kept a cell percentile and a
+  neighbour search as well — warmest of warmest of warmest — and painted **81%** of the United States
+  against a visible band saying 20%. Using the background directly: **22%**.
+- **Frames must be a DAY apart, not hours.** At 4-hour spacing, cloud that sits over a place for an
+  afternoon becomes its own clear-sky value and the storm punches holes in itself.
+- **`BG_FRAMES = 10`, not 4** *(raised 2026-08-18)*. Four days is not enough where weather sits still.
+  Measured over the Gulf and Caribbean at zoom 5, holding imagery constant and swapping only the
+  background: inside a storm the reference read **4.6 °C against 11.4 °C two pixels outside it**, so
+  the storm was measured against its own tops and hollowed out. Drawn area 29.1% at four days,
+  **36.2% at ten**, and the large holes close. The published method (bispectral composite threshold,
+  Jedlovec et al.) uses twenty days; ten is a compromise with the request count.
+- **`BG_TTL` is 6 hours**, not 30 minutes — it is built from frames a day apart, so half an hour was
+  far shorter than anything it measures and just made an idle browser refetch ten frames per
+  satellite for no change. The long TTL is what makes ten frames affordable.
+- **The grid is the WHOLE WORLD at `BG_W = 1024`.** Sized to the satellite (`lon ± 80°`) it wrapped
+  past 180° for Himawari and both GOES, and the wrap fallback then requested the world at the *same
+  pixel width* — three of five satellites measuring cloud against a field four times coarser than
+  their own imagery. **That was the "Minecraft blocks", and the missing slices were its off-disc
+  gaps.** One fixed world grid has no wrap case to get wrong. Anything that makes this box
+  zoom- or path-dependent must key the cache on the box too, or a zoomed grid gets silently reused
+  at hemisphere zoom.
+
+### 10A.5 Geometry — the four traps
+
+- **`map.getBounds()` is unusable in globe projection.** It reports the whole world at almost any
+  zoom. `cloud.js` guards this by falling back to the entire globe, harmless for a climatology and
+  fatal here: the module was fetching **five satellites at world extent on every pan**. The box comes
+  from zoom and centre arithmetically — MapLibre's world is exactly `512 * 2^zoom` pixels across.
+- **But that arithmetic is Mercator's, and this map is a globe** *(fixed 2026-08-18)*. A sphere
+  compresses toward its limb and shows far more longitude than `512 * 2^z` implies. At zoom 2 on a
+  745 px canvas the Mercator box is 170° where the globe shows 183°; at zoom 2.2, 148° against 171°.
+  The outer slice was never requested and appeared only when rotation carried it inboard. `viewBox()`
+  now takes the **maximum** of the Mercator figure and a globe figure — sphere radius on screen is
+  `worldPx / 2π`, a point at angle θ lands at `radius·sin θ`, so the visible half-angle is
+  `asin(min(1, halfCanvas / radius))`, divided by `cos(latitude)`. Only applied when the map reports
+  globe projection; the two converge above zoom 3.
+- **Satellites are chosen per ANTIMERIDIAN HALF, not per view.** Chosen for the whole view, a Pacific
+  view asked Meteosat about the far side of the world; those return an empty image, indistinguishable
+  from a not-yet-published frame, so each burned the full step-back retry. Measured: **45 requests →
+  15**.
+- **Never request a bbox whose west edge is at or beyond −179.92°** *(found 2026-08-18)*. GIBS returns
+  the leftmost **~10% of the image blank** — 49 of 494 columns for GOES-West, the same 10% at 247, 494
+  and 988 px wide, and the same again from −185. The reply is otherwise geometrically correct
+  (cross-correlation against an inset request gives a best shift of 0 px). **That was the vertical
+  stripe down the dateline**, and it was in neither `bgAt` nor `srcX`. The western half is now inset by
+  one canvas pixel — one pixel rather than a fixed angle because the threshold scales with the
+  request.
+
+### 10A.6 Performance — measure the phase, then fix it
+
+`Satellite.diagnose().timing` reports `{probe, img, bg, decode, compose, place, total}`. Parallel
+phases report their slowest instance; `decode` sums, because `getImageData` is serial on the main
+thread. **Every performance claim made from the shape of the code was wrong; every one from a number
+held.** The instrumentation stays for that reason.
+
+Fixed in order, each after measuring:
+
+- **Sequential fetch chain → parallel.** Frames were fetched one at a time, justified as phone memory
+   — but `compose()` needs every frame's pixels at once, so `out[]` holds them all either way and the
+  chain bought nothing while costing the *sum* of the requests. Real 8-job Pacific view: **5.9s →
+  1.0s**. Imagery also no longer waits on `Promise.all(warm)` for the backgrounds.
+- **`bgAt` was 89% of the entire render.** Not the bilinear read — it recomputed `mercY(box.n)`,
+  `mercY(box.s)` and `mercY(lat)` on every one of 1.3 million calls, and `mercY` is a log of a tan.
+  None of it varies per pixel: two are constants, the third depends only on the row. Now precomputed
+  into per-column and per-row tables once per compose, keyed on grid geometry. **6.6s → 0.49s.**
+- **The probe walk was 91% of a fetch** (10673 ms of 11709 ms on a phone). Finding the newest
+  published frame now happens at **64×32 at the satellite's sub-point**, all candidate times fired at
+  once rather than one round trip per unpublished frame, both GIBS endpoints in parallel, newest
+  wins. Live GIBS, 6 satellite-endpoint pairs: **4.9s → 2.0s**.
+- **The probe is cached per satellite for half a step and shared between callers.** It ran per *job*,
+  so a dateline-split view asked the same satellite twice, and nothing was cached, so every pan
+  re-asked. The answer is a property of the clock, not the view. Harness: 40 probe requests on first
+  render, **0 after a pan**, 40 again after `invalidate()` — which clears the cache deliberately,
+  since its whole purpose is to find a newer frame.
+- **The limb case.** When the probe has confirmed a frame is published, an empty full-size fetch means
+  the satellite cannot see that box — geometry, not timing. The walk is capped at 2 attempts instead
+  of `MAX_STEPS`, so rediscovering that a limb is a limb costs 2 hemisphere PNGs, not 8.
+
+**Not done:** every pan is a fresh URL, so nothing is ever reused from the browser cache. Snapping the
+fetch box to a grid would fix it but changes the geometry passed to `compose`/`place` — verify through
+the harness before shipping.
+
+### 10A.7 Freshness — GIBS is the floor
+
+Measured 2026-08-18: **EUMETSAT `mtg_fd` and `msg_iodc` run ~12 min behind. GIBS GOES-East, GOES-West
+and Himawari run 18–50 min behind, and it jitters.** The module already asks for the newest and walks
+back; the lag is NASA's republication, not ours.
+
+- The `nrt` endpoint serves **no** geostationary pixels. Dead.
+- `best` and `all` render **byte-identically** (same-frame RGB difference 0.000) but are independent
+  caches with different frames populated. Over 9 observations, 3 had one endpoint a full 10-minute
+  step ahead of the other, **in both directions**. Mean saving 3.3 min, never more than one step —
+  small, but it comes free with the parallel probe. *(An earlier claim of 10–20 min came from two
+  single-instant snapshots and was wrong.)*
+- Getting GOES to ~5 min means leaving GIBS — CIRA RAMMB SLIDER or NOAA's AWS ABI buckets. Neither has
+  been tested; neither host is in the assistant's egress allowlist.
+- `eps:m02_*` advertise a 2021 timestamp — that instrument is dead. Any code trusting the newest
+  advertised frame without a sanity check will silently render five-year-old data.
+- **An empty frame is not an error.** GIBS answers a not-yet-published time with a valid, entirely
+  transparent PNG; Himawari was measured returning three in a row. Test the PIXELS. A dropped
+  satellite is a hole and **a hole reads as clear sky.**
+
+### 10A.8 What this cannot do yet
+
+- **Low marine stratus is under-reported.** Infrared cannot see cloud nearly as warm as the ground
+  beneath it, and over the open Atlantic this under-reports against EUMETSAT's mask. It is exactly
+  the cloud that ruins an eclipse. The fix is a channel that **ADDS** cloud — the visible band by day
+  (an eclipse is always in daylight along the track, and `hasNight()` already knows the terminator),
+  or `msg_fes:clm` where published. Never a constant that inflates infrared. Gating on the coarse
+  mask was tried and produced tile edges; if it returns it must add, not gate.
+- **Nothing above ~65°N.** Geostationary satellites sit on the equator and `cos³` to the limb leaves
+  nothing at high latitude. Measured weights on the **2026-08-12 track**: Arctic 80°N **none**;
+  N Greenland 78°N goes-east 0.000; C Greenland 72°N 0.001; Reykjavik 64°N mtg 0.015. **The Greenland
+  leg of the track this app exists for is blank.** Extending the background grid past 70° does not
+  help — there is no usable imagery to extend onto. See §10A.8b: polar orbiters are the obvious
+  answer and the obvious way of using them was tested and does not work.
+#### 10A.8b Polar orbiters — TESTED 2026-08-18, THE DATA IS GOOD AND THE METHOD DOES NOT TRANSFER
+
+Do not spend a session assuming this is a straightforward extension. Everything up to the model works;
+the model itself fails, and it fails for a structural reason that no amount of tuning fixes.
+
+**What checked out:**
+- `VIIRS_NOAA20/SNPP_Brightness_Temp_BandI5_Day` (11.45 µm) and `MODIS_*_Brightness_Temp_Band31_*`
+  (11 µm) — the same physical quantity as GOES Band 13, so step 1 of the model is unchanged.
+- **The colour maps are published and clean**, which was the make-or-break unknown:
+  `https://gibs.earthdata.nasa.gov/colormaps/v1.3/VIIRS_Brightness_Temp_BandI5.xml` and
+  `.../MODIS_Brightness_Temp_Band31.xml`, 256 entries, `rgb="..."` against `value="(180.0,180.6]"` in
+  KELVIN directly. 255 usable entries, **no duplicate RGBs**, monotonic −92.8 → +66.5 °C, only 14
+  greyish entries. Better than the GOES map, which had to be reverse-engineered and extrapolated past
+  entry 179. Note these are NOT linked from WMTSCapabilities and are NOT named after the layer — the
+  directory index at `/colormaps/v1.3/` is how to find them.
+- **100% coverage** over a Greenland/Iceland box (−60…5°E, 58…82°N) on every one of 11 consecutive days.
+- **Seams are small.** Worst column step 3.0 °C, worst row 4.7 °C, against 1.3–1.5 °C typical — a ratio
+  of about 2, i.e. within natural variability, not a hard granule edge. Decoded to temperature the
+  image reads as genuine weather.
+
+**What failed.** Running the shipped four-step model on it — same temporal second-warmest background,
+same logistic — gives **30.5% drawn at a 4-day background and 55.8% at 10 days**, and neither is
+coherent cloud. It is speckle. Note the direction: a deeper background made it **worse**, the opposite
+of the geostationary result in §10A.4, which is the signal that this is not a tuning problem.
+
+**Why, and this is the part that matters.** The clear-sky reference assumes *the same pixel at the same
+time of day*. A geostationary satellite delivers exactly that by construction. A polar orbiter's daily
+mosaic is stitched from whichever passes crossed, at whatever local time each swath happened to fall,
+so consecutive "days" are not comparable observations. On top of that, at high latitude in summer the
+surface itself moves — melt, snow, sea ice — faster than a multi-day reference can track. The
+depression signal averaged 5.0 °C against a reference noisier than that.
+
+**Next thing to try, untested:** `VIIRS_SNPP/NOAA20_Cloud_Top_Height_Day|Night` and
+`MODIS_*_Cloud_Top_Temp_*`. These are retrieved cloud products — NASA has already done the detection,
+using a bispectral test rather than a temporal one — so they sidestep the clear-sky reference entirely.
+That makes the polar zone a *different detector* feeding the same renderer, not an extension of this
+one, and it should be scoped as such. A bispectral test on the raw bands is the alternative.
+
+**Meanwhile the layer says nothing above 65°N rather than something wrong, which is the correct
+interim.** A hole reads as clear sky, so if this is ever wired, its own failure mode must be checked
+against the same rule.
+
+- **Single-pixel speckle at high zoom.** The background grid is 0.35° (~39 km) while a screen pixel at
+  zoom 5 is ~4 km, so a coarse reference smoothed under fine imagery rings at cloud edges. Deepening
+  the background *increased* the small-hole count (1244 → 1499) because more area is drawn. The fix is
+  resolution, not days — raising `BG_W` is the low-risk half (2048 = 0.18°, ~46 MB across five
+  satellites in Float32; 4096 is 185 MB and not viable on a phone). *An earlier measurement said a
+  finer background changes only 9% of pixels and was not worth it — that was taken at hemisphere zoom,
+  where it barely matters, and the conclusion did not generalise.*
+- **Himawari has no Dust product**, so the three-product recipe does not transfer to the Pacific. Air
+  Mass is the candidate substitute and is untested.
+
+### 10A.9 Approaches already tried and abandoned — DO NOT RE-ATTEMPT
+
+| # | Approach | Why it failed |
+|---|---|---|
+| 1 | Provider imagery as plain raster tiles | Every product is a PICTURE where clear sky is a COLOUR. Replaces the basemap instead of annotating it. |
+| 2 | Viewport-shaped canvas, alpha rebuilt in-browser | `map.getBounds()` is meaningless in globe projection. |
+| 3 | Fixed whole-world canvas | `animate:false` makes MapLibre snapshot a canvas source **once**; later remaps updated pixels nobody re-read. |
+| 4 | `addProtocol`, per-tile satellite choice + alpha remap | Geometry correct, but providers render "IR 10.8 µm" with different greyscale stretches — identical cloud got different alpha either side of a tile edge. |
+| 5 | Four full-disc layers stacked at full opacity | Coverage by stacking works, but the four products look nothing like each other. |
+
+**The lesson under all five: thresholding continuous brightness cannot work, because the correct floor
+differs per provider.** The floor differing is not a blocker, it is the *specification* — measure each
+satellite's own range. `matteason`'s fixed `interpolate(72, 178, …)` is tuned to EUMETSAT and
+meaningless for GOES; a measured 2nd/98th percentile per satellite took the seam brightness delta from
+>100/255 to **18.7/255**. Off-disc pixels (`alpha < 250` and `red === 0`) must be excluded first or
+they drag the floor to 0.
+
+**Also rejected:** NOAA GMGSI via LibreWXR (visible brightness steps at its own satellite boundaries,
+~22°W and over eastern Europe, and an hour behind); RainViewer satellite (free tier is past radar
+only); `matteason`'s `clouds-alpha.png` (global, real alpha, CC0, CORS, four resolutions — but
+**updates every 3 hours**, and the merged `mumi:*` products it is built from lag 150 min while the
+per-satellite ones are 12–30 min). **Compositing sat24-style pictures is approach #1**: sat24's
+clarity *is* its black background, and this layer must annotate a basemap you still have to read.
+
+**`addProtocol` produced correct data but never displayed** — 16 OK / 0 failed, mean alpha 180/255,
+and rendered nothing. Cause never found. MapLibre **image sources** work and are used. Worth one more
+attempt someday knowing the data path is provably fine and the fault is in the display wiring.
+
+### 10A.10 The harness — this is what actually protects the feature
+
+- `tools/checks/mkframes.py LON LAT ZOOM out.json` — fetches a real multi-satellite composite for that
+  view, including each satellite's daily backgrounds, exactly as the module builds them.
+- `tools/checks/fullpreview.js out.json out.ppm` — runs the **shipped** `compose()` from
+  `js/satellite.js` on those pixels, reports drawn percentage and empty columns, and writes an image.
+  Convert with PIL and **look at it**.
+- `tools/checks/calib.py`, `cmap.json`, `eum_temp_lut.json` are its dependencies. They were missing
+  from the repo until 2026-08-18, which made the harness unrunnable for anyone but the author.
+- `tools/checks/calibrate_cloud.py` scores the module against EUMETSAT's operational mask over
+  held-out scenes with no human in the loop.
+
+**The byte-compare is the regression test, and it is WITHIN-SESSION.** Build a scene with
+`mkframes.py`, render it, change one thing, render again, `cmp` the two PPMs. Identical output means
+the change was safe; a difference must be explainable before shipping. That caught a north-edge
+behaviour change no assertion would have.
+
+Nothing here can be kept between sessions. The frame JSON holds every satellite's raw pixels plus ten
+days of background — `f_pac2.json` was 64 MB — so it does not belong in the repo, and a baseline built
+from live imagery is stale within minutes anyway because the weather moves. **Build fresh scenes each
+session before touching `compose()`.** The three worth building, because each has caught something:
+a Pacific view straddling the dateline (`mkframes.py 175 20 2.2`), a North America view
+(`-112 40 4.2`), and a south-polar one (`150 -68 1.6`). Add a high-zoom convective scene
+(`-88 22 5.0`) if the work touches the clear-sky reference.
+
+**`test_satellite.js` was rewritten 2026-08-18** — it had been testing an architecture two rewrites
+old (`_luts`, `_floors`, `_raster`, none of which exist) and crashed at line 82, so sections 7–10 had
+**never run once** while the runner reported it as one of "6 suites failing". It now passes 45/45 and
+guards the five deleted patches (median filter, edge feather, share threshold, shade floor, spatial
+ground search) which the previous handoff claimed it guarded and did not. `test_forecast` was removed
+from `run.js`: neither it nor `js/forecast.js` was ever committed, and both are lost — **#F2b starts
+from scratch.**
+
+### 10A.11 Teardown, refresh and state
+
+- **`cloud.js` `_disable()` puts each removal in its OWN `try`** *(fixed 2026-08-18)*. All four shared
+  one try with a silent catch, and MapLibre throws on `removeSource` while a layer still references
+  the source — so one throw skipped every removal after it and left `cloud-base` painted while the
+  button reported off. Simulated: a throw on `removeSource('cloud')` left three objects behind;
+  per-pair it leaves only the one that threw. `satellite.js` already tore down this way.
+- **`cloudbar.js` owns the refresh loop** — a 5-minute `invalidate()`, skipped while the tab is hidden
+  with the missed tick run on return. `satellite.js` has **no timer**; one was briefly added there on
+  the strength of grepping that file alone and concluding the feature never refreshed. It did.
+- **The frame age ticks on its own**, every 30 s, rewriting only that text node so the mode buttons
+  are never rebuilt under a finger mid-tap. It used to be written once when a refresh completed, so
+  "14 min ago" still read "14 min ago" an hour later — worse than showing nothing, because it looks
+  live. A countdown to the next refresh was considered and rejected: it answers "when will this
+  update" when the question is "how old is what I am looking at".
+- **`Satellite.onFrame` only pushes** — there is no removal — so `cloudbar.js` registers its listener
+  once, not on every switch to Now.
+
+### 10A.12 Process lessons specific to this feature
+
+- **LOOK AT THE OUTPUT.** Sixty-odd versions across three days were written from the user's
+  description of a screenshot, because the assistant framed the problem as "there is a bug in the
+  code" instead of "I cannot see the output". The container has PIL and the `view` tool renders a PNG.
+  The first time the composite was actually built and looked at, it immediately showed a defect the
+  user had never reported and no description would have produced.
+- **Do not describe or interpret the user's screen.** Three separate claims about what was on it were
+  false, including one where the basemap had been removed two versions earlier by the assistant
+  itself. Instrument the page, ask for the number, act on the number.
+- **Enumerate, never guess a layer name.** EUMETSAT's cloud masks were found by listing all 116
+  layers; six GIBS names were guessed, all missed, and the wrong conclusion drawn until enumeration
+  settled it.
+- **Check the harness before the module.** A Python reproduction had its own gap bug and two rounds
+  were spent hunting a defect that did not exist in `satellite.js`.
+- **Isolate before attributing.** The 18.7/255 seam delta was presented as a calibration result while
+  a timestamp gap sat unaddressed in the same log. The attribution was probably right, but not
+  earned. Relatedly: a "EUMETSAT is 90–110 min stale" conclusion came from comparing an 11:00Z frame
+  against the user's 12:26 **local** clock. A clock is as checkable as a pixel.
+- **Fix the layer the numbers point at.** Two rounds of this feature's optimisation went into the
+  network while the CPU was the bottleneck, and a third into the CPU while the probe was.
 
 ---
 
@@ -1460,6 +1803,22 @@ decisions in this document were made, silently undone, and re-litigated.
 - `test_picker.js` — the collapsible basemap picker's two-tap behaviour, offline, desktop.
 - `test_tshirt.js` — **expect exactly 3 failures** (§3). Anything else failing is new and worth reporting
   before doing any work.
+- `test_satellite.js` — the live-cloud module: exports, enumerated layer names, EPSG:3857 on both
+  services, stamp formats, the red ramp, the five deleted patches, coverage geometry, the contract
+  `cloudbar.js` calls, staleness. **Passes 45/45 as of 2026-08-18** (§10A.10).
+
+**`run.js` now says CANNOT RUN when a suite could not start** — a missing module, an ENOENT, or a
+crash before the first assertion — and counts those separately from real failures. It was reporting
+both as "N suite(s) failing", which is how `test_details`, `test_userlog` and `test_picker` sat
+unexplained for a week while being **nothing but a missing `npm i jsdom`** in a fresh clone. The same
+tally also hid `test_satellite` crashing on line 82. When the runner cannot tell a setup problem from
+a regression, nobody reads it.
+
+**A suite that always fails protects nothing.** `test_satellite.js` spent days counted among "6 suites
+failing" while it was in fact crashing at line 82 against exports deleted two rewrites earlier, so its
+last four sections had never executed once. When a suite fails, read *which* assertion before assuming
+a real regression — and if it tests something that no longer exists, rewrite it rather than leaving it
+red. `test_forecast` was listed in `run.js` with no file behind it at all.
 
 **The DOM-contract and build-stamp checks were added after a real failure**: `#coords-status` was removed
 from the markup and `search.js` rewritten to stop using it, but BUILD was not bumped — so the service
@@ -1492,6 +1851,17 @@ fails a test.**
 - Latitude ±90 is infinity in Mercator — rings touching it silently fail to draw. Use ±89.999. And never
   ring a pole in one polygon: split at longitude 0 (§7.2).
 - `SolidPolygonLayer` has no stroke; `stroked`/`getLineColor` are silently ignored (§7.6).
+- GIBS blanks the leftmost ~10% of any GetMap whose west edge is at or beyond −179.92°. Inset the
+  antimeridian half by one pixel (§10A.5).
+- `viewBox()` must size the fetch box by GLOBE geometry, not `512·2^z`, or the limb is never fetched
+  (§10A.5).
+- A GIBS frame that is not yet published returns a valid, fully transparent PNG with 200 OK. Test the
+  pixels; a dropped satellite is a hole and a hole reads as clear sky (§10A.7).
+- GIBS renders GOES/Himawari infrared through a grey ramp PLUS colour below ~−12 °C, so brightness is
+  not monotonic in temperature (§10A.2).
+- The clear-sky reference is temporal, never spatial, and needs ~10 days or storms hollow themselves
+  out (§10A.4).
+- Geostationary sees nothing above ~65°N — the 2026 track's Greenland leg is blank (§10A.8).
 - A MapLibre `image` source maps corners linearly in **Web Mercator** — feed it a reprojected raster, not
   plate carrée (§7.2).
 - A `CanvasSource` texture that is square AND power-of-two samples as black (§10.3).
@@ -1509,6 +1879,13 @@ fails a test.**
 
 One line per session. **The knowledge lives in the topical sections above; this is only a trail.**
 
+- **2026-08-18** — Live cloud (#F2c) made usable (§10A). Dateline stripe traced to a GIBS bbox-edge
+  bug, not our geometry; render 13× faster (`bgAt` was 89% of it); fetch parallelised and the frame
+  probe cached; globe-vs-Mercator fetch box fixed; storm hollowing traced to a 4-day clear-sky
+  reference and fixed at 10; polar extrapolation removed; `cloud.js` teardown fixed (the ☁-off bug);
+  frame age now ticks. `test_satellite.js` rewritten — it had been testing an architecture two
+  rewrites old and sections 7–10 had never run. `test_forecast` and `js/forecast.js` confirmed lost.
+  The four `SESSION-2026-08-*.md` files were folded into §10A and deleted.
 - **2026-08-13** — Cloud slices precached; `js/cloud.js`, `shadow-layer.js`, `shadow-ui.js` found
   missing from CORE and added (§12). BUILD `2026-08-13a`. **Deployed and verified on iOS**: Safari
   site data cleared, loaded online, installed standalone, went offline — cloud layer renders, and

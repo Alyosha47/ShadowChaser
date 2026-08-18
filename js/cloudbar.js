@@ -41,6 +41,9 @@
   var _mode = null;        /* null = overlay off; otherwise one of MODES */
   var _last = 'avg';       /* mode to restore when switched back on      */
   var _host = null;
+  var _shown = NaN;        /* frame time on screen, so the age can tick alone */
+  var _missedTick = false; /* a refresh fell due while the tab was hidden     */
+  var _framesWired = false;/* Satellite.onFrame pushes only — register once   */
 
   function map() { return (typeof window.map !== 'undefined') ? window.map : null; }
 
@@ -71,8 +74,13 @@
     if (mode === 'avg' && window.Cloud && !Cloud.isOn()) Cloud.enable();
     if (mode === 'now' && window.Satellite) {
       /* The frame time is not known until a tile has been fetched, which is
-         well after on() resolves — so redraw the caption when it arrives. */
-      Satellite.onFrame(function () { render(); });
+         well after on() resolves — so redraw the caption when it arrives.
+         REGISTERED ONCE. Satellite.onFrame only pushes, it has no removal, so
+         re-registering on every switch to Now left a listener behind each time
+         and a long session ended up redrawing the strip once per stale closure.
+         The listener is harmless when the mode is not 'now' — render() returns
+         immediately in that case. */
+      if (!_framesWired) { _framesWired = true; Satellite.onFrame(function () { render(); }); }
       Satellite.on(map()).then(render);
     }
   }
@@ -142,10 +150,14 @@
     } else {
       var t = window.Satellite && Satellite.shownTime();
       var gone = window.Satellite ? Satellite.missing() : [];
+      _shown = t ? Date.parse(t) : NaN;
+      /* The age is its OWN line. On a phone it sat on the end of the satellite
+         name and the missing-satellite list, and the three together wrapped. */
       parts.push('<div class="cloudbar-note">Geostationary satellites' +
-        (t ? ' · ' + ageText(Date.parse(t)) : ' · loading…') +
         /* A satellite that failed leaves a hole, and a hole reads as clear sky. */
         (gone.length ? ' · no ' + gone.join(', ') : '') + '</div>');
+      parts.push('<div class="cloudbar-note" id="cloudbar-age">' +
+        (t ? ageText(_shown) : 'loading…') + '</div>');
       parts.push('<div class="cloudbar-note cloudbar-credit">' +
                  (window.Satellite ? Satellite.CREDIT : '') + '</div>');
     }
@@ -179,12 +191,40 @@
        exactly what went wrong when it was viewport-shaped. Frames are refreshed
        on a timer instead, because new imagery arrives on the satellites' own
        schedule rather than on the user's. */
+    /* THE AGE HAS TO TICK ON ITS OWN. It was written once, when a refresh
+       completed, and then sat there: "14 min ago" still read "14 min ago" an
+       hour later, which is worse than showing nothing because it looks live.
+       A countdown to the next refresh was considered and rejected — it answers
+       "when will this update" when the question is "how old is what I am looking
+       at", and the answer to the second makes the first visible anyway. Only the
+       text node is rewritten, so the mode buttons are never rebuilt under a
+       finger mid-tap. */
+    setInterval(function () {
+      if (_mode !== 'now' || !isFinite(_shown)) return;
+      var el = document.getElementById('cloudbar-age');
+      if (el) el.textContent = ageText(_shown);
+    }, 30 * 1000);
+
     /* MapLibre caches the remapped tiles, so a newer frame needs the source torn
-       down and rebuilt — refresh() alone would be a no-op once it exists. */
+       down and rebuilt — refresh() alone would be a no-op once it exists.
+
+       Skipped while the tab is hidden: a backgrounded phone waking every five
+       minutes to fetch several hemispheres is how a map gets uninstalled. The
+       missed refresh runs on return rather than waiting out the next interval. */
     setInterval(function () {
       if (_mode !== 'now' || !window.Satellite) return;
+      if (document.visibilityState === 'hidden') { _missedTick = true; return; }
+      _missedTick = false;
       Satellite.invalidate().then(render);
     }, 5 * 60 * 1000);
+
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden' || !_missedTick) return;
+      if (_mode !== 'now' || !window.Satellite) return;
+      _missedTick = false;
+      Satellite.invalidate().then(render);
+    });
+
     render();
   }
 
@@ -196,7 +236,7 @@
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. */
   window.CloudBar = {
-    version: '2026-08-16a',
+    version: '2026-08-17b',
     handleButton: handleButton,
     setMode: setMode,
     mode: function () { return _mode; }

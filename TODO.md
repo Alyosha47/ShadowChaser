@@ -14,54 +14,26 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-08-11 — **cloud-cover overlay (#F2 climatology) SHIPPED** (HANDOFF §17).
+Last touched: 2026-08-18 — **live cloud "Now" (#F2c) made usable** (HANDOFF §10A). Four days
+and ~90 versions; the feature works and is not finished. Fixed this session: the dateline
+stripe (a GIBS bbox-edge bug, not our geometry), render 13× faster (`bgAt` was 89% of it),
+parallel fetch and a cached frame probe, the globe-vs-Mercator fetch box, storms hollowing
+themselves out (a 4-day clear-sky reference, now 10), polar extrapolation, and the ☁-off
+bug (which was in `cloud.js`, not `satellite.js`). `test_satellite.js` rewritten — it had
+been testing an architecture two rewrites old and its last four sections had never run.
+**The four `SESSION-2026-08-*.md` files were folded into HANDOFF §10A and deleted.**
+
+Prior: 2026-08-11 — **cloud-cover overlay (#F2 climatology) SHIPPED** (HANDOFF §10).
 ERA5 1991–2020, 0.5°, 8 local-solar-time slices × 12 months, 3.3 MB of WebP; each point
 timed to when the eclipse peaks *there* via `findMaximum()`, not to greatest eclipse.
-Two canvases (world base + sharp viewport) — read §17.3 before touching the render path,
-three plausible alternatives were tried and all lose. **Not precached in `sw.js` yet.**
+Two canvases (world base + sharp viewport) — read §10.3 before touching the render path,
+three plausible alternatives were tried and all lose. Precached since 2026-08-13.
 `Cloud.version` must be bumped on every change to that file.
 
-Prior: 2026-08-09 — **contact angles were wrong everywhere and are fixed**
-(HANDOFF §16.1: V = q − P, not 180 − (P + q); verified against both Jubier and Stellarium).
-**Obscuration in search was computed with the wrong solid** (§16.2 — `>90%` missed a 96.6%
-eclipse). Marker occlusion restructured so a marker cannot exist untested (§16.3); relief
-fades at high zoom and city dots lie flat on the sphere (§16.4); camera moves on locate and
-on the log's jump-to arrow (§16.5); log toolbar is four icons (§16.6); **Settings → Info**,
-shadow slider and timezone select both deleted (§16.7); About deep links made relative
-(§16.8). **`node tools/set_build.js` is now the only way to bump — read §16.0 first, a whole
-session's work was invisible to the user because of the SW cache.** BUILD `2026-08-09i`.
-
-Prior: 2026-08-06 — **renamed to followtheshadow**; **t-shirt poster (#F1a) SHIPPED**
-(HANDOFF §15.3, geometry still has 3 failing catalogue assertions); Cesium purged from the
-service worker, which exposed that **MapLibre, deck.gl and land.geojson were never precached**
-(§15.2); iOS fixes — scrubber clear of the home indicator, sheet dismissal, share-sheet error
-banner suppressed, install advice in About (§15.4). BUILD `2026-08-06n`.
-
-Prior: 2026-08-05 — **user log (#F1) SHIPPED** (`js/userlog.js`, HANDOFF §14.1) and the
-**visual language DECIDED and enforced** (HANDOFF §14.2, `test_hygiene.js` §7). Also: basemap
-picker collapses on phones and animates open; Topo-at-high-zoom blank fixed (§14.3); search
-hint strip and separate coordinate line removed, the location pill now carries the
-coordinates; `parseCoords` self-heals a stale filter cache (§14.6); four headless test suites
-in `tools/checks/` (§14.4), including DOM-contract and BUILD-stamp checks added after a real
-cache-skew failure. BUILD is now `2026-08-05d`.
-
-Prior: 2026-08-04 — **full-catalog audit RUN AND PASSED** (`data build tools/
-audit_paths.py`, read-only over the built chunks): 11,898 eclipses, 7,851 central, **zero**
-stub or missing limbs on two-limit eclipses, zero gross N/S asymmetry, all 50 chunks on
-generator `2026-07-13j`. Only two hits, both `A+` and both won't-fix (see BUGS). The pre-ship
-gate is closed.
-
-Prior: 2026-07-29 — basemap/connectivity rewrite (one raster style, live
-online/offline swap, on-map basemap picker) + non-central eclipse durations shipped
-(full detail HANDOFF §13). Pin cluster (#P1: draw order, zoom drift, tip anchor, commit
-f25ff90/HANDOFF §13.6) and paths-through-the-planet (#P2) both resolved — the whole
-deck.gl draw-order/occlusion batch from the 2026-07-28 shadow work is now closed.
-
-Prior note (2026-07-11): Cesium migration landed and mobile offline works; map.js
-consolidated to one `PROFILE`. (Superseded — the app reverted to MapLibre; see
-HANDOFF §2. Kept for history.)
-
----
+Prior sessions: the narrative for 2026-08-05 → 08-13 lived here with section references into
+an older HANDOFF numbering that the 2026-08-12 restructure invalidated — every one of them
+pointed at the wrong place. The story belongs in HANDOFF anyway (rule 2 at the top of this
+file), so it has been dropped rather than renumbered. **HANDOFF §15 is the change log.**
 
 ## PRIORITY ORDER (suggested re-entry)
 *(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. Terrain
@@ -75,19 +47,15 @@ suggestion.)*
    every first scan. No user-visible change, no data restructuring.
 3. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
    Deliberately NOT first: it is the least visible and the most likely to consume a whole
-   session. Read HANDOFF §15.3 before starting.
-4. **Precache `data/cloud/` in `sw.js`** — the cloud layer currently needs a connection,
-   which breaks the offline-first promise for a feature meant for the field. 96 files,
-   3.3 MB. Goes in the **best-effort DATA loop, never CORE `addAll`**. Small, but `sw.js`
-   is the most fragile file in the repo, so it gets its own change and its own test.
-5. **Search temporal tokens** — needs a design decision before any code (low priority; not
+   session. Read HANDOFF §11.4 before starting.
+4. **Search temporal tokens** — needs a design decision before any code (low priority; not
    currently bothering the user).
-6. Remaining open bugs → UX deliberations → Features.
+5. Remaining open bugs → UX deliberations → Features.
 
 **Dropped 2026-08-09 — "Overlay sheet pattern".** It was premised on three overlays arriving
 at once, each growing its own control cluster. That premise is gone: the shadow scrubber
 stays where it is (the user likes it there), shadow-on-globe is shelved, **cloud cover
-shipped with a single toggle and no panel at all** (§17 — which rather makes the point),
+shipped with a single toggle and no panel at all** (HANDOFF §10 — which rather makes the point),
 and the planned desirability heatmap may need no controls at all. Building a
 generic control pattern for imagined consumers produces an abstraction that fits none of
 them. **`.sheet` already exists, works, and has a real consumer in the poster** — it will
@@ -101,7 +69,7 @@ known. Do not resurrect this as speculative work.
   (ellipsoid tessellation). Only improvable with finer globe geometry (lower
   `maximumScreenSpaceError`) at a memory cost. Low priority; decide if worth it.
 - **Raster sharpness ceiling.** NE2 is now `ne2_mercator.jpg`, 4096x4096 (Web Mercator, not the
-  old 4096x2048 equirect — see HANDOFF §13.2), so it's sharper than before but still soft at
+  old 4096x2048 equirect — see HANDOFF §7.2), so it's sharper than before but still soft at
   close-in views. 8192x8192 would be a large GPU-texture jump on the platform we fought an OOM
   on, so DO NOT just swap the image. The right answer is a **tile pyramid** (only visible tiles
   resident). Revisit only if the softness actually bothers you in the field.
@@ -148,11 +116,11 @@ actually clears · landscape space reclaim · mobile install note · banner slim
   "use everything", so the log toolbar's tri-state checkbox has two states that mean the same
   thing to the poster — only the dash (some picked) actually narrows it. Harmless today, but the
   control now *shows* the distinction it does not have. Fix in `tsOpen` if it ever matters, not
-  in the toolbar (HANDOFF §16.6).
+  in the toolbar (HANDOFF §11.3).
 
 - **Polar ice caps do not participate in the relief fade.** They are opaque fills drawn ABOVE
   `relief`, so past ±85° the map stays solid ice-white while everything else eases back to the
-  flat vector fills at high zoom (HANDOFF §16.4). Defensible — it IS ice — and rarely visited,
+  flat vector fills at high zoom (HANDOFF §7.2). Defensible — it IS ice — and rarely visited,
   but it is an inconsistency in a deliberate visual rule.
 
 - **Where do map options belong? — MOSTLY DECIDED, shipped 2026-07-29.** On-map controls now
@@ -318,7 +286,7 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   **terrain-shadow visibility** (is the sun above the local horizon at max, or behind a
   ridge — the terrain shadow engine already answers this, HANDOFF §4) and **cloud-cover
   likelihood** (`Cloud.sampleAt(lon, lat)` returns the mean cloud fraction at that point,
-  timed to the local maximum — see §17). Both are already computed; this is presentation.
+  timed to the local maximum — see HANDOFF §10). Both are already computed; this is presentation.
   Answers "should I stand here?" without making the user read two overlays and interpolate
   by eye. Notes for whoever builds it:
   - `sampleAt` returns null until the cloud layer has been on once, since it reads the
@@ -412,30 +380,66 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   incumbent everywhere. Suggested two-branch discipline: freeze the shipped generator
   (bugfix-only) as stable truth; develop the unified engine as experimental successor.
   ~4–6 phased sessions. Next phase: penumbra onto the engine.
-- **#F2b Cloud-cover — the FORECAST half.** The climatology half shipped 2026-08-11
-  (HANDOFF §17); this is what remains. **Inside about a week of an eclipse, switch to live
+- **#F2c Live cloud — FINISH IT.** Working and shipped-ish; HANDOFF §10A has the whole model,
+  every trap, and the harness. Remaining, in the order they matter:
+  1. **The visible band by day, to ADD low cloud.** Infrared cannot see marine stratus, which is
+     exactly the cloud that ruins an eclipse. A total eclipse is always in daylight along the
+     track and `hasNight()` already knows the terminator. Must add, never gate — gating on the
+     coarse mask was tried and produced tile edges (§10A.8).
+  2. **Speckle at high zoom** — the clear-sky grid is 39 km under 4 km imagery. Raising `BG_W`
+     to 2048 is the low-risk half (0.18°, ~46 MB across five satellites; 4096 is 185 MB and not
+     viable on a phone). Making the grid follow zoom is the thorough fix and is the riskiest
+     change left — §10A.4 records that a non-world grid is what produced the "Minecraft blocks",
+     and the cache would have to key on the box.
+  3. **Cache-friendly URLs.** Every pan is a fresh bbox, so nothing is ever reused from the
+     browser cache. Snapping the fetch box to a grid fixes it but moves the geometry `compose`
+     and `place` receive — verify through the harness (§10A.10) before shipping.
+  4. **A fresher GOES than GIBS.** ~20–40 min is GIBS's floor. CIRA RAMMB SLIDER (~5 min) and
+     NOAA's AWS ABI buckets are the candidates; neither is tested, and the assistant needs
+     `rammb-slider.cira.colostate.edu` in its egress allowlist to measure it (§10A.7).
+  5. **PARKED — cloud above 65°N.** The Greenland leg of the 2026 track is blank and stays
+     blank. Geostationary cannot see it; polar orbiters can, and **the obvious way of using
+     them was tested on 2026-08-18 and does not work** — the thermal data and its colour maps
+     are good, but the temporal clear-sky reference is meaningless for a satellite that
+     revisits at a different local time each pass, and a deeper background made it worse
+     rather than better. Full numbers in HANDOFF §10A.8b; **read it before picking this up.**
+     The untested route is `VIIRS_*_Cloud_Top_Height_*` / `MODIS_*_Cloud_Top_Temp_*`, where
+     NASA has already done the detection with a bispectral test — that is a *second detector
+     feeding the same renderer*, not an extension of the existing one, and should be scoped as
+     its own feature. A hole reads as clear sky, so whatever ships must be checked against that
+     rule too.
+- **#F2b Cloud-cover — the FORECAST half. STARTS FROM SCRATCH.** `js/forecast.js` and
+  `tools/checks/test_forecast.js` were written 2026-08-15, never wired into `index.html`, never
+  committed, and are **lost** — confirmed against git 2026-08-18. `test_forecast` has been
+  removed from `run.js`. What was learned before they vanished, and is worth not re-deriving:
+  Open-Meteo's own `calculateQueryWeight()` charges **at least one call per location, and
+  locations sum** — batching 400 points into one request is 400 calls, not one. 600/min,
+  5,000/hr, 10,000/day, per-user-IP because the calls run in the browser. Consequence: a
+  forecast field is **zoomed-in by construction** — 0.5° over a 120°×40° path is 19,200 points,
+  two days of quota for one render.
+  The original framing, still correct: **Inside about a week of an eclipse, switch to live
   forecast data if a freely available source exists** — no key, no quota, cacheable for
   offline. That week is when a chaser commits to travel, and climatology is worthless at
   that range: a 40%-cloudy-in-August average tells you nothing about next Tuesday. The
-  handover should be driven by days-to-eclipse. Rendering is solved — `js/cloud.js` already
-  owns a canvas layer, a palette, a legend-less toggle and a point sampler, and a forecast
-  field is the same shape as a climatology slice. **The open question is entirely the data
-  source**, and it is harder than the climatology one was: forecasts are current-state
+  handover should be driven by days-to-eclipse. Rendering is solved twice over — `js/cloud.js`
+  owns a canvas layer, a palette and a point sampler, `js/satellite.js` owns a live overlay
+  and the `Average | Now` strip is a third cell away from carrying a forecast (§10A.1).
+  **The open question is entirely the data source**, and it is harder than the climatology one was: forecasts are current-state
   services with quotas, where ERA5 was a one-time static download. Do not start by writing
-  code. Note the timing subtlety already solved for climatology (§17.2) applies here too —
+  code. Note the timing subtlety already solved for climatology (HANDOFF §10.2) applies here too —
   a forecast must be sampled at each point's own local maximum, not at greatest eclipse.
 - **#F3 Animated shadow on globe with time slider** — scrub the umbra/penumbra across the map in
   real time. Most on-brand feature. Distinct from the terrain-shadow scrubber that shipped:
   that scrubs *terrain* shadows at one place; #F3 animates the *umbra/penumbra footprint*
   sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
   clean precedent for the time-plumbing.
-- **#F1b T-shirt poster — finish the geometry.** SHIPPED and usable (HANDOFF §15.3), but
+- **#F1b T-shirt poster — finish the geometry.** SHIPPED and usable (HANDOFF §11.4), but
   `tools/checks/test_tshirt.js` **fails 3 catalogue-wide assertions**: one band over 8% of the
   map, some bands drawn past their own limbs, some centrelines drawn where the band doesn't
   reach. All in the polar tail, all from the same root: near a pole the corridor's
   cross-section degenerates (for 2015-03-20 the last pair is 164° apart in longitude but 3.7°
   apart on the globe).
-  **Before touching it, read §15.3 — two obvious-looking approaches were tried and produce
+  **Before touching it, read HANDOFF §11.4 — two obvious-looking approaches were tried and produce
   visibly worse output.** And rasterise the SVG and LOOK; measuring polygon area cost days.
 - **Splash images.** 28 PNGs, sizes in `icons/splash/README.md`, then add the `<link>` tags.
   One design exported at many sizes — or hand a master image over and have it generated.
@@ -489,7 +493,7 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   rewrites `var BUILD` and all 20 `?v=` stamps together. Bumping BUILD by hand renames the SW
   cache while leaving every asset URL on the old string, and `sw.js` matches with
   `ignoreSearch: true`, so the old files keep being served. This cost a full session (HANDOFF
-  §16.0). `test_hygiene` fails on drift.
+  HANDOFF §4). `test_hygiene` fails on drift.
 - **Git-LFS vs GitHub-release bundle** for the large path-chunk files — decide before
   open-sourcing.
 - **Open-source prep** — licensing/attribution for the **live stack**: MapLibre GL JS (BSD-3),

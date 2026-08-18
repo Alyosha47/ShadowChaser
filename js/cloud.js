@@ -601,12 +601,16 @@
   function _disable() {
     _on = false;
     _removeLines();
-    try {
-      if (map && map.getLayer(LAYER))    map.removeLayer(LAYER);
-      if (map && map.getSource(SRC))     map.removeSource(SRC);
-      if (map && map.getLayer(LAYER_B))  map.removeLayer(LAYER_B);
-      if (map && map.getSource(SRC_B))   map.removeSource(SRC_B);
-    } catch (e) {}
+    /* ONE try PER REMOVAL. All four used to share a single try with a silent
+       catch, and MapLibre throws on removeSource when a layer still references
+       the source — so one throw skipped every removal after it and the catch
+       swallowed the reason. Simulated against a map that throws where MapLibre
+       does, a throw on removeSource('cloud') left cloud-base still painted while
+       the button reported off. satellite.js already tears down this way. */
+    try { if (map && map.getLayer(LAYER))    map.removeLayer(LAYER); }    catch (e) {}
+    try { if (map && map.getSource(SRC))     map.removeSource(SRC); }     catch (e) {}
+    try { if (map && map.getLayer(LAYER_B))  map.removeLayer(LAYER_B); }  catch (e) {}
+    try { if (map && map.getSource(SRC_B))   map.removeSource(SRC_B); }   catch (e) {}
     _src = null; _srcB = null; _baseKey = ''; _moving = false;
     _drawn = null; _drawnZoom = -1;
     _syncBtn();

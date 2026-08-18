@@ -82,7 +82,15 @@
 (function () {
   'use strict';
 
-  var GIBS   = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+  /* GIBS serves the same imagery from two endpoints. They RENDER IDENTICALLY —
+     measured, same-frame RGB difference 0.000 — but they are independent caches
+     and do not populate a given frame at the same moment. Over 9 observations,
+     3 had one endpoint a full 10-minute step ahead of the other, in both
+     directions: GOES-East was fresher on 'all' in one trial and on 'best' in the
+     next. Mean saving 3.3 min, never more than one step. Small, but free, and it
+     comes with the probe below, which is the real gain. */
+  var GIBS   = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/';
+  var GIBS_EP = ['best', 'all'];
   var EUM    = 'https://view.eumetsat.int/geoserver/wms';
   var CREDIT = 'Imagery NASA EOSDIS GIBS \u00b7 EUMETSAT';
 
@@ -112,7 +120,19 @@
   var T_FULL = 37;                  /* deepest tone: 90th percentile of cloud */
 
   /* --- step 2 constants --------------------------------------------------- */
-  var BG_FRAMES = 4;                /* past frames behind the current one */
+  var BG_FRAMES = 10;               /* past frames behind the current one. WAS FOUR,
+                                       and four is not enough where weather sits
+                                       still. Measured over the Gulf and Caribbean
+                                       at zoom 5, holding the imagery constant and
+                                       swapping only the background: at four days
+                                       the clear-sky reference inside a storm read
+                                       4.6C against 11.4C two pixels outside it, so
+                                       the storm was measured against its own tops
+                                       and hollowed out. Drawn area 29.1% at four
+                                       days, 36.2% at ten, and the large holes
+                                       close. The published method uses twenty; ten
+                                       is a compromise with the request count, and
+                                       the cache below is what pays for it. */
   var BG_GAP_MIN = 1440;            /* ONE DAY APART, SAME TIME OF DAY. Hours apart
                                        is not enough: cloud that sits over a place
                                        for an afternoon becomes its own clear-sky
@@ -127,7 +147,13 @@
                  /* the background is smooth, so it is fetched
                                        at a third of the width — four extra
                                        requests at a ninth of the pixels */
-  var BG_TTL = 30 * 60 * 1000;      /* the ground does not move */
+  var BG_TTL = 6 * 60 * 60 * 1000;  /* THE GROUND DOES NOT MOVE, and this is built
+                                       from frames a day apart, so half an hour was
+                                       far shorter than anything it measures — it
+                                       just made a browser left open re-fetch ten
+                                       frames per satellite for no change. Six
+                                       hours still refreshes it several times a day
+                                       and is what makes ten frames affordable. */
 
   /* --- step 4 constants --------------------------------------------------- */
   var CUT = 0.16;                   /* cos of the limb angle, ~81 degrees */
@@ -161,6 +187,12 @@
   var _on = false, _map = null, _busy = false, _again = false, _pending = null;
   var _stamps = [], _missing = [], _err = null, _listeners = [];
   var _lut = null, _cube = null, _at = 0, _painted = 0, _lastGood = {};
+  var _timing = {};        /* last render's phase split, read by diagnose()   */
+  /* PARALLEL WORK IS MEASURED AS A MAXIMUM, NOT A SUM. Frames are fetched at
+     once, so what a phase costs the user is its slowest instance, not the total
+     across all of them. decode is the exception and sums, because getImageData
+     runs on the one main thread and every frame's share is serial. */
+  var _tProbe = 0, _tImg = 0, _tBg = 0, _tDecode = 0;
   var _cv = null, _ctx = null, _src = null, _drawn = null, _drawnZoom = 0;
   var _scratch = null, _sctx = null;
 
@@ -187,6 +219,34 @@
     var worldPx = 512 * Math.pow(2, z), m = 1 + 2 * MARGIN;
     var lonSpan = el.width / worldPx * 360 * m;
     var ySpan = el.height / worldPx * (2 * mercY(LAT_MAX)) * m;
+
+    /* A GLOBE SHOWS MORE THAN A MERCATOR RECTANGLE OF THE SAME ZOOM, and this
+       map is a globe below zoom 6. The sphere compresses toward its limb, so at
+       zoom 2 a 745px canvas sees a full hemisphere while 512*2^z predicts 131
+       degrees — the outer slice was never requested, and it appeared only once
+       rotating carried it far enough inboard to enter the box. §3.4 replaced
+       getBounds() with this arithmetic because getBounds() reports the whole
+       world in globe projection; the arithmetic that replaced it was Mercator's.
+
+       The sphere's radius on screen is the equator's pixel circumference over
+       2*pi, and a point an angle away from the centre lands at radius*sin(angle),
+       so the visible half-angle is asin of half the canvas over that radius —
+       saturating at 90 degrees, which is the hemisphere and the most a globe can
+       show. Divided by cos(latitude) because degrees of longitude are shorter
+       away from the equator. Taken as a MAXIMUM against the Mercator figure, so
+       a flat map is untouched and the two agree anyway once zoomed in. */
+    var globe = false;
+    try { globe = !!(_map.getProjection && _map.getProjection().type === 'globe'); } catch (e) {}
+    if (globe) {
+      var rPx = worldPx / (2 * Math.PI), D = 180 / Math.PI;
+      var aH = Math.asin(Math.min(1, (el.width / 2) / rPx)) * D;
+      var aV = Math.asin(Math.min(1, (el.height / 2) / rPx)) * D;
+      var cosLat = Math.max(0.25, Math.cos(c.lat * Math.PI / 180));
+      lonSpan = Math.max(lonSpan, 2 * aH / cosLat * m);
+      ySpan = Math.max(ySpan,
+        (mercY(Math.min(LAT_MAX, c.lat + aV)) - mercY(Math.max(-LAT_MAX, c.lat - aV))) * m);
+    }
+
     if (lonSpan >= 355) return { w: -180, e: 180, s: -LAT_MAX, n: LAT_MAX };
     var lng = ((c.lng + 180) % 360 + 360) % 360 - 180;
     var yc = mercY(Math.max(-LAT_MAX, Math.min(LAT_MAX, c.lat)));
@@ -215,8 +275,8 @@
                                                      invents a time neither has */
   }
 
-  function url(sat, iso, box, w, h) {
-    return (sat.svc === 'gibs' ? GIBS : EUM) +
+  function url(sat, iso, box, w, h, ep) {
+    return (sat.svc === 'gibs' ? GIBS + (ep || GIBS_EP[0]) + '/wms.cgi' : EUM) +
       '?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap' +
       '&LAYERS=' + encodeURIComponent(sat.layer) +
       '&STYLES=&CRS=EPSG%3A3857&FORMAT=image%2Fpng&TRANSPARENT=TRUE' +
@@ -238,6 +298,7 @@
   }
 
   function readPixels(img, w, h) {
+    var _rt = Date.now();
     if (!_scratch) {
       _scratch = document.createElement('canvas');
       _sctx = _scratch.getContext('2d', { willReadFrequently: true });
@@ -246,7 +307,10 @@
     if (_scratch.height !== h) _scratch.height = h;
     _sctx.clearRect(0, 0, w, h);
     _sctx.drawImage(img, 0, 0, w, h);
-    return _sctx.getImageData(0, 0, w, h).data;
+    var _px = _sctx.getImageData(0, 0, w, h).data;
+    _tDecode += Date.now() - _rt;
+    return _px;
+
   }
 
   /* THE CATALOGUE LEADS PUBLICATION, and an empty frame is not an error: GIBS
@@ -255,26 +319,127 @@
      such frames in a row. A dropped satellite is a hole and a hole reads as
      CLEAR SKY, so the test is on the PIXELS. The last frame known to have any is
      remembered, because it changes every few minutes and not every pan. */
-  function frameFor(sat, box, w, h) {
-    var n = 0;
-    var ms = Math.floor((Date.now() - sat.step * 60000) / (sat.step * 60000)) * (sat.step * 60000);
-    var seen = _lastGood[sat.id];
-    if (seen && (Date.now() - seen) < (sat.step + 1) * 60000) ms = seen;
 
-    function attempt() {
-      if (n >= MAX_STEPS) return null;
-      var t = ms - (n++) * sat.step * 60000;
-      if ((Date.now() - t) / 60000 > MAX_AGE_MIN) return null;
-      var iso = stamp(sat, t);
-      return loadImage(url(sat, iso, box, w, h)).then(function (im) {
-        var d = readPixels(im, w, h), p, lit = 0, m = 0;
-        for (p = 3; p < d.length; p += 4 * 61) { m++; if (d[p] > 250) lit++; }
-        if (lit / m < 0.01) return attempt();
-        _lastGood[sat.id] = t;
-        return { iso: iso, at: t, d: d, sat: sat };
-      }, attempt);
+  function hasPixels(d) {
+    var p, lit = 0, m = 0;
+    for (p = 3; p < d.length; p += 4 * 61) { m++; if (d[p] > 250) lit++; }
+    return lit / m >= 0.01;
+  }
+
+  /* THE SEARCH FOR THE NEWEST FRAME IS DONE AT 64x32, NOT AT FULL SIZE. It used
+     to walk back through full-size requests, so three unpublished frames cost
+     three hemisphere-sized PNGs before anything could be drawn. The probe asks
+     the same question for a few hundred bytes, and only the frame that answers
+     is ever fetched properly.
+
+     Probing at the SUB-POINT rather than in the requested box, because a valid
+     frame is legitimately near-empty out at the limb, and that is indistinguish-
+     able from one that has not been published. The full-size walk below is kept
+     as the fallback for exactly that case.
+
+     Both endpoints are walked at once and the newer answer wins. The walk starts
+     at the CURRENT step, not one behind it: at full size that gamble cost a
+     wasted hemisphere, and at 64x32 it costs nothing. */
+  /* THE ANSWER IS A PROPERTY OF THE CLOCK, NOT OF THE VIEW, so it is cached and
+     shared. Measured on a phone: a split view issued 7 probes for 5 satellites —
+     one per JOB, so both halves of the dateline asked the same satellite the
+     same question — and every pan asked all of them again from scratch. probe
+     7186ms of a 7956ms render. The same device on an unsplit view, 976ms.
+
+     Held for half a satellite step. Longer and a newly published frame would be
+     missed; shorter and panning starts paying for it again. invalidate() drops
+     the cache, so the five-minute refresh still asks properly. Concurrent
+     callers share one in-flight request rather than racing to duplicate it. */
+  var _probeCache = {};
+
+  function probe(sat) {
+    var rec = _probeCache[sat.id];
+    if (rec && rec.pending) return rec.pending;
+    if (rec && (Date.now() - rec.when) < sat.step * 30000) return Promise.resolve(rec.hit);
+
+    var eps = sat.svc === 'gibs' ? GIBS_EP : [null];
+    var step = sat.step * 60000;
+    var box = { w: sat.lon - 10, e: sat.lon + 10, s: -5, n: 5 };
+    var start = Math.floor(Date.now() / step) * step;
+
+    /* ALL CANDIDATE TIMES AT ONCE, NOT ONE AFTER ANOTHER. Walking back a step at
+       a time meant a round trip per unpublished frame before the real fetch
+       could even begin, and GIBS routinely runs three or four steps behind:
+       measured on a phone, probe 10673ms of an 11709ms fetch — 91% of it, while
+       the imagery it was gating took 3782ms. The requests are 64x32 and both
+       services are HTTP/2, so there is no six-connection wall to hit; issuing
+       them together costs one round trip instead of four.
+
+       Then take the NEWEST that answered, rather than the first — with the walk
+       gone there is no "first", and newest is what was wanted all along. */
+    function walk(ep) {
+      var tries = [], k, t;
+      for (k = 0; k < MAX_STEPS; k++) {
+        t = start - k * step;
+        if ((Date.now() - t) / 60000 > MAX_AGE_MIN) break;
+        tries.push(t);
+      }
+      return Promise.all(tries.map(function (at) {
+        return loadImage(url(sat, stamp(sat, at), box, 64, 32, ep)).then(function (im) {
+          return hasPixels(readPixels(im, 64, 32)) ? at : 0;
+        }, function () { return 0; });
+      })).then(function (r) {
+        var best = 0, i;
+        for (i = 0; i < r.length; i++) if (r[i] > best) best = r[i];
+        return best ? { at: best, ep: ep } : null;
+      });
     }
-    return Promise.resolve().then(attempt);
+
+    var _pt = Date.now();
+    var p = Promise.all(eps.map(walk)).then(function (r) {
+      if (Date.now() - _pt > _tProbe) _tProbe = Date.now() - _pt;
+      var best = null, i;
+      for (i = 0; i < r.length; i++) if (r[i] && (!best || r[i].at > best.at)) best = r[i];
+      _probeCache[sat.id] = { hit: best, when: Date.now() };
+      return best;
+    }, function () { delete _probeCache[sat.id]; return null; });
+    _probeCache[sat.id] = { pending: p };
+    return p;
+  }
+
+  function frameFor(sat, box, w, h) {
+    return probe(sat).then(function (hit) {
+      var step = sat.step * 60000, n = 0;
+      var ms = hit ? hit.at : Math.floor((Date.now() - step) / step) * step;
+      var ep = hit ? hit.ep : null;
+      var seen = _lastGood[sat.id];
+      if (!hit && seen && (Date.now() - seen.at) < (sat.step + 1) * 60000) {
+        ms = seen.at; ep = seen.ep;
+      }
+
+      /* HOW FAR THE FULL-SIZE WALK MAY GO. With no probe hit this is the old
+         blind search. With a hit, that frame is known published — so a full-size
+         request coming back empty means this satellite cannot see the requested
+         box, which is geometry and does not improve by asking about earlier
+         frames. Stepping back through MAX_STEPS hemisphere-sized PNGs to
+         rediscover that a limb is a limb was the last slow path. Two attempts
+         rather than one, because GIBS has been seen publishing the sub-point
+         before the outer disc, so the frame immediately before earns one look. */
+      var limit = hit ? 2 : MAX_STEPS;
+
+      function attempt() {
+        if (n >= limit) return null;
+        var t = ms - (n++) * step;
+        if ((Date.now() - t) / 60000 > MAX_AGE_MIN) return null;
+        var iso = stamp(sat, t);
+        return loadImage(url(sat, iso, box, w, h, ep)).then(function (im) {
+          var d = readPixels(im, w, h);
+          if (!hasPixels(d)) return attempt();
+          _lastGood[sat.id] = { at: t, ep: ep };
+          return { iso: iso, at: t, d: d, sat: sat };
+        }, attempt);
+      }
+      var _it = Date.now();
+      return Promise.resolve().then(attempt).then(function (fr) {
+        if (Date.now() - _it > _tImg) _tImg = Date.now() - _it;
+        return fr;
+      });
+    });
   }
 
   /* ------------------------------------------------ step 1: temperature */
@@ -402,6 +567,70 @@
 
   /* Bilinear, by geography. Point sampling a coarser grid is what made the field
      look like blocks. */
+  /* bgAt WAS 89% OF THE ENTIRE RENDER. Stubbing it out took a Pacific composite
+     from 6.6s to 0.7s, which is where the fifteen seconds on a phone were going
+     — not the network, which had already been fixed. The cost is not the
+     bilinear read; it is that mercY(bg.box.n), mercY(bg.box.s) and mercY(lat)
+     were recomputed on every one of 1.3 million calls, and mercY is a log of a
+     tan. Three transcendentals per pixel per satellite.
+
+     None of it varies per pixel. The two box edges are constant, and the third
+     depends only on the ROW. Every background is on the same world grid at the
+     same size (§3.3), so a single set of tables serves every satellite: for each
+     column the two source columns and the fraction between them, for each row
+     the same. Built once per compose, keyed on the grid's geometry so that
+     changing the background box later cannot silently reuse the wrong table. */
+
+  function bgKey(bg) {
+    return bg.w + ':' + bg.h + ':' + bg.box.w + ':' + bg.box.e + ':' + bg.box.s + ':' + bg.box.n;
+  }
+
+  function bgTables(bg, lonOf, latOf) {
+    var w = lonOf.length, h = latOf.length, i, j, u, v, a, b;
+    var x0 = new Int32Array(w), x1 = new Int32Array(w), tx = new Float64Array(w);
+    var y0 = new Int32Array(h), y1 = new Int32Array(h), ty = new Float64Array(h);
+    var colOK = new Uint8Array(w), rowOK = new Uint8Array(h);
+    var span = bg.box.e - bg.box.w, yN = mercY(bg.box.n), yS = mercY(bg.box.s);
+    for (i = 0; i < w; i++) {
+      u = (((lonOf[i] - bg.box.w) % 360 + 360) % 360) / span * bg.w - 0.5;
+      a = Math.floor(u); tx[i] = u - a; b = a + 1;
+      x0[i] = a < 0 ? 0 : (a > bg.w - 1 ? bg.w - 1 : a);
+      x1[i] = b > bg.w - 1 ? bg.w - 1 : b;
+      colOK[i] = x1[i] >= 0 ? 1 : 0;
+    }
+    for (j = 0; j < h; j++) {
+      v = (yN - mercY(latOf[j])) / (yN - yS) * bg.h - 0.5;
+      a = Math.floor(v); ty[j] = v - a; b = a + 1;
+      y0[j] = a < 0 ? 0 : (a > bg.h - 1 ? bg.h - 1 : a);
+      y1[j] = b > bg.h - 1 ? bg.h - 1 : b;
+      /* SYMMETRIC NOW. The far index going negative already stopped anything
+         being drawn north of the grid. The south end did the opposite: it
+         clamped onto the last row, so every pixel below 70S was measured
+         against the clear-sky temperature at 70S — far warmer than the ice
+         beneath it — which reported a huge depression and painted Antarctica
+         solid, streaked by the limb-stretched imagery it was reading. Same rule
+         at both ends: outside the grid there is no reference, so nothing is
+         measured and nothing is drawn. The half-pixel tolerance matches the
+         north's, so views that only reach past 70N are unaffected. */
+      rowOK[j] = (b >= 0 && a <= bg.h - 1) ? 1 : 0;
+    }
+    /* The far index is deliberately NOT clamped up from below, because bgAt was
+       not either: a view reaching past the grid's northern edge — it stops at
+       70° and the canvas can show 73° — drove that index negative, which read as
+       undefined and propagated NaN, and a NaN pixel fell out of the draw test
+       and was left alone. So beyond the grid nothing is measured and nothing is
+       drawn, which is the right answer anyway: there is no clear-sky reference
+       up there to compare against, and inventing one by clamping onto the last
+       row would paint the Arctic from a 70° proxy. Rows where it happens are
+       flagged here instead, so the inner loop can skip them without arithmetic
+       on an out-of-range index. Note the south edge behaves differently — it
+       clamps and extrapolates. That asymmetry is inherited, not chosen. */
+    return { x0: x0, x1: x1, tx: tx, y0: y0, y1: y1, ty: ty,
+             colOK: colOK, rowOK: rowOK };
+  }
+
+  /* Kept as the reference the tables must agree with, and as the fallback for
+     any caller that is not the inner loop. */
   function bgAt(bg, lon, lat) {
     var u = (((lon - bg.box.w) % 360 + 360) % 360) / (bg.box.e - bg.box.w) * bg.w - 0.5;
     var v = (mercY(bg.box.n) - mercY(lat)) / (mercY(bg.box.n) - mercY(bg.box.s)) * bg.h - 0.5;
@@ -471,6 +700,7 @@
   }
 
   function compose(box, w, h, frames) {
+    var _bgTab = {};
     var dTsum = new Float32Array(w * h), wsum = new Float32Array(w * h);
     var si, fr, sat, d, i, j, q, p, wt, lat, lon, pw, pbox, n2, dT;
     var yTop = mercY(box.n), yBot = mercY(box.s);
@@ -499,6 +729,9 @@
          warmest of warmest — and painted 81% of the United States against a
          visible band saying 20%. With the background used directly: 22%. */
       var bg = fr.bg;
+      var bk = bgKey(bg);
+      if (!_bgTab[bk]) _bgTab[bk] = bgTables(bg, lonOf, latOf);
+      var tb = _bgTab[bk], bx0 = tb.x0, bx1 = tb.x1, btx = tb.tx;
 
       /* Placed by GEOGRAPHY. Blitting frames into pixel ranges left columns that
          nothing wrote to where two ranges met — a clear band down the Pacific,
@@ -514,16 +747,25 @@
 
       for (j = 0; j < h; j++) {
         lat = lats[j];
+        if (!tb.rowOK[j]) continue;
+        var r0 = tb.y0[j] * bg.w, r1 = tb.y1[j] * bg.w, ty = tb.ty[j], tx1;
+        var a0, a1, c0, c1;
         for (i = 0; i < w; i++) {
-          if (srcX[i] < 0) continue;
+          if (srcX[i] < 0 || !tb.colOK[i]) continue;
           n2 = j * pw + srcX[i];
           if (!ok[n2]) continue;
           wt = lat * wts[i] - CUT;
           if (wt <= 0) continue;
           wt = wt * wt * wt;
           q = j * w + i;
-          bgT = bgAt(bg, lonOf[i], latOf[j]);
-          if (bgT < -900) continue;
+          a0 = bg.T[r0 + bx0[i]]; a1 = bg.T[r0 + bx1[i]];
+          c0 = bg.T[r1 + bx0[i]]; c1 = bg.T[r1 + bx1[i]];
+          /* -999 means one of the four neighbours has no clear-sky value, so
+             there is no depression to measure here and the pixel is left alone.
+             ANY missing neighbour disqualifies it, exactly as bgAt did. */
+          if (a0 < -900 || a1 < -900 || c0 < -900 || c1 < -900) continue;
+          tx1 = btx[i];
+          bgT = (a0 * (1 - tx1) + a1 * tx1) * (1 - ty) + (c0 * (1 - tx1) + c1 * tx1) * ty;
           dTsum[q] += wt * (bgT - T[n2]);
           wsum[q] += wt;
         }
@@ -555,6 +797,8 @@
   /* ------------------------------------------------------------ the pass */
 
   function render() {
+    var _t0 = Date.now();
+    _tProbe = 0; _tImg = 0; _tBg = 0; _tDecode = 0;
     var box = viewBox(), el = _map.getCanvas();
     var aspect = (mercY(box.n) - mercY(box.s)) / (R * (box.e - box.w) * Math.PI / 180);
     var w = Math.max(MIN_PX, Math.min(MAX_PX, Math.round(el.width)));
@@ -565,14 +809,25 @@
     if (_cv.height !== h) _cv.height = h;
 
     /* No WMS serves longitude past 180, so a view straddling the dateline is two
-       requests. Frames are placed by longitude, so the halves need not tile. */
-    var parts = [];
+       requests. Frames are placed by longitude, so the halves need not tile.
+
+       The western half is inset by ONE CANVAS PIXEL and never asks for exactly
+       -180. Measured: with a bbox whose west edge is at or beyond -179.92, GIBS
+       returns the leftmost ~10% of the image blank — 49 of 494 columns for
+       GOES-West, the same 10% at 247, 494 and 988 px wide, and the same again
+       from -185. That was the vertical stripe down the dateline. The geometry
+       of the reply is otherwise correct (cross-correlation against an inset
+       request gives a best shift of 0 px), so nothing downstream was at fault:
+       not bgAt, not srcX. Insetting by one pixel clears it at every resolution
+       tested. One pixel rather than a fixed angle because the threshold scales
+       with the request; the cost is the half-pixel column at the seam. */
+    var parts = [], eps = (box.e - box.w) / w;
     if (box.e > 180) {
       parts.push({ w: box.w, e: 180, s: box.s, n: box.n });
-      parts.push({ w: -180, e: box.e - 360, s: box.s, n: box.n });
+      parts.push({ w: -180 + eps, e: box.e - 360, s: box.s, n: box.n });
     } else if (box.w < -180) {
       parts.push({ w: box.w + 360, e: 180, s: box.s, n: box.n });
-      parts.push({ w: -180, e: box.e, s: box.s, n: box.n });
+      parts.push({ w: -180 + eps, e: box.e, s: box.s, n: box.n });
     } else parts.push(box);
 
     /* Satellites are chosen PER PART, not per view. Chosen for the whole box, a
@@ -593,33 +848,46 @@
 
     /* Every satellite's background is started at once, before any imagery is
        fetched: they are independent, they are cached for half an hour, and
-       waiting for them one satellite at a time was most of a cold start. */
-    var warm = [];
-    for (i = 0; i < sats.length; i++) warm.push(background(sats[i]));
+       waiting for them one satellite at a time was most of a cold start.
+       They are STARTED here, not waited for: each job awaits its own satellite's
+       background, so gating the imagery behind Promise.all(warm) only added the
+       slowest background to the front of every fetch. */
+    for (i = 0; i < sats.length; i++) background(sats[i]);
 
-    var out = [];
-    i = 0;
-    /* Sequential: several full-size PNGs in flight at once is a lot of memory on
-       a phone, and each one's pixels are folded away before the next arrives. */
-    function next() {
-      if (i >= jobs.length) return out;
-      var job = jobs[i++];
+    /* IN PARALLEL, indexed rather than pushed so the order is still the job
+       order. This was a sequential chain on the grounds that several full-size
+       PNGs in flight is a lot of memory on a phone — but compose() needs every
+       frame's pixels at once, so out[] holds them all either way and the chain
+       bought no memory at all. It cost the sum of the requests instead of the
+       slowest: measured on the real eight-job Pacific view, 5.9s sequential
+       against 1.0s parallel. */
+    var out = new Array(jobs.length), runs = [];
+
+    function run(job, idx) {
       var pw = Math.max(64, Math.round((job.box.e - job.box.w) / (box.e - box.w) * w));
       return frameFor(job.sat, job.box, pw, h).then(function (fr) {
-        if (!fr) { out.push(null); return next(); }
+        if (!fr) { out[idx] = null; return; }
         fr.box = job.box; fr.pw = pw;
+        var _bt = Date.now();
         return background(job.sat).then(function (bg) {
+          if (Date.now() - _bt > _tBg) _tBg = Date.now() - _bt;
           /* WITHOUT A CLEAR-SKY BACKGROUND THERE IS NO DEPRESSION TO MEASURE, so
              this satellite has no answer to give and is reported missing rather
              than drawn as empty sky. Blank reads as CLEAR on this map, and that
              is the one thing it must never say by accident. */
-          if (!bg) { out.push(null); return next(); }
-          fr.bg = bg; out.push(fr); return next();
-        }, function () { out.push(null); return next(); });
-      }, function () { out.push(null); return next(); });
+          if (!bg) { out[idx] = null; return; }
+          fr.bg = bg; out[idx] = fr;
+        }, function () { out[idx] = null; });
+      }, function () { out[idx] = null; });
     }
 
-    return Promise.all(warm).then(next).then(function (frames) {
+    for (i = 0; i < jobs.length; i++) runs.push(run(jobs[i], i));
+
+    return Promise.all(runs).then(function () {
+      _timing.fetch = Date.now() - _t0;
+      _timing.probe = _tProbe; _timing.img = _tImg;
+      _timing.bg = _tBg; _timing.decode = _tDecode;
+      var frames = out;
       var stamps = [], any = false, k, seen = {};
       for (k = 0; k < frames.length; k++) {
         if (!frames[k]) continue;
@@ -636,8 +904,20 @@
          puts the layer back on a map the user has just switched away from. */
       if (!_on) return false;
       _stamps = stamps;
+      /* WHERE THE TIME ACTUALLY GOES, reported by diagnose() rather than
+         guessed at from a description. Every performance claim in this file that
+         turned out to be wrong was reasoned from the shape of the code; every
+         one that held up came from a number. fetch covers network, decode and
+         readPixels together — if it dominates, split it before touching it. */
+      var _tc = Date.now();
       compose(box, w, h, frames);
+      _timing.compose = Date.now() - _tc;
+      var _tp = Date.now();
       place(box);
+      _timing.place = Date.now() - _tp;
+      _timing.total = Date.now() - _t0;
+      _timing.frames = frames.length;
+      _timing.px = w + 'x' + h;
       _drawn = box; _drawnZoom = _map.getZoom(); _at = Date.now();
       return true;
     });
@@ -702,6 +982,11 @@
     _pending = setTimeout(function () { _pending = null; refresh(false); }, 200);
   }
 
+  /* NO TIMER HERE. cloudbar.js has owned the refresh loop all along — a 5-minute
+     interval calling invalidate(). A timer was briefly added here as well, on
+     the strength of grepping this file alone and concluding the feature never
+     refreshed. It did. Two loops on different periods is worse than one, and the
+     one that already existed clears _drawn first, which this would not have. */
   function on(map) {
     _map = map; _on = true;
     _map.on('moveend', onMoveEnd);
@@ -721,6 +1006,10 @@
 
   function invalidate() {
     if (_busy) return Promise.resolve(false);
+    /* The cached newest-frame answers go too. This is the call the five-minute
+       refresh makes, and its whole purpose is to find a frame newer than the one
+       on screen — reusing a cached answer would make it a no-op. */
+    _probeCache = {};
     _at = 0; _drawn = null;
     return refresh(true).then(function (v) { return v; }, function () { return false; });
   }
@@ -758,7 +1047,7 @@
   function hasNight() { return true; }
 
   window.Satellite = {
-    version: '2026-08-17aa',
+    version: '2026-08-17an',
     CREDIT: CREDIT,
     on: on, off: off, isOn: isOn, refresh: refresh,
     onFrame: onFrame, missing: missing, invalidate: invalidate,
@@ -766,7 +1055,8 @@
     frames: function () { return _stamps.slice(); },
     error: function () { return _err; },
     diagnose: function () {
-      return { painted: _painted, frames: _stamps.length, missing: _missing.slice(),
+      return { timing: _timing,
+               painted: _painted, frames: _stamps.length, missing: _missing.slice(),
                drawn: _drawn, busy: _busy,
                layer: !!(_map && _map.getLayer(LAYER)),
                source: !!(_map && _map.getSource(SRC)), error: _err };
