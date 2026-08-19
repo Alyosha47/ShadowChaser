@@ -310,6 +310,7 @@ ShadowChaser/
     ├── cities.js       lookupCity, lazy index from basemapData.cities
     ├── cloud.js        CLOUD OVERLAY — climatology layer, palette, sampleAt (§10)
     ├── satellite.js    LIVE CLOUD — geostationary IR, temperature model (§10A)
+    ├── imagery.js      PHOTO MODE — the satellite picture composited (§10A.8c)
     ├── cloudbar.js     the Average | Now mode strip (§10A.1)
     ├── details.js      renderData, buildContactRows, contactIcon, lookupElevationAndTz
     ├── eclipse.js      computeEclipse, fundamentalArgs, sunAltAz, findMaximum, findContact,
@@ -1481,6 +1482,33 @@ against the same rule.
 - **Himawari has no Dust product**, so the three-product recipe does not transfer to the Pacific. Air
   Mass is the candidate substitute and is untested.
 
+### 10A.8c PHOTO MODE — the picture, added 2026-08-19 (`js/imagery.js`)
+
+Given §10A.8, a third mode was added that does not infer anything: the composited
+geostationary picture, drawn as imagery. Side by side over the Gulf, the picture shows a sky full
+of small cumulus and the inferred layer shows most of it as clear — the 49% made visible.
+
+- **It is approach #1 from §10A.9, and it is only acceptable because of deck.gl.** Clear sky in a
+  picture is a COLOUR, not transparency, so the basemap is hidden where imagery covers. The track,
+  the umbra and the location pin survive because deck.gl draws above every MapLibre layer.
+- **It complements `Now`, it does not replace it.** Nothing can sample a picture: `Cloud.sampleAt()`
+  returns a number and this cannot. The picture is what to look at; `Now` is what to read a value
+  from. Both stay.
+- **Geometry is BORROWED from `satellite.js`, not reimplemented** — `_viewBox` and `_weightAt` are
+  exported for it. The globe sizing, the both-edges dateline inset and the per-half satellite choice
+  each cost a day to get right, and two copies of the answer is how one of them comes back.
+  `viewBox()` takes the map as a PARAMETER for this reason: it runs while `satellite.js` is off, and
+  reading that module's own `_map` threw on the first line of every picture render.
+- **There is no alpha to test.** GeoColor is JPEG; off-disc and unpublished both arrive as black,
+  and black is also night. The frame test is therefore on VARIATION, not darkness — a real night
+  frame has structure, an unpublished one is flat.
+- **Requests are capped at the source's native 1223 m/px.** Asking for 1024 px across a city view
+  made GIBS upscale and return a large blurry JPEG identical in appearance to a small one: measured
+  94 KB against 10 KB per satellite for the same picture.
+- Layers: `GOES-East/West_ABI_GeoColor`, `mtg_fd:rgb_geocolour`, `msg_iodc:rgb_natural`, and for the
+  Pacific only `Himawari_AHI_Band3_Red_Visible_1km` — greyscale, and black at night, because GIBS
+  has no colour product for that slot at all.
+
 ### 10A.9 Approaches already tried and abandoned — DO NOT RE-ATTEMPT
 
 | # | Approach | Why it failed |
@@ -1937,6 +1965,16 @@ fails a test.**
 
 One line per session. **The knowledge lives in the topical sections above; this is only a trail.**
 
+- **2026-08-19** — Third cloud mode **Photo** (`js/imagery.js`): the satellite picture itself,
+  composited from five positions and drawn as imagery rather than as an overlay, because `Now`
+  finds only ~49% of the cloud an operational mask does (§10A.8) and the difference is visible.
+  Track and umbra survive because deck.gl draws above all MapLibre layers, and mode handover keeps
+  the outgoing layer until the incoming one has drawn. Also: two kinds of corrupt GIBS frame
+  rejected (`partlyWritten`), the dateline inset applied to the EAST edge as well as the west, the
+  blank-on-every-pan fixed (assigning canvas width clears the canvas), requests capped at the
+  source's native 1223 m/px, `viewBox()` given a map parameter so `Photo` can borrow it, polar
+  orbiters tested and parked (§10A.8b), `test_imagery.js` added and `run.js` taught to separate
+  setup failures from regressions. Branches consolidated onto `main`. BUILD `2026-08-19g`.
 - **2026-08-18** — Live cloud (#F2c) made usable (§10A). Dateline stripe traced to a GIBS bbox-edge
   bug, not our geometry; render 13× faster (`bgAt` was 89% of it); fetch parallelised and the frame
   probe cached; globe-vs-Mercator fetch box fixed; storm hollowing traced to a 4-day clear-sky

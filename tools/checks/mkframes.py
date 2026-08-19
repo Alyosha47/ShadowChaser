@@ -50,8 +50,8 @@ w=1024; h=int(round(w*(mY(box['n'])-mY(box['s']))/(R*math.radians(box['e']-box['
 h=min(h,1024)
 parts=[]
 EPS=(box['e']-box['w'])/w   # one canvas pixel; see stripe finding
-if box['e']>180: parts=[{'w':box['w'],'e':180.0,'s':box['s'],'n':box['n']},{'w':-180.0+EPS,'e':box['e']-360,'s':box['s'],'n':box['n']}]
-elif box['w']<-180: parts=[{'w':box['w']+360,'e':180.0,'s':box['s'],'n':box['n']},{'w':-180.0+EPS,'e':box['e'],'s':box['s'],'n':box['n']}]
+if box['e']>180: parts=[{'w':box['w'],'e':180.0-EPS,'s':box['s'],'n':box['n']},{'w':-180.0+EPS,'e':box['e']-360,'s':box['s'],'n':box['n']}]
+elif box['w']<-180: parts=[{'w':box['w']+360,'e':180.0-EPS,'s':box['s'],'n':box['n']},{'w':-180.0+EPS,'e':box['e'],'s':box['s'],'n':box['n']}]
 else: parts=[box]
 bgbox={'w':-180.0,'e':180.0,'s':-70.0,'n':70.0}
 bw=1024; bh=int(round(bw*(mY(70)-mY(-70))/(R*math.radians(360))))
@@ -75,7 +75,7 @@ for part in parts:
         if a is None: continue
         if sat['id'] not in BG:
             st=[]
-            for day in (1,2,3,4):
+            for day in range(1,11):   # MUST MATCH BG_FRAMES in js/satellite.js
                 bgf=fetch(sat,bgbox,bw,bh,10+day*1440)
                 if bgf is not None: st.append(np.where(bgf[...,3]>250,temp(sat,bgf),-999.0))
             if not st: continue

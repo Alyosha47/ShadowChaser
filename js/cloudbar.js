@@ -35,8 +35,8 @@
 (function () {
   'use strict';
 
-  var MODES = ['avg', 'now'];
-  var LABEL = { avg: 'Average', now: 'Now' };
+  var MODES = ['avg', 'now', 'photo'];
+  var LABEL = { avg: 'Average', now: 'Now', photo: 'Photo' };
 
   var _mode = null;        /* null = overlay off; otherwise one of MODES */
   var _last = 'avg';       /* mode to restore when switched back on      */
@@ -44,6 +44,7 @@
   var _shown = NaN;        /* frame time on screen, so the age can tick alone */
   var _missedTick = false; /* a refresh fell due while the tab was hidden     */
   var _framesWired = false;/* Satellite.onFrame pushes only — register once   */
+  var _photoWired = false;/* same for Imagery                                */
 
   function map() { return (typeof window.map !== 'undefined') ? window.map : null; }
 
@@ -57,6 +58,7 @@
   function blocked(mode) {
     if (mode === 'avg') return null;        /* precached; always available */
     if (offline()) return 'Live cloud needs a connection';
+    if (mode === 'photo') return window.Imagery ? null : 'Satellite photo unavailable';
     if (!window.Satellite) return 'Live cloud unavailable';
     var m = map();
     if (!m || !m.getCenter) return null;
@@ -70,6 +72,7 @@
        into a third thing that means nothing. */
     if (mode !== 'avg' && window.Cloud && Cloud.isOn()) Cloud.disable();
     if (mode !== 'now' && window.Satellite && Satellite.isOn()) Satellite.off();
+    if (mode !== 'photo' && window.Imagery && Imagery.isOn()) Imagery.off();
 
     if (mode === 'avg' && window.Cloud && !Cloud.isOn()) Cloud.enable();
     if (mode === 'now' && window.Satellite) {
@@ -82,6 +85,10 @@
          immediately in that case. */
       if (!_framesWired) { _framesWired = true; Satellite.onFrame(function () { render(); }); }
       Satellite.on(map()).then(render);
+    }
+    if (mode === 'photo' && window.Imagery) {
+      if (!_photoWired) { _photoWired = true; Imagery.onFrame(function () { render(); }); }
+      Imagery.on(map()).then(render);
     }
   }
 
@@ -148,18 +155,22 @@
       parts.push('<div class="cloudbar-note">Mean cloud at the eclipse hour · ' +
                  'ERA5 1991&ndash;2020</div>');
     } else {
-      var t = window.Satellite && Satellite.shownTime();
-      var gone = window.Satellite ? Satellite.missing() : [];
+      /* Both live modes report the same three things — frame time, missing
+         satellites, credit — so the caption asks whichever one is showing. */
+      var live = (_mode === 'photo') ? window.Imagery : window.Satellite;
+      var t = live && live.shownTime();
+      var gone = live ? live.missing() : [];
       _shown = t ? Date.parse(t) : NaN;
       /* The age is its OWN line. On a phone it sat on the end of the satellite
          name and the missing-satellite list, and the three together wrapped. */
-      parts.push('<div class="cloudbar-note">Geostationary satellites' +
+      parts.push('<div class="cloudbar-note">' +
+        (_mode === 'photo' ? 'Satellite imagery' : 'Geostationary satellites') +
         /* A satellite that failed leaves a hole, and a hole reads as clear sky. */
         (gone.length ? ' · no ' + gone.join(', ') : '') + '</div>');
       parts.push('<div class="cloudbar-note" id="cloudbar-age">' +
         (t ? ageText(_shown) : 'loading…') + '</div>');
       parts.push('<div class="cloudbar-note cloudbar-credit">' +
-                 (window.Satellite ? Satellite.CREDIT : '') + '</div>');
+                 (live ? live.CREDIT : '') + '</div>');
     }
 
     var cells = MODES.map(function (mo) {
@@ -200,7 +211,7 @@
        text node is rewritten, so the mode buttons are never rebuilt under a
        finger mid-tap. */
     setInterval(function () {
-      if (_mode !== 'now' || !isFinite(_shown)) return;
+      if ((_mode !== 'now' && _mode !== 'photo') || !isFinite(_shown)) return;
       var el = document.getElementById('cloudbar-age');
       if (el) el.textContent = ageText(_shown);
     }, 30 * 1000);
@@ -212,17 +223,19 @@
        minutes to fetch several hemispheres is how a map gets uninstalled. The
        missed refresh runs on return rather than waiting out the next interval. */
     setInterval(function () {
-      if (_mode !== 'now' || !window.Satellite) return;
+      var lv = (_mode === 'photo') ? window.Imagery : (_mode === 'now' ? window.Satellite : null);
+      if (!lv) return;
       if (document.visibilityState === 'hidden') { _missedTick = true; return; }
       _missedTick = false;
-      Satellite.invalidate().then(render);
+      lv.invalidate().then(render);
     }, 5 * 60 * 1000);
 
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden' || !_missedTick) return;
-      if (_mode !== 'now' || !window.Satellite) return;
+      var lv2 = (_mode === 'photo') ? window.Imagery : (_mode === 'now' ? window.Satellite : null);
+      if (!lv2) return;
       _missedTick = false;
-      Satellite.invalidate().then(render);
+      lv2.invalidate().then(render);
     });
 
     render();

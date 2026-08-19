@@ -214,8 +214,14 @@
      reports the whole world at almost any zoom, and this module once fetched
      five satellites at world extent on every pan because of it. MapLibre's world
      is exactly 512 * 2^zoom pixels across in both Mercator axes. */
-  function viewBox() {
-    var c = _map.getCenter(), z = _map.getZoom(), el = _map.getCanvas();
+  /* The map is a PARAMETER, defaulting to this module's own. js/imagery.js
+     borrows this function so the globe sizing and the dateline rules have one
+     home rather than two — but it runs when THIS module is off, and _map is null
+     then, so reading it directly threw on the first line of the picture mode's
+     render and nothing ever drew. */
+  function viewBox(m) {
+    m = m || _map;
+    var c = m.getCenter(), z = m.getZoom(), el = m.getCanvas();
     var worldPx = 512 * Math.pow(2, z), m = 1 + 2 * MARGIN;
     var lonSpan = el.width / worldPx * 360 * m;
     var ySpan = el.height / worldPx * (2 * mercY(LAT_MAX)) * m;
@@ -236,7 +242,7 @@
        away from the equator. Taken as a MAXIMUM against the Mercator figure, so
        a flat map is untouched and the two agree anyway once zoomed in. */
     var globe = false;
-    try { globe = !!(_map.getProjection && _map.getProjection().type === 'globe'); } catch (e) {}
+    try { globe = !!(m.getProjection && m.getProjection().type === 'globe'); } catch (e) {}
     if (globe) {
       var rPx = worldPx / (2 * Math.PI), D = 180 / Math.PI;
       var aH = Math.asin(Math.min(1, (el.width / 2) / rPx)) * D;
@@ -324,6 +330,69 @@
     var p, lit = 0, m = 0;
     for (p = 3; p < d.length; p += 4 * 61) { m++; if (d[p] > 250) lit++; }
     return lit / m >= 0.01;
+  }
+
+  /* A PARTLY-WRITTEN FRAME IS THE ONE FAILURE THE PIXEL TEST ABOVE CANNOT SEE.
+     GIBS sometimes publishes a frame with a horizontal slab of the disc missing
+     and fills it with OPAQUE PURE WHITE — so alpha says "data" — and white is a
+     real entry in the colour map at -91.6C, the coldest cloud top there is. The
+     slab therefore decoded as the deepest possible storm and painted a solid red
+     band across the equator, with a step where the missing region changed width.
+     Observed on GOES-East, 2026-08-19.
+
+     Counting white does NOT work, and two plausible tests were tried and thrown
+     away before this one. Measuring white as a share of the frame flags real
+     deep convection: one North Atlantic frame is 4% pure white with no defect at
+     all, because -91.6C tops are exactly what a storm has. Measuring white per
+     row flags the top and bottom of the disc in a polar view, where the ellipse
+     narrows and the opaque white surround dominates the row.
+
+     What is unambiguous is a RUN OF EMPTY ROWS WITH IMAGERY ABOVE AND BELOW IT.
+     A disc has one continuous vertical extent; a hole inside it is not weather
+     and not geometry. Verified across nine archived scenes and thirty-odd
+     frames: the one broken frame shows a 14-row slab, every intact frame shows
+     none — including the polar and deep-convection cases that defeated the other
+     two tests. Rejection steps back to the previous frame, which the walk
+     already knows how to do; the rest of a frame published this way is a
+     different moment's scan and is not worth keeping either. */
+  var SLAB_ROWS = 3;        /* a real gap ran to 14; intact frames give 0 */
+  var WHITE_CEIL = 0.50;    /* deepest real convection measured 4% of a frame */
+
+  function partlyWritten(d, w, h) {
+    var x, y, n, row, count, mx = 0, lit = 0, white = 0;
+    var data = new Int32Array(h);
+    for (y = 0; y < h; y++) {
+      row = y * w * 4; count = 0;
+      for (x = 0; x < w; x += 2) {
+        n = row + x * 4;
+        if (d[n + 3] <= 250) continue;
+        lit++;
+        if (d[n] === 255 && d[n + 1] === 255 && d[n + 2] === 255) { white++; continue; }
+        count++;
+      }
+      data[y] = count;
+      if (count > mx) mx = count;
+    }
+
+    /* THE SLAB TEST BELOW NEEDS IMAGERY ABOVE AND BELOW THE GAP, so it cannot see
+       a frame that is almost ENTIRELY white — and GIBS publishes those too: a
+       GOES-East frame measured 92.6% pure white while reporting 100% opaque, and
+       the whole hemisphere painted solid red because white decodes to -91.6C.
+       This ceiling is the guard for that case. It is set far above anything
+       weather produces: the most convective frame in the archive is 4% white, so
+       50% is a factor of twelve of headroom and cannot fire on real cloud. */
+    if (lit > 0 && white / lit > WHITE_CEIL) return true;
+
+    if (mx < 50) return false;              /* nothing to judge */
+    var thin = 0.15 * mx, top = -1, bot = -1;
+    for (y = 0; y < h; y++) if (data[y] >= thin) { if (top < 0) top = y; bot = y; }
+    if (top < 0 || bot - top < 10) return false;
+    var run = 0;
+    for (y = top; y <= bot; y++) {
+      if (data[y] < thin) { run++; if (run >= SLAB_ROWS) return true; }
+      else run = 0;
+    }
+    return false;
   }
 
   /* THE SEARCH FOR THE NEWEST FRAME IS DONE AT 64x32, NOT AT FULL SIZE. It used
@@ -430,6 +499,7 @@
         return loadImage(url(sat, iso, box, w, h, ep)).then(function (im) {
           var d = readPixels(im, w, h);
           if (!hasPixels(d)) return attempt();
+          if (partlyWritten(d, w, h)) return attempt();
           _lastGood[sat.id] = { at: t, ep: ep };
           return { iso: iso, at: t, d: d, sat: sat };
         }, attempt);
@@ -791,6 +861,12 @@
     }
     for (p = 3; p < o.length; p += 4 * 97) { npx++; if (o[p] > 0) litpx++; }
     _painted = npx ? litpx / npx : 0;
+    /* Sized here, not in render() — see the note there. This clears the canvas,
+       so it must happen with the replacement pixels already in hand. */
+    if (_cv) {
+      if (_cv.width !== w) _cv.width = w;
+      if (_cv.height !== h) _cv.height = h;
+    }
     _ctx.putImageData(img, 0, 0);
   }
 
@@ -805,8 +881,16 @@
     var h = Math.max(MIN_PX, Math.min(MAX_PX, Math.round(w * aspect)));
     var wh = safeSize(w, h); w = wh[0]; h = wh[1];
     if (!_cv) { _cv = document.createElement('canvas'); _ctx = _cv.getContext('2d'); }
-    if (_cv.width !== w) _cv.width = w;
-    if (_cv.height !== h) _cv.height = h;
+    /* THE CANVAS IS NOT RESIZED HERE. Assigning width or height to a canvas
+       CLEARS it, and MapLibre's source is reading from this very canvas — so
+       resizing at the top of a render wiped the cloud off the map the instant a
+       pan began, and left it blank for the whole fetch. That is the layer
+       vanishing for six to fifteen seconds on every pan and zoom. The size is
+       applied in compose(), immediately before the new pixels are written, so
+       the previous frame stays on screen until there is something to replace it
+       with. It will be stretched slightly against the new view until then,
+       which is what every map does while tiles load, and is enormously better
+       than nothing. */
 
     /* No WMS serves longitude past 180, so a view straddling the dateline is two
        requests. Frames are placed by longitude, so the halves need not tile.
@@ -820,13 +904,20 @@
        request gives a best shift of 0 px), so nothing downstream was at fault:
        not bgAt, not srcX. Insetting by one pixel clears it at every resolution
        tested. One pixel rather than a fixed angle because the threshold scales
-       with the request; the cost is the half-pixel column at the seam. */
+       with the request; the cost is the half-pixel column at the seam.
+
+       BOTH EDGES, and the first fix only did the western one. The east edge at
+       exactly +180 loses the same ~10%: measured on this very view, a Himawari
+       request for -30..180 at 672 px wide returned data only to column 604 — 67
+       columns dropped — and inset by one pixel it returned all 672. That was a
+       second dateline gap, wider than the first and further west, sitting inside
+       the EASTERN half where nobody was looking for it. */
     var parts = [], eps = (box.e - box.w) / w;
     if (box.e > 180) {
-      parts.push({ w: box.w, e: 180, s: box.s, n: box.n });
+      parts.push({ w: box.w, e: 180 - eps, s: box.s, n: box.n });
       parts.push({ w: -180 + eps, e: box.e - 360, s: box.s, n: box.n });
     } else if (box.w < -180) {
-      parts.push({ w: box.w + 360, e: 180, s: box.s, n: box.n });
+      parts.push({ w: box.w + 360, e: 180 - eps, s: box.s, n: box.n });
       parts.push({ w: -180 + eps, e: box.e, s: box.s, n: box.n });
     } else parts.push(box);
 
@@ -1047,7 +1138,7 @@
   function hasNight() { return true; }
 
   window.Satellite = {
-    version: '2026-08-17an',
+    version: '2026-08-19d',
     CREDIT: CREDIT,
     on: on, off: off, isOn: isOn, refresh: refresh,
     onFrame: onFrame, missing: missing, invalidate: invalidate,
@@ -1062,9 +1153,10 @@
                source: !!(_map && _map.getSource(SRC)), error: _err };
     },
     _sats: function () { return SATS.slice(); },
+    _weightAt: weightAt,
     _cmap: function () { return CMAP; },
     _eumT: function () { return EUM_T; },
     _url: url,
-    _viewBox: function () { return viewBox(); }
+    _viewBox: function (m) { return viewBox(m); }
   };
 })();
