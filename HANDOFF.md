@@ -1359,12 +1359,70 @@ back; the lag is NASA's republication, not ours.
 
 ### 10A.8 What this cannot do yet
 
-- **Low marine stratus is under-reported.** Infrared cannot see cloud nearly as warm as the ground
-  beneath it, and over the open Atlantic this under-reports against EUMETSAT's mask. It is exactly
-  the cloud that ruins an eclipse. The fix is a channel that **ADDS** cloud — the visible band by day
-  (an eclipse is always in daylight along the track, and `hasNight()` already knows the terminator),
-  or `msg_fes:clm` where published. Never a constant that inflates infrared. Gating on the coarse
-  mask was tried and produced tile edges; if it returns it must add, not gate.
+- **THE LAYER FINDS ABOUT HALF THE CLOUD, AND THE ERROR IS ONE-DIRECTIONAL.** Scored against
+  EUMETSAT's operational mask `msg_fes:clm` on 2026-08-18, three scenes at 22:15Z, scoring only
+  pixels the mask actually classifies (opaque, and within 60 of one of its three colours — a box
+  wider than Meteosat's disc otherwise scores against nothing and reports a fake 23% false-alarm
+  rate):
+
+  | scene | mask cloud | ours | detected | over sea | over land | false alarm |
+  |---|---|---|---|---|---|---|
+  | Benguela stratocumulus | 49.0% | 26.4% | **51%** | 37% | 60% | 1% |
+  | N Atlantic 45°N | 42.9% | 34.1% | **49%** | 30% | 56% | 2% |
+  | ITCZ / Gulf of Guinea | 36.5% | 21.5% | **49%** | 41% | 54% | 1% |
+
+  49–51% detection across a stratus deck, a mid-latitude storm track and deep tropical convection is
+  the detector, not a regional quirk. **The 1–2% false-alarm rate is the important number**: this is
+  not mis-tuning that a threshold would fix, it is cloud the physics cannot see. Infrared cannot
+  detect cloud near the temperature of the surface beneath it, which is why sea is worst.
+
+  **The consequence is that the map reads CLEARER THAN REALITY**, and for a tool that tells someone
+  where to stand for four minutes that is the dangerous direction — a user sees a gap in the red and
+  drives to it. Note also that all three scenes are at night, and EUMETSAT's mask uses visible
+  channels by day, so the gap probably widens in daylight, which is when eclipses happen.
+
+  **In DAYLIGHT it is worse**, and daylight is when eclipses happen — same Benguela box at 11:45Z:
+  mask 54.9% cloud, ours 25.1%, detection **43%** (sea 29%). EUMETSAT's mask uses visible channels
+  by day, so it sees more and we do not.
+
+  **TWO FIXES WERE TESTED ON 2026-08-18 AND BOTH ARE DEAD. Do not re-attempt either.**
+
+  1. **The visible band does not contain the missing cloud.** `msg_fes:vis006` is 100% greyscale,
+     no palette to decode, 0–252 — so it is easy to use and useless here. The cloud we miss has
+     visible brightness *below* that of pixels the mask calls clear (median 32 against 40; cloud we
+     DO find is 95). Sun-angle correcting to reflectance — dividing by cos(solar zenith), computed
+     per pixel — does not separate them either (missed cloud 45.8, clear 51.8). Every threshold
+     swept, raw or corrected, over sea or everywhere, raised false alarms faster than detection.
+     **The missing cloud is DARK, so it is not the thick low deck the theory assumed.**
+  2. **The clear-sky reference is not contaminated, and sea-surface temperature will not fix it.**
+     The theory was that a permanent stratocumulus deck becomes its own reference. Measured against
+     `GHRSST_L4_MUR_Sea_Surface_Temperature` (an L4 analysis, gap-free by construction, colour map
+     at `/colormaps/v1.3/GHRSST_Sea_Surface_Temperature.xml`, 213 entries): over mask-clear sea the
+     true surface is **23.2 °C**, our reference **9.6 °C** — but our IR pixel value is **9.4 °C**.
+     The reference matches the imagery almost exactly. It is not cloud; the whole infrared scale
+     sits about 13 °C below the true surface, **on both providers** (GOES over the Gulf: −13.6 °C at
+     SST 26–29). A shared offset like that CANCELS in `depression = background − pixel`, which is
+     why the layer works at all, and means SST buys nothing.
+
+  **What the numbers actually say.** The cloud we miss has a median depression of **0.0 °C** — 80%
+  of it lies within 1 °C of its own clear-sky value, against a median of 16 °C for cloud we find.
+  It is invisible to infrared *and* dark in visible. Lowering the draw threshold does not recover
+  it: at `dT ≥ 1 °C` detection reaches only 42% while false alarms go from 17% to 38%.
+
+  **The "it is only partial cloud" escape was checked and does not hold.** `msg_fes:clm`'s own
+  abstract in GetCapabilities gives **four classes: clear sky over water, clear sky over land,
+  cloud, and not processed (off disc)**. There is no "cloud contaminated" class — white means
+  cloud. (GetFeatureInfo returns only the rendered RGB, so the abstract is the way to check this.)
+  **The 43–51% detection figure therefore stands.** The layer genuinely finds about half the cloud
+  a purpose-built operational mask finds, and about a third of it over sea.
+
+  **No cause has been established and two candidate fixes are dead.** What is known: the missing
+  cloud is at 0.0 °C depression, dark in visible, and unreachable by lowering the threshold. Anyone
+  picking this up starts from there, not from a hypothesis this file has already buried.
+
+  If a fix is ever found it must **ADD** cloud, never gate: gating on the coarse mask was tried and
+  produced tile edges. Re-score the same three scenes afterwards — the target is detection up with
+  false alarm still in single figures.
 - **Nothing above ~65°N.** Geostationary satellites sit on the equator and `cos³` to the limb leaves
   nothing at high latitude. Measured weights on the **2026-08-12 track**: Arctic 80°N **none**;
   N Greenland 78°N goes-east 0.000; C Greenland 72°N 0.001; Reykjavik 64°N mtg 0.015. **The Greenland

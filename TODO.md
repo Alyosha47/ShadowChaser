@@ -382,10 +382,21 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   ~4–6 phased sessions. Next phase: penumbra onto the engine.
 - **#F2c Live cloud — FINISH IT.** Working and shipped-ish; HANDOFF §10A has the whole model,
   every trap, and the harness. Remaining, in the order they matter:
-  1. **The visible band by day, to ADD low cloud.** Infrared cannot see marine stratus, which is
-     exactly the cloud that ruins an eclipse. A total eclipse is always in daylight along the
-     track and `hasNight()` already knows the terminator. Must add, never gate — gating on the
-     coarse mask was tried and produced tile edges (§10A.8).
+  1. **The visible band by day, to ADD low cloud.** Measured 2026-08-18 against EUMETSAT's
+     operational mask over three scenes: **the layer finds only ~49% of the cloud, and 30–41%
+     of it over sea, at a 1–2% false-alarm rate** (HANDOFF §10A.8 has the table). So it is not
+     mis-tuned — it is blind to cloud near the surface temperature, and **the map therefore
+     reads clearer than reality**, which is the dangerous direction for a tool that tells
+     someone where to stand. A total eclipse is always in daylight along the track and
+     `hasNight()` already knows the terminator.
+
+     **BUT: the visible band was tested 2026-08-18 and does NOT contain the missing cloud, and
+     neither does a sea-surface-temperature reference. Both are dead ends — read HANDOFF §10A.8
+     before touching this.** The missing cloud is dark in visible and sits at 0.0 °C depression in
+     infrared, i.e. invisible to both. The mask has only four classes — clear over water, clear over
+     land, cloud, not processed — so "it is only partial cloud" does not explain it. **The 49%
+     figure is real and no cause is known.** Do not start from a theory; start from the three
+     measured facts in §10A.8.
   2. **Speckle at high zoom** — the clear-sky grid is 39 km under 4 km imagery. Raising `BG_W`
      to 2048 is the low-risk half (0.18°, ~46 MB across five satellites; 4096 is 185 MB and not
      viable on a phone). Making the grid follow zoom is the thorough fix and is the riskiest
