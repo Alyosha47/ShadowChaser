@@ -54,8 +54,14 @@ const I=sb.window.Imagery;
      limb smear it cannot see. So count PARTS, grouped by satellite. */
   const partsOf=id=>Object.keys(map.layers)
      .filter(k=>k==='photo-lyr-'+id||k.indexOf('photo-lyr-'+id+'-')===0);
-  const groups=sats.map(s=>partsOf(s.id));
+  /* Worst picture first: the greyscale infrared disc is added before the
+     true-colour ones so they cover it. */
+  const greyIds=sats.filter(s=>s.grey).map(s=>s.id);
+  const isGrey=k=>greyIds.some(g=>k==='photo-src-'+g||k.indexOf('photo-src-'+g+'-')===0);
+  const ranked=sats.slice().sort((a,b)=>(b.grey?1:0)-(a.grey?1:0));
+  const groups=ranked.map(s=>partsOf(s.id));
   const nParts=groups.reduce((a,g)=>a+g.length,0);
+  const mtgParts=partsOf('mtg').length;   /* counted while it is still up */
   ok('every satellite draws, as one part or two',
      groups.every(g=>g.length>=1)&&Object.keys(map.sources).length===nParts);
   ok('every source is a raster source',
@@ -88,9 +94,18 @@ const I=sb.window.Imagery;
   /* Between them the discs must reach all the way round. A slot with no
      satellite is a blank vertical slice from pole to pole — leaving Himawari
      out cost 70E to 153E: China, Japan, Australia and half the Indian Ocean. */
-  ok('the discs cover every longitude, with no blank slice',
-     Math.abs(Object.values(map.sources)
-       .reduce((a,x)=>a+(x.bounds[2]-x.bounds[0]),0)-360)<0.01);
+  ok('the discs cover every longitude, with no blank slice',(()=>{
+     const iv=Object.values(map.sources).map(x=>[x.bounds[0],x.bounds[2]])
+        .sort((a,b)=>a[0]-b[0]);
+     let at=-180;
+     for(const [w,e] of iv){ if(w>at+1e-6) return false; if(e>at) at=e; }
+     return at>=180-1e-6;
+  })());
+  /* The greyscale disc must sit UNDER every colour disc, or it covers pixels a
+     better product could have drawn — a whole hemisphere of Asia and the
+     Pacific went grey that way. */
+  ok('the greyscale disc is painted first, so colour covers it',
+     !greyIds.length || greyIds.some(g=>map.order[0].indexOf('photo-lyr-'+g)===0));
   // EUMETSAT tiles are 512 because each one is a cold PHP render on shared
   // hosting; a quarter as many is the difference between usable and 75 seconds.
   ok('tileSize matches what the template actually requests',
@@ -112,9 +127,10 @@ const I=sb.window.Imagery;
      EXTENTS OVERLAP. Meteosat sitting on top of GOES-East out to 70W — its own
      worst limb over its neighbour's best pixels — was the band of mismatched
      patches down the Atlantic. */
-  const spans=Object.values(map.sources).map(s=>[s.bounds[0],s.bounds[2]])
+  const spans=Object.keys(map.sources).filter(k=>!isGrey(k))
+     .map(k=>[map.sources[k].bounds[0],map.sources[k].bounds[2]])
      .sort((a,b)=>a[0]-b[0]);
-  ok('no two extents overlap, so no disc paints over a better view',
+  ok('no two colour discs overlap, so neither puts its limb over the other',
      spans.every((b,i)=>i===0||b[0]>=spans[i-1][1]-1e-6));
 
   // A disc whose frames are all unpublished must be REPORTED, not left silently
@@ -125,7 +141,7 @@ const I=sb.window.Imagery;
      I.missing().length===1&&/Meteosat/.test(I.missing()[0]));
   ok('and it gets no layer on the map',!map.getLayer('photo-lyr-mtg'));
   ok('the others still draw',
-     Object.keys(map.layers).length===nParts-groups[sats.map(s=>s.id).indexOf('mtg')].length);
+     Object.keys(map.layers).length===nParts-mtgParts);
 
   ok('it walked back through several frames before giving up',
      reqs.filter(u=>/s=eum&l=mtg_fd/.test(u)).length>=8);

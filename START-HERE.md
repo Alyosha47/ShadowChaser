@@ -1,4 +1,4 @@
-# START HERE — session handoff, 2026-08-19
+# START HERE — session handoff, 2026-08-20
 
 **Read this whole file before you type anything to the user.** He should not have
 to tell you where the repo is, what was done, or how he likes to work. It is all
@@ -67,8 +67,8 @@ took five days.
 
 ## 2. WHAT IS RUNNING
 
-`BUILD 2026-08-19g`. `satellite.js 2026-08-19d`, `imagery.js 2026-08-19c`,
-`cloudbar.js 2026-08-17b`.
+`BUILD 2026-08-20u`. `satellite.js 2026-08-20a`, `imagery.js 2026-08-20b`,
+`cloudbar.js 2026-08-20a`.
 
 The cloud overlay has **three modes** in one strip (`js/cloudbar.js`):
 
@@ -76,10 +76,22 @@ The cloud overlay has **three modes** in one strip (`js/cloudbar.js`):
 |---|---|---|
 | **Average** | `js/cloud.js` | ERA5 climatology, precached, works offline. Shipped 2026-08-11. |
 | **Now** | `js/satellite.js` | Cloud *inferred* from geostationary infrared. A measurement. |
-| **Photo** | `js/imagery.js` | The satellite picture itself, composited. New 2026-08-19. |
+| **Photo** | `js/imagery.js` | The satellite picture itself, as MapLibre raster tiles. |
 
-Fixed 2026-08-19, all documented in HANDOFF §10A — **do not go hunting for these
-again**: the dateline stripe (a GIBS bbox bug at **both** ±180 edges, not our
+**All three work.** Photo was rebuilt on 2026-08-20: the hand-rolled compositor
+is gone and MapLibre does the tiling. **Do not reintroduce a compositor for
+Photo** — `Now` needs a canvas because it reads pixels to decode temperature;
+Photo only displays them, and inherited the compositor by being written as a
+copy of `satellite.js` (HANDOFF §10A.8c).
+
+Fixed 2026-08-20, all in HANDOFF §10A — **do not go hunting for these again**:
+Photo's mismatched-patch band down the Atlantic (extents, not tiles); the blank
+slice over China (no satellite was assigned there); the greyscale hemisphere
+(quality ordering); the blank hairline at 70.7°E; blank tile squares (MapLibre
+never retries); EUMETSAT losing CORS (`sat.php`); and `viewBox()`'s globe branch,
+which had never once executed.
+
+Fixed 2026-08-19, also documented there: the dateline stripe (a GIBS bbox bug at **both** ±180 edges, not our
 geometry); render 13× faster (`bgAt` was 89% of it); parallel fetch; cached frame
 probe; globe-vs-Mercator fetch sizing; storms hollowing themselves out; polar
 extrapolation; the ☁-off bug (in `cloud.js`, not `satellite.js`); the
@@ -90,7 +102,14 @@ corrupt GIBS frame.
 
 ## 3. KNOWN-FAILING AND KNOWN-LIMITED — none of these are new bugs
 
-- **`test_tshirt`: exactly 3 failures.** Long-standing, not yours.
+- **`test_tshirt`: exactly 3 failures.** Long-standing, not yours. It needs
+  jsdom — `npm i jsdom` in a fresh clone, or four suites report CANNOT RUN,
+  which is a setup problem and not a regression.
+- **Photo logs 404s in the console and they are CORRECT.** They are the frame
+  probe walking back through frames GIBS has not published yet, about five per
+  satellite per five-minute refresh. Measured 2026-08-20: GOES-West's newest
+  frame was 19:30Z at 20:25Z, and 20:00 onward 404'd at every zoom — whole
+  frames, not corner tiles. Do not "fix" this (§10A.8c).
 - **`Now` finds only ~49% of the cloud** an operational mask finds, ~30% of it
   over sea, at 1–2% false alarms (§10A.8, three scenes). **The map reads clearer
   than reality** — the dangerous direction for a tool that tells someone where to
@@ -102,9 +121,14 @@ corrupt GIBS frame.
 - **`Photo` is capped at 1223 m/px.** GIBS serves GeoColor from
   `GoogleMapsCompatible_Level7` and that is its maximum, so a city view is
   visibly blocky. **A source limit, not a bug. Do not try to fix it in our code.**
-- **`Photo` over the Pacific is greyscale by day and black by night.** Himawari
-  has no colour product in GIBS; it carries `Band3_Red_Visible`, reflected
-  sunlight. Documented at the top of `imagery.js`.
+- **`Photo` is greyscale from 70°E to 153°E** — China, Australia, the Indian
+  Ocean edge. GIBS has no true-colour Himawari product at all (WMTSCapabilities
+  enumerated 2026-08-20: Air Mass, Band13 infrared, Band3 red visible). We use
+  Band13 because Band3 is reflected sunlight and paints a black rectangle at
+  night. The band is already the smallest the available products allow — the
+  greyscale disc is painted underneath and the colour discs cover it back to
+  their own limb (§10A.8c). **Closing it needs a different source, not a code
+  change.** That is §4 below.
 - **GIBS is stale and unreliable.** 20–60 min behind. On 2026-08-19 it served a
   GOES-East frame with a slab of the disc missing — filled *opaque white*, which
   decodes to −91.6 °C, the coldest cloud there is — and another that was 92.6%
@@ -115,7 +139,13 @@ corrupt GIBS frame.
 
 ## 4. THE JOB WAITING FOR YOU
 
-**Evaluate a non-GIBS imagery source.** This is the single change that improves
+**First, and it is short: `Now` takes ~15 s on its first load.** It is the only
+remaining defect a user in a field would notice, it is measured, and the obvious
+fix has already been tried and reverted — read HANDOFF §3 "Open, measured, not
+fixed" before touching it, because the trap is that `background()` builds its
+clear-sky field against the VIEW box.
+
+**Then: evaluate a non-GIBS imagery source.** This is the single change that improves
 every complaint the user has: freshness (GIBS 20–60 min against ~5 for
 operational feeds), resolution, and reliability.
 
@@ -126,7 +156,11 @@ source verified to work from a browser with CORS, no key, and one WMS request.
 In order:
 
 1. **Confirm `rammb-slider.cira.colostate.edu` is reachable** (§1). CIRA's SLIDER
-   serves GOES *and* Himawari at roughly 5 minutes' latency.
+   serves GOES *and* Himawari at roughly 5 minutes' latency. **It is also the
+   only known route to a true-colour Himawari**, which is the one thing that
+   would close Photo's greyscale band — but its tiles are in the satellite's own
+   fixed-grid projection, not Web Mercator, so it is a reprojection job and not a
+   source swap. Establish that before promising it.
 2. **Find out what shape it is.** Expect pre-rendered JPEG tiles on a
    directory-style URL scheme in its own projection — *not* WMS, so no `BBOX`.
    That means placing tiles rather than compositing one image, closer to

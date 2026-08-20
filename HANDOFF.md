@@ -149,6 +149,18 @@ ignore rule obsolete.)*
   it. Either a layer was dropped and the precache entry left behind, or it is pending use. Worth one
   look before the next `sw.js` change.
 
+### Open, measured, not fixed
+- **`Now` takes ~15 s on first load.** Measured live: a full-size EUMETSAT render is 3.1 s at their
+  end plus ~4 s of Bluehost overhead = 7.3 s cold, 0.13 s cached, ×2 discs. The proxy cache only
+  helps when the URL repeats, and `Now` requests a **view-shaped bbox**, so every pan is a new URL.
+  **The obvious fix was TRIED AND IT FAILED — do not repeat it blindly.** Fetching EUMETSAT at a
+  fixed full-disc box makes one canonical cacheable URL, and `compose()` maps each frame by lat/lon
+  through `fr.box`, so a larger box composites fine — but **`background()` builds its clear-sky field
+  against the VIEW box**, so a frame on a different box is sampled against the wrong background and
+  the picture tears into smeared horizontal bands. Reverted. To attack it properly: move the
+  background field onto the frame's own box FIRST, *then* fix the fetch box, and verify with
+  `fullpreview.js` before shipping. This is the only remaining defect a user in a field would notice.
+
 ### Not done, by choice — in rough priority order
 1. **Scan ignores non-location filters.** Filter by date/type BEFORE loading chunks instead of
    walking ~30 of them on every first scan. No user-visible change, no data restructuring.
@@ -1292,6 +1304,16 @@ across recent frames — specifically the **second**-warmest, so one bad scan li
   `worldPx / 2π`, a point at angle θ lands at `radius·sin θ`, so the visible half-angle is
   `asin(min(1, halfCanvas / radius))`, divided by `cos(latitude)`. Only applied when the map reports
   globe projection; the two converge above zoom 3.
+- **The globe branch of `viewBox()` had NEVER RUN** *(found 2026-08-20)*. `var worldPx = …, m = 1 + 2
+  * MARGIN;` reassigned `m` from the MAP to the margin multiplier, so the `m.getProjection` test on
+  the next line always threw, the `catch` swallowed it, and `globe` was **always false**. The whole
+  globe-widening arithmetic above was dead code for as long as it had existed — which is why rotating
+  the globe kept finding areas that had never been requested. Renamed to `pad`. At zoom 2 the globe
+  branch now asks for 249° where Mercator predicted 206°. **Also:** at globe zoom the box is now the
+  whole world (`globe && lonSpan >= 200`). It was already asking for 249 of 360 degrees, so this
+  costs ~45% more pixels once and makes rotation free — the box stops moving when you spin,
+  `covered()` stays true, nothing refetches. Verified: spinning 140° at zoom 2 leaves the box
+  byte-identical.
 - **Satellites are chosen per ANTIMERIDIAN HALF, not per view.** Chosen for the whole view, a Pacific
   view asked Meteosat about the far side of the world; those return an empty image, indistinguishable
   from a not-yet-published frame, so each burned the full step-back retry. Measured: **45 requests →
@@ -1357,6 +1379,43 @@ back; the lag is NASA's republication, not ours.
 - **An empty frame is not an error.** GIBS answers a not-yet-published time with a valid, entirely
   transparent PNG; Himawari was measured returning three in a row. Test the PIXELS. A dropped
   satellite is a hole and **a hole reads as clear sky.**
+
+### 10A.7b `sat.php` — the same-origin proxy (site ROOT, not `/app`)
+
+**Why it exists.** On 2026-08-20 EUMETSAT stopped sending `access-control-allow-origin` on GetMap.
+Verified by re-running the byte-identical URL that had carried the header the previous evening:
+present on GetCapabilities, absent on 10 of 10 GetMap calls across four endpoints, with and without
+an `Origin` header. `Now` must read those pixels, so no header meant no Meteosat and a blank central
+Africa. Fetched from the site, `sat.php` is same-origin and CORS never applies.
+
+**It takes discrete WMS parameters, NOT a URL.** Two earlier shapes were refused by Bluehost's
+mod_security *before reaching PHP*: `?u=https://…` (matches on the scheme) and `?q=<long base64>`
+(matches on the opaque blob — a short `?q=abc` passed, so it was the blob, not the file). Ordinary
+short parameters look like ordinary traffic, and they also mean the file cannot be aimed anywhere:
+service and layer come from **fixed allowlists inside it**.
+
+- `sat.php?s={eum|gibs}&l={layer}&b={bbox}&w=&h=&t={ISO}` → image
+- `sat.php?s=…&l=…&f=newest` → the newest published frame time, as text
+
+Frames are immutable once published, so images are disk-cached 15 min and frame-time answers 4 min.
+Only real imagery is cached: a WMS ServiceException is a 200 with an XML body, and caching one would
+pin the failure for the whole TTL.
+
+**`f=newest` matters.** The client used to probe 8 candidate timestamps in parallel — one round trip
+against GIBS, but 8 PHP processes per disc through the proxy, 16 for two discs, and shared hosting
+runs only a handful at once. They queued and `Now` took ~15 s. Resolved server-side it is one
+request, cached. **`satellite.js` uses it; `imagery.js` does not** — Photo still walks back client
+side, which is where its console 404s come from and is harmless there.
+
+**It lives at the SITE ROOT.** `followtheshadow.com/sat.php`, and `PROXY = '/sat.php'` is absolute.
+There is no `/app` directory on the server. `addOne` makes the template absolute against
+`window.location.origin` before handing it to `addProtocol`, which strips the scheme and fetches
+what remains — a relative path would not survive that.
+
+**A `502` from it means EUMETSAT failed upstream.** One is normal and the frame walk absorbs it; a
+steady stream means Meteosat is down. **When EUMETSAT restores CORS**, the proxy can be bypassed by
+reverting the `eum` branches in `url()` (satellite.js) and `wms()` (imagery.js). Keeping it is
+probably wiser — it also caches, and it survives the next provider that does this.
 
 ### 10A.8 What this cannot do yet
 
@@ -1482,11 +1541,11 @@ against the same rule.
 - **Himawari has no Dust product**, so the three-product recipe does not transfer to the Pacific. Air
   Mass is the candidate substitute and is untested.
 
-### 10A.8c PHOTO MODE — the picture, added 2026-08-19 (`js/imagery.js`)
+### 10A.8c PHOTO MODE — the picture (`js/imagery.js`)
 
-Given §10A.8, a third mode was added that does not infer anything: the composited
-geostationary picture, drawn as imagery. Side by side over the Gulf, the picture shows a sky full
-of small cumulus and the inferred layer shows most of it as clear — the 49% made visible.
+Given §10A.8, a third mode was added that does not infer anything: the geostationary picture itself,
+drawn as imagery. Side by side over the Gulf, the picture shows a sky full of small cumulus and the
+inferred layer shows most of it as clear — the 49% made visible.
 
 - **It is approach #1 from §10A.9, and it is only acceptable because of deck.gl.** Clear sky in a
   picture is a COLOUR, not transparency, so the basemap is hidden where imagery covers. The track,
@@ -1494,20 +1553,104 @@ of small cumulus and the inferred layer shows most of it as clear — the 49% ma
 - **It complements `Now`, it does not replace it.** Nothing can sample a picture: `Cloud.sampleAt()`
   returns a number and this cannot. The picture is what to look at; `Now` is what to read a value
   from. Both stay.
-- **Geometry is BORROWED from `satellite.js`, not reimplemented** — `_viewBox` and `_weightAt` are
-  exported for it. The globe sizing, the both-edges dateline inset and the per-half satellite choice
-  each cost a day to get right, and two copies of the answer is how one of them comes back.
-  `viewBox()` takes the map as a PARAMETER for this reason: it runs while `satellite.js` is off, and
-  reading that module's own `_map` threw on the first line of every picture render.
-- **There is no alpha to test.** GeoColor is JPEG; off-disc and unpublished both arrive as black,
-  and black is also night. The frame test is therefore on VARIATION, not darkness — a real night
-  frame has structure, an unpublished one is flat.
+
+**IT IS MAPLIBRE RASTER TILES. THE COMPOSITOR IS GONE** *(2026-08-20)*. `imagery.js` was written as
+a copy of `satellite.js` and inherited its canvas compositor — `compose()`, `readPixels()`,
+`hasContent()`, the dateline split, the weight blend, the night-alternate machinery, the lit-fraction
+gate, the JPEG black test, the whole-globe wrap. All deleted. It is now **one MapLibre `raster`
+source per satellite**, and tiling, caching, wrapping past the antemeridian, progressive zoom and pan
+are the platform's job. Every symptom that cost days — 20-second pans, bare limb, the antemeridian
+seam, black wedges, ragged terminator, speckle — came from the compositor and went with it.
+
+**Why Photo never needed one:** `Now` reads pixels to decode infrared into a temperature and
+genuinely requires a canvas. Photo only ever *displays* pixels.
+
+**GIBS discs use the cached WMTS path**
+(`/wmts/epsg3857/best/{layer}/default/{time}/GoogleMapsCompatible_Level{n}/{z}/{y}/{x}.png`);
+EUMETSAT uses a `{bbox-epsg-3857}` WMS template through `sat.php`. Measured at browser-like
+concurrency (24 tiles, 6 at a time): **WMTS 1.6 s / 0 blanks, WMS 3.3 s**. GIBS WMS renders every
+tile on demand; at low zoom MapLibre asks for hundreds, they fill the six-connection-per-host budget,
+GIBS blanks under load, and **everything else queues behind them on that host** — including `Now`'s
+requests. **Never point Photo at GIBS WMS again.**
+
+#### Extent and stacking — QUALITY decides both *(the 2026-08-20 fix)*
+
+A raster layer cannot vary per pixel, so where two discs overlap the only control is which one is
+allowed to draw there. Three rules, each earned by a rendered defect:
+
+1. **Equal-quality discs clip at the MIDPOINT between their nadirs.** Every longitude is drawn by
+   whichever satellite sees it most squarely. Before this, `span: 70` let Meteosat's extreme limb
+   paint on top of GOES-East's near-nadir pixels all the way to 70°W — **that was the band of
+   mismatched patches down the Atlantic.**
+2. **A disc crossing the antemeridian becomes TWO sources**, not one widened to the world. Widening
+   is what made GOES-West paint Asia and the Indian Ocean with limb smear it cannot see. `ids(sat, k)`
+   carries a part index; part 0 keeps the original name, so nothing that knows a layer id changed.
+   `dropOne`/`eachLayer`/`built` walk both parts.
+3. **A GREYSCALE disc is painted FIRST and given its full horizon (81°), not its span.** The colour
+   discs then cover it back to the limit of what they can see, so grey survives only where nothing
+   else reaches. Ranking it equal to the others instead left **a whole greyscale hemisphere** —
+   Himawari's own limb sitting over colour that could have drawn there.
+
+`span` is now only the reach on a side with no neighbour — i.e. it is what defines the honest gap.
+Between neighbours the midpoint always wins even where it is slightly wider than either span:
+Meteosat's 70 and Himawari's 70 fall 0.7° short of meeting, which left **a blank hairline down 70.7°E
+from pole to pole**. A geostationary view reaches ~81° of arc; `span` is a quality cutoff well inside
+that, so the extra fraction of a degree is real imagery.
+
+Resulting extents, and they are asserted: goes-west `153…180` + `−180…−106.1`, goes-east
+`−106.1…−37.6`, mtg `−37.6…70`, himawari `59.7…180` + `−180…−138.3` underneath. Full 360°, no
+overlap between colour discs.
+
+#### The layer set
+
+`GOES-East_ABI_GeoColor`, `GOES-West_ABI_GeoColor`, `mtg_fd:rgb_geocolour`, and
+**`Himawari_AHI_Band13_Clean_Infrared`**.
+
+- **Himawari is INFRARED, not the visible band, and that is load-bearing.** GIBS publishes no
+  true-colour AHI product — verified by enumerating WMTSCapabilities on 2026-08-20, which carries
+  Air Mass, Band13 infrared and Band3 red visible, and nothing else. Band3 is *reflected sunlight*:
+  rendered at 19:40Z it filled the Pacific with a **black rectangle over the basemap**, because its
+  nadir was at dawn and passed the frame probe while most of the disc was still night. Band13
+  publishes round the clock and shows the same cloud at 03:00 as at 15:00. Its `grey: true` flag
+  drives `raster-saturation: -1` in `addOne` — the infrared palette adds colour below about −12 °C,
+  which beside geocolour reads as confetti.
+- **The cost, and it is permanent with these products: 70°E–153°E is greyscale.** China, Australia,
+  the Indian Ocean edge. That is the smallest grey area the available products allow, and closing it
+  needs a Mercator true-colour Himawari source, which GIBS does not have (see START-HERE §4).
+- **`msg_iodc:rgb_natural` stays OUT** — it paints vegetation cyan and desert pink, and would add a
+  third rendering for a strip Himawari now reaches. One line away, commented in place.
+- **The VIIRS global base stays OUT** (`USE_BASE = false`). It loaded first and complete, so the
+  picture snapped to a clean planet and was then overpainted disc by disc as the live layers
+  streamed in.
 - **Requests are capped at the source's native 1223 m/px.** Asking for 1024 px across a city view
-  made GIBS upscale and return a large blurry JPEG identical in appearance to a small one: measured
-  94 KB against 10 KB per satellite for the same picture.
-- Layers: `GOES-East/West_ABI_GeoColor`, `mtg_fd:rgb_geocolour`, `msg_iodc:rgb_natural`, and for the
-  Pacific only `Himawari_AHI_Band3_Red_Visible_1km` — greyscale, and black at night, because GIBS
-  has no colour product for that slot at all.
+  made GIBS upscale and return a large blurry image identical in appearance to a small one: 94 KB
+  against 10 KB per satellite for the same picture.
+- **EUMETSAT tiles are 512, GIBS 256.** Each EUMETSAT tile is a cold PHP render on shared hosting;
+  quartering the count was the difference between usable and a ~75 s first paint. GIBS tiles are
+  pre-cut and cached at their CDN and cost nothing to ask for.
+
+#### Tile retry via `addProtocol`
+
+**MapLibre never re-requests a failed tile**, and GIBS drops roughly one request in five. One
+transient 404 therefore leaves a **permanent hole** — this was the map filling with blank squares.
+Proven from a live console log: tiles that 404'd in the browser returned 200 from a clean fetch
+seconds later, **including `z0/0/0`**, which covers the whole world and cannot be a genuine gap.
+
+Fixed with `maplibregl.addProtocol('sctile', …)`, MapLibre's own extension point. **Four** retries
+with backoff, then a **transparent PNG** rather than an error — most remaining failures are real,
+because a disc is a circle and the tile grid is square. Four, not two: the fallback is permanent, so
+an exhausted retry is a blank square until the next five-minute rebuild; three attempts still leaves
+about 1 tile in 125 blank, five leaves about 1 in 3000. The cost is paid only on tiles already
+failing.
+
+#### 404s in the console are the FRAME PROBE, not tiles
+
+A probe URL is `…/{z=2}/{y=2}/{x}` at the satellite's nadir. Measured 2026-08-20 at 20:25Z,
+GOES-West's newest published frame was **19:30Z** — 19:30 returned 200 at every zoom, 20:00 onward
+404'd at every zoom. Whole frames, not corner tiles. That is §10A.7's 18–50 min republication lag,
+and the walk-back doing its job: about five 404s per satellite per five-minute refresh. **Do not
+"fix" it by widening the retry or narrowing the walk.** If the noise ever matters, the cheap halving
+is the one `satellite.js` already uses — cache the newest-frame answer per satellite for half a step.
 
 ### 10A.9 Approaches already tried and abandoned — DO NOT RE-ATTEMPT
 
@@ -1562,6 +1705,28 @@ a Pacific view straddling the dateline (`mkframes.py 175 20 2.2`), a North Ameri
 (`-112 40 4.2`), and a south-polar one (`150 -68 1.6`). Add a high-zoom convective scene
 (`-88 22 5.0`) if the work touches the clear-sky reference.
 
+**PHOTO'S HARNESS — `tools/checks/tilepreview.js`.** It runs the *shipped* `imagery.js` against a
+fake map and the real network, fetches the tile templates the module installed, and assembles a PNG.
+`node tools/checks/tilepreview.js 3 0 7 1 5 /tmp/world.png`. It duplicates no logic deliberately: an
+earlier version re-implemented the frame walk-back, missed a fallback the module had, and reported a
+satellite missing that the module would have drawn. It resolves `/sat.php` against
+`https://followtheshadow.com`, so it exercises the real proxy, and it retries like the shipped
+protocol so it does not report holes the map will not have.
+
+**IT SHIPPED BLIND, AND THAT IS WHY PHOTO SHIPPED BROKEN** *(found 2026-08-20)*. Three faults, each
+of which alone made it useless: it substituted only `{bbox-epsg-3857}`, so every GIBS URL kept its
+literal braces and every fetch failed — "tiles kept: 0"; it did not in fact resolve `/sat.php`,
+though the handoff said it did, so Meteosat always reported MISS in Node; and it pasted 512 px
+EUMETSAT tiles into 256 px cells, which laps a tile over its neighbours and **looks exactly like a
+compositing bug in the module**. A session was spent fixing a module whose only witness could not
+see it. **Before trusting a harness, make it render something you already know is right** — GOES-East
+alone at z3 is a good control, because it is one satellite, one template and unmistakably correct or
+not.
+
+`mkphoto.py` and `photopreview.js` were **deleted**: they drove `compose()`, which no longer exists.
+`fullpreview.js` had a hardcoded `repo/js/satellite.js` path and died silently anywhere but one
+directory; `mkframes.py` could not find `cmap.json` unless run from `tools/checks/`. Both fixed.
+
 **`test_satellite.js` was rewritten 2026-08-18** — it had been testing an architecture two rewrites
 old (`_luts`, `_floors`, `_raster`, none of which exist) and crashed at line 82, so sections 7–10 had
 **never run once** while the runner reported it as one of "6 suites failing". It now passes 45/45 and
@@ -1577,6 +1742,15 @@ from scratch.**
   the source — so one throw skipped every removal after it and left `cloud-base` painted while the
   button reported off. Simulated: a throw on `removeSource('cloud')` left three objects behind;
   per-pair it leaves only the one that threw. `satellite.js` already tore down this way.
+- **MODE SWITCHING HIDES, IT DOES NOT TEAR DOWN** *(2026-08-20)*. `cloudbar.js` called
+  `Satellite.off()` / `Imagery.off()` when switching, discarding the composite and every fetched
+  tile, so returning to a picture that was on screen a moment ago cost seconds. Both modules now have
+  `hide()` / `show()` / `isHidden()` and toggle layer visibility; their own five-minute refresh keeps
+  what reappears current. `off()` is still correct when the cloud bar is dismissed entirely.
+  **Trap that bit once:** `ensureLayer()` in `satellite.js` ended with an unconditional
+  `setLayoutProperty(LAYER,'visibility','visible')` and runs on every refresh — so `Now` un-hid
+  itself **on top of Photo**. Any code path that sets visibility must honour `_hidden`; `addOne()` in
+  `imagery.js` sets `layout.visibility` from `_hidden` when rebuilding, for the same reason.
 - **`cloudbar.js` owns the refresh loop** — a 5-minute `invalidate()`, skipped while the tab is hidden
   with the missed tick run on return. `satellite.js` has **no timer**; one was briefly added there on
   the strength of grepping that file alone and concluding the feature never refreshed. It did.
@@ -1939,6 +2113,16 @@ fails a test.**
 - `SolidPolygonLayer` has no stroke; `stroked`/`getLineColor` are silently ignored (§7.6).
 - GIBS blanks the leftmost ~10% of any GetMap whose west edge is at or beyond −179.92°. Inset the
   antimeridian half by one pixel (§10A.5).
+- Photo is MapLibre raster tiles; `Now` is a canvas compositor. Only `Now` reads pixels (§10A.8c).
+- MapLibre NEVER re-requests a failed tile — a transient 404 is a permanent hole without
+  `addProtocol` retry (§10A.8c).
+- MapLibre `bounds` cannot express a range crossing ±180. Split into two sources; do NOT widen to the
+  whole world (§10A.8c).
+- GIBS has no true-colour Himawari product. Enumerate WMTSCapabilities before believing otherwise
+  (§10A.8c).
+- EUMETSAT GetMap sends no CORS header since 2026-08-20; it goes through `sat.php` (§10A.7b).
+- Photo's console 404s are the frame probe walking back through unpublished frames, not tiles
+  (§10A.8c).
 - `viewBox()` must size the fetch box by GLOBE geometry, not `512·2^z`, or the limb is never fetched
   (§10A.5).
 - A GIBS frame that is not yet published returns a valid, fully transparent PNG with 200 OK. Test the
@@ -1965,6 +2149,20 @@ fails a test.**
 
 One line per session. **The knowledge lives in the topical sections above; this is only a trail.**
 
+- **2026-08-20** — **Photo rebuilt on MapLibre raster tiles**; the hand-rolled compositor deleted
+  (§10A.8c), and with it every symptom it had been causing. `sat.php` added at the site root after
+  EUMETSAT dropped CORS on GetMap (§10A.7b). Tile retry via `addProtocol`, four attempts, because
+  MapLibre never re-requests a failed tile and its permanent transparent fallback was the blank
+  patchwork. Disc extents rebuilt around QUALITY: equal discs clip at the midpoint between nadirs, a
+  disc crossing the antemeridian becomes two sources instead of one widened to the world, and the
+  greyscale disc is painted first at full horizon so colour covers it — which took Photo from a
+  greyscale hemisphere to a single band at 70–153°E. Himawari switched from the visible band to
+  round-the-clock infrared after Band3 painted a black rectangle over the night Pacific. The
+  `viewBox()` globe branch found to have never executed (§10A.5). Mode switching now hides instead of
+  tearing down (§10A.11). `tilepreview.js` found blind in three ways, which is why the session before
+  this one shipped Photo broken (§10A.10). `test_satellite`'s EUMETSAT CRS assertion moved onto
+  `sat.php`, where the CRS now lives; `test_imagery` taught about parts, tiers and full-longitude
+  coverage. BUILD `2026-08-20u`.
 - **2026-08-19** — Third cloud mode **Photo** (`js/imagery.js`): the satellite picture itself,
   composited from five positions and drawn as imagery rather than as an overlay, because `Now`
   finds only ~49% of the cloud an operational mask does (§10A.8) and the difference is visible.
