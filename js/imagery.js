@@ -1,433 +1,537 @@
 /* imagery.js — LIVE SATELLITE PICTURE ("Photo", #F2d)
  *
- * The third cloud mode, and the simplest of the three. Average is a climatology,
- * Now is a MEASUREMENT of cloud derived from infrared, and this is a PHOTOGRAPH:
- * the composited geostationary view, drawn as imagery rather than as an overlay.
+ * The third cloud mode. Average is a climatology, Now is a MEASUREMENT of cloud
+ * derived from infrared, and this is a PHOTOGRAPH: the geostationary view drawn
+ * as imagery rather than as an overlay.
  *
  * WHY IT EXISTS, given Now already does something cleverer. Scored against
  * EUMETSAT's operational mask, Now finds about half the cloud that is there and
- * about a third of it over sea (HANDOFF §10A.8) — infrared cannot see cloud near
+ * about a third of it over sea (HANDOFF s10A.8) — infrared cannot see cloud near
  * the temperature of the surface beneath it, and shallow scattered cumulus over
- * warm water is exactly that. Side by side over the Gulf, the picture shows a sky
- * full of small cloud and the inferred layer shows most of it as clear. No amount
- * of tuning closes that: it is a limit of the measurement, not of the model.
+ * warm water is exactly that. Photo COMPLEMENTS Now: the picture is what to look
+ * at, Now is what to read a value from. Both stay.
  *
- * WHAT IT COSTS. The basemap is hidden where imagery covers, because clear sky in
- * a picture is a COLOUR, not transparency — that is approach #1 in §10A.9, and it
- * is only acceptable here because the track, the umbra and the location pin are
- * drawn by deck.gl ABOVE every MapLibre layer, so they survive. Nothing samples a
- * picture either: Cloud.sampleAt() returns a number and this cannot.
+ * ---------------------------------------------------------------------------
+ * THIS MODULE DOES NOT COMPOSITE ANYTHING. MAPLIBRE DOES THE WORK.
  *
- * SO IT COMPLEMENTS Now, it does not replace it. The picture is what to look at;
- * Now is what to read a value from. Both stay.
+ * The previous version fetched one large image per view and composited the
+ * satellites into a canvas by hand. Every expensive symptom came from that one
+ * decision: a pan refetched the whole view (20-second loads), the canvas ended
+ * at the requested box (bare basemap at the limb, no wrap), the halves either
+ * side of the antemeridian were composed separately (the seam), and every
+ * satellite boundary had to be blended in our own code (black wedges, ragged
+ * terminator, speckle).
  *
- * GEOMETRY IS BORROWED, NOT REWRITTEN. viewBox() and weightAt() come from
- * satellite.js, so the globe-projection sizing (§10A.5), the dateline inset on
- * BOTH edges, and the per-half satellite choice are shared rather than
- * reimplemented — every one of those was a bug that cost a day, and having two
- * copies of the answer is how one of them comes back.
+ * A MapLibre `raster` source with a {bbox-epsg-3857} template turns any WMS into
+ * a tiled source. Tiling, caching, wrapping past the antemeridian, progressive
+ * zoom and pan then belong to the PLATFORM. Measured 2026-08-20, 256 px tiles:
+ * GIBS 0.35 s, EUMETSAT 0.16-0.73 s, both cacheable.
+ *
+ * Photo never needed the canvas. Now genuinely does — it reads pixels to decode
+ * infrared into temperature. Photo only ever DISPLAYS pixels. It inherited the
+ * compositor by being written as a copy of satellite.js, and that inheritance
+ * was the bug.
+ *
+ * HANDOFF's standing rule is to name the platform API before writing per-frame
+ * code. The API is map.addSource(id, {type:'raster', tiles:[...]}).
+ *
+ * DELIBERATELY GONE: compose(), readPixels(), hasContent(), the dateline split,
+ * the weight blend, the night-alternate machinery, the lit-fraction gate, the
+ * JPEG black test, desaturation, the whole-globe wrap. If a defect from that era
+ * reappears it is not in this file — it is in the tiles.
+ *
+ * WHAT IT COSTS. The basemap is hidden where imagery covers, because clear sky
+ * in a picture is a COLOUR, not transparency — approach #1 in s10A.9. That is
+ * acceptable only because the track, the umbra and the pin are drawn by deck.gl
+ * ABOVE every MapLibre layer, so they survive. Nothing samples a picture either:
+ * Cloud.sampleAt() returns a number and this cannot.
  */
 (function () {
   'use strict';
 
-  var SRC = 'sat-photo', LAYER = 'sat-photo';
-  var MAX_PX = 1024, MIN_PX = 256, MARGIN = 0.15;
-  var TTL = 5 * 60 * 1000, MAX_STEPS = 8, MAX_AGE_MIN = 180;
-  var CUT = 0.16;                    /* same limb cutoff as the infrared model */
-
-  /* One entry per orbital slot. NOTE THE PACIFIC: Himawari has no colour product
-     in GIBS at all — no GeoColor, no natural-colour RGB — so it carries the red
-     visible band, which is greyscale and, being reflected sunlight, is BLACK AT
-     NIGHT. The Pacific therefore looks different from everywhere else by day and
-     goes dark by night. That is a real hole in this mode and it is not fixable
-     from GIBS; zoom.earth and similar sites use JMA's own imagery for that slot.
-     Recorded here rather than discovered later. */
-  var SATS = [
-    { id: 'goes-east', name: 'GOES-East',   lon:  -75.2, svc: 'gibs', step: 10,
-      layer: 'GOES-East_ABI_GeoColor',            fmt: 'image/jpeg' },
-    { id: 'goes-west', name: 'GOES-West',   lon: -137.0, svc: 'gibs', step: 10,
-      layer: 'GOES-West_ABI_GeoColor',            fmt: 'image/jpeg' },
-    { id: 'mtg',       name: 'Meteosat 0\u00b0', lon: 0.0, svc: 'eum', step: 10,
-      layer: 'mtg_fd:rgb_geocolour',              fmt: 'image/png' },
-    { id: 'iodc',      name: 'Meteosat IODC', lon:  45.5, svc: 'eum', step: 15,
-      layer: 'msg_iodc:rgb_natural',              fmt: 'image/png' },
-    { id: 'himawari',  name: 'Himawari',     lon: 140.7, svc: 'gibs', step: 10,
-      layer: 'Himawari_AHI_Band3_Red_Visible_1km', fmt: 'image/png', mono: true }
-  ];
-
-  var GIBS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
+  var GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best';
+  var GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
   var EUM  = 'https://view.eumetsat.int/geoserver/wms';
-  var R = 6378137.0;
   var CREDIT = 'NASA GIBS \u00b7 EUMETSAT';
 
-  var _map = null, _on = false, _cv = null, _ctx = null, _src = null;
-  var _scratch = null, _sctx = null;
-  var _busy = false, _again = false, _pending = null;
-  var _at = 0, _drawn = null, _drawnZoom = -1, _stamps = [], _missing = [], _err = '';
-  var _listeners = [], _probeCache = {};
+  /* One entry per disc. Layer identifiers are VERIFIED against each service's
+     GetCapabilities, not remembered: GIBS carries GeoColor for the two GOES only
+     — there is no Himawari GeoColor and no Meteosat in GIBS at all, which is why
+     the Pacific is greyscale and Europe comes from EUMETSAT (START-HERE s3).
 
-  /* satellite.js is a hard dependency and is named through window rather than
-     as a bare global, so a load failure is a clean "unavailable" instead of a
-     ReferenceError thrown from inside a promise where nothing reports it. */
-  function SAT() { return window.Satellite; }
-  function ready() { return !!(window.Satellite && window.Satellite._viewBox); }
+     `step` is the publication cadence in minutes and `lag` the largest delay
+     worth waiting through. GIBS runs 20-60 min behind (s3); EUMETSAT measured
+     9-24 min on 2026-08-19. */
+  /* GLOBAL BASE — DISABLED. Set USE_BASE true to restore it.
+     A daily polar-orbiter mosaic, painted UNDER the geostationary discs. It
+     loads first and complete, so the picture snapped to a full clean planet and
+     was then overpainted disc by disc as each live layer streamed in — the same
+     map redrawn three more times, each pass a different tone where day met
+     night. Whole-planet coverage is not worth that if the covering is hours old:
+     a stale picture that LOOKS current is worse than an honest gap.
+     Kept because it is the right answer if a provider disappears again, as
+     EUMETSAT did on 2026-08-20.
 
-  function mercY(lat) {
-    return R * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
-  }
+     A daily polar-orbiter mosaic, painted UNDER the geostationary discs. It is hours old rather than minutes, so it never wins where a live
+     disc exists — but it means a gap in the live coverage shows yesterday's
+     cloud instead of bare basemap, and it covers the poles and the whole of the
+     Meteosat sector, which no GIBS geostationary layer reaches.
 
-  /* ------------------------------------------------------------- requests */
+     It earned its place on 2026-08-20, when EUMETSAT stopped sending
+     access-control-allow-origin on GetMap (measured: present on
+     GetCapabilities, absent on 10 of 10 GetMap calls across four endpoints).
+     Their imagery became unusable from a browser with no warning and nothing we
+     could do about it. A base layer on a DIFFERENT service is the only thing
+     that keeps the picture whole when one provider disappears. */
+  var USE_BASE = false;
+  var BASE = { id: 'viirs', name: 'VIIRS', svc: 'gibs', zmax: 9, daily: true,
+               layer: 'VIIRS_NOAA20_CorrectedReflectance_TrueColor',
+               alt: 'VIIRS_SNPP_CorrectedReflectance_TrueColor',
+               ext: 'jpg', span: 180, lon: 0 };
 
-  function stamp(sat, ms) {
-    var d = new Date(ms);
-    function p(n) { return (n < 10 ? '0' : '') + n; }
-    var s = d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) +
-            'T' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':00';
-    /* EUMETSAT stamps carry milliseconds and GIBS stamps must not — reformatting
-       either way invents a time the service has never heard of, and the reply is
-       an empty image with no error (§10A.7). */
-    return s + (sat.svc === 'eum' ? '.000Z' : 'Z');
-  }
+  /* EUMETSAT IS BACK, VIA OUR OWN DOMAIN. They stopped sending
+     access-control-allow-origin on GetMap on 2026-08-20, which took Meteosat out
+     of both modes. sat.php is same-origin, so CORS no longer applies; it takes
+     discrete WMS parameters because Bluehost's mod_security refuses a scheme in
+     a query value and refuses a long base64 blob.
+     VIIRS stays underneath regardless — it is what covers a gap when any single
+     provider disappears, and one of them just did. */
+  var SATS = [
+    /* ORDER IS PAINT ORDER. A pixel inside two discs shows the last layer added
+       and a raster layer cannot vary per pixel, so the only control we have is
+       which disc sits on top. BASE is always added before all of these. */
+    /* IODC AND HIMAWARI ARE OUT OF PHOTO, and it is a colour decision, not a
+       technical one. Photo is a PICTURE, and a picture made of four different
+       renderings does not read as one planet: geocolour is true colour,
+       msg_iodc:rgb_natural paints vegetation cyan and desert pink, Himawari's
+       visible band is greyscale, and its infrared is a rainbow temperature
+       palette. Stacked with a hard limb between each, the result was the
+       mishmash of mismatched patches with black edges between them.
+       VIIRS below is true colour and covers both sectors, so dropping them costs
+       currency in the Indian Ocean and the Pacific — hours instead of minutes —
+       and buys a picture that looks like one planet.
+       They remain correct and are one line away if that trade is wrong:
+         { id: 'iodc', name: 'Meteosat IODC', lon: 45.5, svc: 'eum', step: 15,
+           layer: 'msg_iodc:rgb_natural', span: 55 },
+         { id: 'himawari', name: 'Himawari', lon: 140.7, svc: 'gibs', step: 10,
+           layer: 'Himawari_AHI_Band3_Red_Visible_1km', zmax: 7,
+           alt: 'Himawari_AHI_Band13_Clean_Infrared', altZmax: 6, span: 70 },
+    */
+    { id: 'goes-west', name: 'GOES-West', lon: -137.0, svc: 'gibs', step: 10,
+      layer: 'GOES-West_ABI_GeoColor',  zmax: 7, span: 70 },
+    { id: 'goes-east', name: 'GOES-East', lon: -75.2,  svc: 'gibs', step: 10,
+      layer: 'GOES-East_ABI_GeoColor',  zmax: 7, span: 70 },
+    { id: 'mtg',       name: 'Meteosat',  lon: 0.0,    svc: 'eum',  step: 10,
+      layer: 'mtg_fd:rgb_geocolour',    span: 70 }
+  ];
 
-  function url(sat, iso, box, w, h) {
-    return (sat.svc === 'gibs' ? GIBS : EUM) +
-      '?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap' +
-      '&LAYERS=' + encodeURIComponent(sat.layer) +
-      '&STYLES=&CRS=EPSG%3A3857&FORMAT=' + encodeURIComponent(sat.fmt) +
-      (sat.fmt === 'image/png' ? '&TRANSPARENT=TRUE' : '') +
-      '&WIDTH=' + w + '&HEIGHT=' + h +
-      '&BBOX=' + [R * box.w * Math.PI / 180, mercY(box.s),
-                  R * box.e * Math.PI / 180, mercY(box.n)].join(',') +
-      '&TIME=' + encodeURIComponent(iso);
-  }
+  /* `span` is how many degrees either side of nadir a disc is allowed to draw,
+     applied as the source's `bounds`. Without it every disc paints as a full
+     rectangle and the overlaps are enormous — the whole of Africa was IODC
+     sitting on top of Meteosat. It also stops MapLibre requesting tiles the
+     satellite cannot see. IODC is held tighter than the rest because it is the
+     odd one out on colour and is only there to fill the gap Meteosat leaves. */
 
-  function loadImage(u) {
-    return new Promise(function (res, rej) {
-      var im = new Image();
-      im.crossOrigin = 'anonymous';
-      im.onload = function () { res(im); };
-      im.onerror = function () { rej(new Error('img')); };
-      im.src = u;
-    });
-  }
+  var MAX_STEPS = 8;      /* frames to walk back before giving a disc up */
+  var EMPTY_MAX = 1500;   /* bytes: an empty PNG measures 116-334, real ones
+                             tens of thousands. Probing by SIZE avoids decoding,
+                             which would need a canvas — the thing this module
+                             exists to stop using. */
 
-  function readPixels(img, w, h) {
-    if (!_scratch) {
-      _scratch = document.createElement('canvas');
-      _sctx = _scratch.getContext('2d', { willReadFrequently: true });
-    }
-    if (_scratch.width !== w) _scratch.width = w;
-    if (_scratch.height !== h) _scratch.height = h;
-    _sctx.clearRect(0, 0, w, h);
-    _sctx.drawImage(img, 0, 0, w, h);
-    return _sctx.getImageData(0, 0, w, h).data;
-  }
+  var _map = null, _on = false, _busy = false, _err = '', _hidden = false;
+  var _times = {};        /* sat.id -> ISO of the frame in use   */
+  var _layers = {};       /* sat.id -> layer actually drawn, primary or alt */
+  var _missing = [];
+  var _listeners = [];
 
-  /* A JPEG has no alpha, so "is there data here" cannot be asked of the alpha
-     channel for the GeoColor layers. Off-disc and unpublished both come back as
-     pure black instead, and a black frame is indistinguishable from night —
-     which is why the test is on VARIATION, not on darkness. An unpublished frame
-     is uniform; a real one, day or night, is not. */
-  function hasContent(d, w, h) {
-    var n, i, v, mn = 255, mx = 0, seen = 0;
-    for (i = 0; i < w * h; i += 37) {
-      n = i * 4;
-      if (d[n + 3] < 250) continue;
-      v = (d[n] + d[n + 1] + d[n + 2]) / 3;
-      if (v < mn) mn = v;
-      if (v > mx) mx = v;
-      seen++;
-    }
-    return seen > 50 && (mx - mn) > 12;
-  }
-
-  function probe(sat) {
-    var rec = _probeCache[sat.id];
-    if (rec && rec.pending) return rec.pending;
-    if (rec && (Date.now() - rec.when) < sat.step * 30000) return Promise.resolve(rec.hit);
-
-    var step = sat.step * 60000;
-    var box = { w: sat.lon - 10, e: sat.lon + 10, s: -5, n: 5 };
-    var start = Math.floor(Date.now() / step) * step, tries = [], k, t;
-    for (k = 0; k < MAX_STEPS; k++) {
-      t = start - k * step;
-      if ((Date.now() - t) / 60000 > MAX_AGE_MIN) break;
-      tries.push(t);
-    }
-    /* All candidate times at once — one round trip instead of one per
-       unpublished frame, exactly as §10A.6 established for the infrared side. */
-    var p = Promise.all(tries.map(function (at) {
-      return loadImage(url(sat, stamp(sat, at), box, 64, 32)).then(function (im) {
-        return hasContent(readPixels(im, 64, 32), 64, 32) ? at : 0;
-      }, function () { return 0; });
-    })).then(function (r) {
-      var best = 0, i;
-      for (i = 0; i < r.length; i++) if (r[i] > best) best = r[i];
-      var hit = best ? { at: best } : null;
-      _probeCache[sat.id] = { hit: hit, when: Date.now() };
-      return hit;
-    }, function () { delete _probeCache[sat.id]; return null; });
-    _probeCache[sat.id] = { pending: p };
-    return p;
-  }
-
-  function frameFor(sat, box, w, h) {
-    return probe(sat).then(function (hit) {
-      var step = sat.step * 60000, n = 0;
-      var ms = hit ? hit.at : Math.floor((Date.now() - step) / step) * step;
-      var limit = hit ? 2 : MAX_STEPS;
-      function attempt() {
-        if (n >= limit) return null;
-        var t = ms - (n++) * step;
-        if ((Date.now() - t) / 60000 > MAX_AGE_MIN) return null;
-        var iso = stamp(sat, t);
-        return loadImage(url(sat, iso, box, w, h)).then(function (im) {
-          var d = readPixels(im, w, h);
-          if (!hasContent(d, w, h)) return attempt();
-          return { iso: iso, at: t, d: d, sat: sat };
-        }, attempt);
-      }
-      return Promise.resolve().then(attempt);
-    });
-  }
-
-  /* ------------------------------------------------------------ compositing */
-
-  function compose(box, w, h, frames) {
-    var img = _ctx.createImageData(w, h), o = img.data;
-    var acc = new Float32Array(w * h * 3), wsum = new Float32Array(w * h);
-    var lats = new Float64Array(h), lonOf = new Float64Array(w);
-    var i, j, k, q, n2, wt, lat, lon, fr, d, pw, span, rel, sat;
-    var srcX = new Int32Array(w), wts = new Float64Array(w);
-
-    var yN = mercY(box.n), yS = mercY(box.s);
-    for (j = 0; j < h; j++) {
-      lat = 2 * Math.atan(Math.exp((yN - (yN - yS) * (j + 0.5) / h) / R)) - Math.PI / 2;
-      lats[j] = Math.cos(lat);
-      lonOf[j] = 0;
-    }
-    var latOf = new Float64Array(h);
-    for (j = 0; j < h; j++) {
-      latOf[j] = (2 * Math.atan(Math.exp((yN - (yN - yS) * (j + 0.5) / h) / R)) - Math.PI / 2) * 180 / Math.PI;
-    }
-    for (i = 0; i < w; i++) lonOf[i] = box.w + (i + 0.5) / w * (box.e - box.w);
-
-    for (k = 0; k < frames.length; k++) {
-      fr = frames[k];
-      if (!fr) continue;
-      d = fr.d; pw = fr.pw; sat = fr.sat;
-      span = fr.box.e - fr.box.w;
-      for (i = 0; i < w; i++) {
-        lon = lonOf[i];
-        rel = lon - fr.box.w;
-        rel -= Math.floor(rel / 360) * 360;
-        if (rel < 0 || rel >= span) { srcX[i] = -1; continue; }
-        srcX[i] = Math.min(pw - 1, (rel / span * pw) | 0);
-        wts[i] = Math.cos(((lon - sat.lon + 540) % 360 - 180) * Math.PI / 180);
-      }
-      for (j = 0; j < h; j++) {
-        lat = lats[j];
-        for (i = 0; i < w; i++) {
-          if (srcX[i] < 0) continue;
-          wt = lat * wts[i] - CUT;
-          if (wt <= 0) continue;
-          wt = wt * wt * wt;
-          n2 = (j * pw + srcX[i]) * 4;
-          /* Transparent or dead-black source is off-disc, not sky. Blending it
-             would pull a dark wedge across the limb of the neighbour. */
-          if (d[n2 + 3] < 250) continue;
-          if (d[n2] + d[n2 + 1] + d[n2 + 2] < 12) continue;
-          q = j * w + i;
-          acc[q * 3]     += wt * d[n2];
-          acc[q * 3 + 1] += wt * d[n2 + 1];
-          acc[q * 3 + 2] += wt * d[n2 + 2];
-          wsum[q] += wt;
-        }
-      }
-    }
-
-    var painted = 0;
-    for (q = 0; q < w * h; q++) {
-      k = q * 4;
-      if (wsum[q] <= 0) { o[k + 3] = 0; continue; }
-      o[k]     = acc[q * 3] / wsum[q];
-      o[k + 1] = acc[q * 3 + 1] / wsum[q];
-      o[k + 2] = acc[q * 3 + 2] / wsum[q];
-      o[k + 3] = 255;
-      painted++;
-    }
-    if (_cv) {
-      if (_cv.width !== w) _cv.width = w;
-      if (_cv.height !== h) _cv.height = h;
-    }
-    _ctx.putImageData(img, 0, 0);
-    return painted / (w * h);
-  }
-
-  function place(box) {
-    var c = [[box.w, box.n], [box.e, box.n], [box.e, box.s], [box.w, box.s]];
-    if (_map.getSource(SRC)) { _src.setCoordinates(c); _src.play(); _src.pause(); }
-    else {
-      _map.addSource(SRC, { type: 'canvas', canvas: _cv, coordinates: c,
-                            animate: false, attribution: CREDIT });
-      _map.addLayer({ id: LAYER, type: 'raster', source: SRC,
-                      paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 } });
-      _src = _map.getSource(SRC);
-    }
-    try { _map.setLayoutProperty(LAYER, 'visibility', 'visible'); } catch (e) {}
-  }
-
-  function removeLayer() {
-    /* One try per removal: MapLibre throws on removeSource while a layer still
-       references it, and a single shared try leaves the rest in place (§10A.11). */
-    try { if (_map && _map.getLayer(LAYER)) _map.removeLayer(LAYER); } catch (e) {}
-    try { if (_map && _map.getSource(SRC)) _map.removeSource(SRC); } catch (e) {}
-    _src = null; _drawn = null; _drawnZoom = -1;
-  }
-
-  /* ------------------------------------------------------------------ pass */
-
-  function render() {
-    var box = SAT()._viewBox(_map), el = _map.getCanvas();
-    var aspect = (mercY(box.n) - mercY(box.s)) / (R * (box.e - box.w) * Math.PI / 180);
-    var w = Math.max(MIN_PX, Math.min(MAX_PX, Math.round(el.width)));
-    var h = Math.max(MIN_PX, Math.min(MAX_PX, Math.round(w * aspect)));
-    if (h < MIN_PX) h = MIN_PX;
-    if (!_cv) { _cv = document.createElement('canvas'); _ctx = _cv.getContext('2d'); }
-
-    /* BOTH dateline edges inset by one canvas pixel. A bbox touching ±180 makes
-       GIBS drop about 10% of the image from that edge — 67 columns measured on
-       one Himawari request — and it does it at the east edge as well as the west
-       (§10A.5). Two separate vertical gaps came from getting this wrong. */
-    var parts = [], eps = (box.e - box.w) / w;
-    if (box.e > 180) {
-      parts.push({ w: box.w, e: 180 - eps, s: box.s, n: box.n });
-      parts.push({ w: -180 + eps, e: box.e - 360, s: box.s, n: box.n });
-    } else if (box.w < -180) {
-      parts.push({ w: box.w + 360, e: 180 - eps, s: box.s, n: box.n });
-      parts.push({ w: -180 + eps, e: box.e, s: box.s, n: box.n });
-    } else parts.push(box);
-
-    /* Satellites are chosen PER HALF, never for the whole view: chosen for the
-       view, a Pacific pan asks Meteosat about the far side of the world and each
-       reply is an empty image that burns a full retry (§10A.5). */
-    var jobs = [], p, s;
-    for (p = 0; p < parts.length; p++) {
-      for (s = 0; s < SATS.length; s++) {
-        if (visible(SATS[s], parts[p])) jobs.push({ sat: SATS[s], box: parts[p] });
-      }
-    }
-
-    var out = new Array(jobs.length), runs = [];
-    function run(job, idx) {
-      var pw = Math.max(64, Math.round((job.box.e - job.box.w) / (box.e - box.w) * w));
-      return frameFor(job.sat, job.box, pw, h).then(function (fr) {
-        if (fr) { fr.box = job.box; fr.pw = pw; }
-        out[idx] = fr || null;
-      }, function () { out[idx] = null; });
-    }
-    for (p = 0; p < jobs.length; p++) runs.push(run(jobs[p], p));
-
-    return Promise.all(runs).then(function () {
-      var frames = out, any = false, seen = {}, i;
-      _missing = [];
-      for (i = 0; i < frames.length; i++) {
-        if (frames[i]) { any = true; seen[frames[i].sat.id] = frames[i].iso; }
-      }
-      for (i = 0; i < jobs.length; i++) {
-        if (!seen[jobs[i].sat.id] && _missing.indexOf(jobs[i].sat.name) < 0) {
-          _missing.push(jobs[i].sat.name);
-        }
-      }
-      _stamps = Object.keys(seen).map(function (k) { return seen[k]; });
-      if (!any) { _err = 'no imagery published'; return false; }
-      if (!_on) return false;
-      compose(box, w, h, frames);
-      place(box);
-      _drawn = box; _drawnZoom = _map.getZoom(); _at = Date.now(); _err = '';
-      return true;
-    });
-  }
-
-  function visible(sat, box) {
-    var mid = (box.w + box.e) / 2, lat = (box.s + box.n) / 2;
-    var a = SAT()._weightAt(sat, mid, lat);
-    var b = SAT()._weightAt(sat, box.w, lat);
-    var c = SAT()._weightAt(sat, box.e, lat);
-    return a > 0 || b > 0 || c > 0;
-  }
-
-  function covered() {
-    if (!_drawn) return false;
-    if (Math.abs(_map.getZoom() - _drawnZoom) > 0.25) return false;
-    var b = SAT()._viewBox(_map);
-    return b.w >= _drawn.w && b.e <= _drawn.e && b.s >= _drawn.s && b.n <= _drawn.n;
-  }
-
-  function refresh(force) {
-    if (!_on || !_map) return Promise.resolve(false);
-    if (!force && covered() && (Date.now() - _at) < TTL) return Promise.resolve(true);
-    if (_busy) { _again = true; return Promise.resolve(true); }
-    _busy = true;
-    return render().then(function (v) {
-      _busy = false;
-      announce();
-      if (_again) { _again = false; return refresh(false); }
-      return v;
-    }, function () { _busy = false; return false; });
-  }
+  function ids(sat) { return { src: 'photo-src-' + sat.id, lyr: 'photo-lyr-' + sat.id }; }
 
   function announce() {
     for (var i = 0; i < _listeners.length; i++) {
-      try { _listeners[i](); } catch (e) {}
+      try { _listeners[i](); } catch (e) { /* one bad listener must not stop the rest */ }
     }
   }
 
-  function onMoveEnd() {
-    if (_pending) clearTimeout(_pending);
-    _pending = setTimeout(function () { _pending = null; refresh(false); }, 200);
+  /* ------------------------------------------------------------ frame times */
+
+  /* EUMETSAT keeps the milliseconds and GIBS must not gain them — a stamp in the
+     wrong shape returns a blank image with no error, which is the worst possible
+     failure because it looks like clear sky. */
+  function stamp(sat, ms) {
+    var t = new Date(ms);
+    /* The polar mosaic is published once a DAY and its TIME is a bare date; ask
+       it for an hour-precision stamp and it returns nothing. */
+    if (sat.daily) {
+      return t.getUTCFullYear() + '-' + pad2(t.getUTCMonth() + 1) + '-' + pad2(t.getUTCDate());
+    }
+    var s = t.getUTCFullYear() + '-' + pad2(t.getUTCMonth() + 1) + '-' + pad2(t.getUTCDate()) +
+            'T' + pad2(t.getUTCHours()) + ':' + pad2(t.getUTCMinutes()) + ':00';
+    return s + (sat.svc === 'eum' ? '.000Z' : 'Z');
   }
 
-  function on(map) {
-    if (!ready()) { _err = 'satellite.js not loaded'; return Promise.resolve(false); }
-    _map = map; _on = true;
-    _map.on('moveend', onMoveEnd);
-    return refresh(true);
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+  function base(sat) { return sat.svc === 'gibs' ? GIBS : EUM; }
+
+  /* GIBS IS A TILE CACHE OVER WMTS AND A RENDERER OVER WMS, and using the wrong
+     one is what made Photo slow and blanked half the map.
+     A WMS GetMap is rendered on demand: MapLibre asks for hundreds of tiles at a
+     low zoom, they fill the browser's six-connections-per-host budget, GIBS
+     starts returning blanks under the load, and every OTHER request to the same
+     host queues behind them — including Now's, which is why a mode this file
+     does not touch got slow. Measured 24 tiles at six-way concurrency: WMTS 1.6s
+     with zero blanks, WMS 3.3s.
+     EUMETSAT stays on WMS because its GeoWebCache endpoint returns an error. */
+  function zmaxOf(sat, layer) {
+    if (sat.svc !== 'gibs') return 7;
+    if (layer && layer === sat.alt && sat.altZmax) return sat.altZmax;
+    return sat.zmax;
+  }
+
+  function wmtsTile(sat, iso, layer, z, x, y) {
+    return GIBS + '/' + (layer || sat.layer) + '/default/' + iso +
+      '/GoogleMapsCompatible_Level' + zmaxOf(sat, layer) +
+      '/' + z + '/' + y + '/' + x + '.' + (sat.ext || 'png');
+  }
+
+  var PROXY = '/sat.php';
+
+  /* ------------------------------------------------------ tile retry protocol
+     MAPLIBRE NEVER RETRIES A FAILED TILE. One transient failure leaves a hole
+     for as long as the source lives, and GIBS drops roughly one request in five
+     (START-HERE §3) — measured from a live console log, tiles that 404'd in the
+     browser returned 200 from a clean fetch seconds later, including z0/0/0
+     which covers the whole world and cannot be a genuine gap. That is the
+     blank-patchwork the map fills with.
+
+     addProtocol is MapLibre's own extension point for exactly this: it hands us
+     the fetch, so a retry is ours to add without touching how tiles are
+     requested, cached, wrapped or drawn. Registered once, globally.
+
+     A tile that is still missing after the retries is answered with a
+     TRANSPARENT PNG rather than an error, because most of those are real: a
+     geostationary disc covers a circle and the tile grid is square, so the
+     corners genuinely have no data. Returning an image keeps them out of the
+     console and stops MapLibre marking the tile as errored. */
+  var SCHEME = 'sctile';
+  var CLEAR_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk' +
+                  'YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  var RETRIES = 2, RETRY_MS = 400;
+  var _protoReady = false;
+
+  function clearTile() {
+    var bin = atob(CLEAR_PNG), n = bin.length, a = new Uint8Array(n), i;
+    for (i = 0; i < n; i++) a[i] = bin.charCodeAt(i);
+    return a.buffer;
+  }
+
+  function registerProtocol() {
+    if (_protoReady) return;
+    var gl = window.maplibregl;
+    if (!gl || !gl.addProtocol) return;      /* older build: tiles still load, just no retry */
+    _protoReady = true;
+    gl.addProtocol(SCHEME, function (params, abortController) {
+      var url = params.url.replace(SCHEME + '://', '');
+      var tries = 0;
+      function go() {
+        return fetch(url, { signal: abortController && abortController.signal })
+          .then(function (r) {
+            if (r.ok) return r.arrayBuffer().then(function (b) { return { data: b }; });
+            if (tries++ < RETRIES) {
+              return new Promise(function (res) { setTimeout(res, RETRY_MS * tries); }).then(go);
+            }
+            return { data: clearTile() };
+          }, function (e) {
+            if (e && e.name === 'AbortError') throw e;
+            if (tries++ < RETRIES) {
+              return new Promise(function (res) { setTimeout(res, RETRY_MS * tries); }).then(go);
+            }
+            return { data: clearTile() };
+          });
+      }
+      return go();
+    });
+  }
+
+  function wms(sat, iso, bbox, w, h, layer) {
+    /* Same-origin for EUMETSAT; see the note on SATS above. */
+    if (sat.svc === 'eum') {
+      return PROXY + '?s=eum&l=' + encodeURIComponent(layer || sat.layer) +
+        '&b=' + bbox + '&w=' + w + '&h=' + h + '&t=' + encodeURIComponent(iso);
+    }
+    return (sat.svc === 'gibs' ? GIBS_WMS : EUM) +
+      '?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap' +
+      '&LAYERS=' + encodeURIComponent(layer || sat.layer) +
+      '&STYLES=&CRS=EPSG%3A3857&FORMAT=image%2Fpng&TRANSPARENT=TRUE' +
+      '&WIDTH=' + w + '&HEIGHT=' + h +
+      '&BBOX=' + bbox +
+      '&TIME=' + encodeURIComponent(iso);
+  }
+
+  /* The tile template handed to MapLibre. */
+  function template(sat, iso, layer, px) {
+    px = px || 256;
+    return (sat.svc === 'gibs')
+      ? wmtsTile(sat, iso, layer, '{z}', '{x}', '{y}')
+      : wms(sat, iso, '{bbox-epsg-3857}', px, px, layer);
+  }
+
+  /* One tile at the satellite's nadir: inside the disc, so an empty answer means
+     the FRAME is missing rather than that we asked about part of the world this
+     satellite cannot see. */
+  function probeUrl(sat, iso, layer) {
+    if (sat.svc !== 'gibs') return wms(sat, iso, nadirBox(sat), 64, 32, layer);
+    var n = 4, x = Math.floor((sat.lon + 180) / 360 * n);
+    if (x < 0) x = 0;
+    if (x >= n) x = n - 1;
+    return wmtsTile(sat, iso, layer, 2, x, n / 2);
+  }
+
+  /* A small box at the satellite's nadir: somewhere guaranteed to be inside the
+     disc, so an empty answer means the FRAME is missing rather than that we
+     asked about part of the world this satellite cannot see. */
+  function nadirBox(sat) {
+    var R = 6378137.0, d = 6e5;
+    var x = R * sat.lon * Math.PI / 180;
+    return [(x - d), -d, (x + d), d].map(function (v) { return v.toFixed(1); }).join(',');
+  }
+
+  /* Resolve the newest published frame by ASKING, one small image at a time.
+     Sequential on purpose: the first answer is usually the first request, and
+     firing eight in parallel to discard seven is waste that shows up on a phone
+     in a field. */
+  function newestFrame(sat) {
+    var step = sat.daily ? 86400000 : sat.step * 60000;
+    /* TODAY'S POLAR MOSAIC IS INCOMPLETE. It is assembled swath by swath as the
+       orbits come in, so the longitudes the satellite has not crossed yet are
+       simply absent — rendered at z3 it left Europe, Africa and Asia black while
+       the Americas were full. A probe at one point cannot detect this because
+       the gap is REGIONAL, not global. Start a day back, where every longitude
+       has been covered. */
+    var start = Math.floor(Date.now() / step) * step - (sat.daily ? step : 0);
+    /* Himawari's only GIBS colour product is REFLECTED SUNLIGHT, so after dark
+       it publishes nothing at all and the Pacific goes bare — measured, the
+       whole right-hand third of a z3 world mosaic. Its clean-infrared layer is
+       published around the clock. Try the daylight layer across the whole window
+       first, so a lit disc is never given up in favour of infrared. */
+    var layers = sat.alt ? [sat.layer, sat.alt] : [sat.layer];
+    var li = 0, k = 0;
+
+    function tryOne() {
+      if (k >= MAX_STEPS) {
+        if (li + 1 < layers.length) { li++; k = 0; return tryOne(); }
+        return null;
+      }
+      var lay = layers[li];
+      var iso = stamp(sat, start - (k++) * step);
+      return fetch(probeUrl(sat, iso, lay))
+        .then(function (r) { return r.ok ? r.blob() : null; })
+        .then(function (b) {
+          return (b && b.size > EMPTY_MAX) ? { iso: iso, layer: lay } : tryOne();
+        }, function () { return tryOne(); });
+    }
+    return Promise.resolve().then(tryOne);
+  }
+
+  /* ------------------------------------------------------------ map plumbing */
+
+  function dropOne(sat) {
+    var id = ids(sat);
+    if (_map.getLayer(id.lyr)) _map.removeLayer(id.lyr);
+    if (_map.getSource(id.src)) _map.removeSource(id.src);
+  }
+
+  /* MapLibre wants one plain west/east pair. A disc that straddles the
+     antemeridian cannot be expressed that way, so it is widened to the whole
+     world and the platform's own wrapping handles it — simpler than splitting,
+     which is precisely the split that used to leave a seam. */
+  function boundsOf(sat) {
+    var w = sat.lon - sat.span, e = sat.lon + sat.span;
+    if (w < -180 || e > 180) return [-180, -85, 180, 85];
+    return [w, -85, e, 85];
+  }
+
+  function addOne(sat, iso, layer) {
+    var id = ids(sat);
+    dropOne(sat);
+    /* EUMETSAT TILES ARE 512, NOT 256. Every one of them is a separate PHP
+       process on shared hosting fetching a fresh render, and a cold tile is
+       seconds — a first paint of the Meteosat disc at 256 was ~75s of queued
+       requests. Quartering the count is the single biggest lever available
+       without giving up the disc. GIBS stays at 256: those are pre-cut cached
+       tiles straight from their CDN and cost nothing to ask for. */
+    var px = (sat.svc === 'eum') ? 512 : 256;
+    registerProtocol();
+    /* Absolute URL first: the protocol handler strips the scheme and fetches
+       what remains, and a relative '/sat.php' would not survive that. */
+    var tpl = template(sat, iso, layer, px);
+    var origin = (window.location && window.location.origin) || '';
+    if (tpl.charAt(0) === '/' && origin) tpl = origin + tpl;
+    _map.addSource(id.src, {
+      type: 'raster',
+      tiles: [(_protoReady ? SCHEME + '://' : '') + tpl],
+      tileSize: px,
+      /* Stop MapLibre asking past the source's real resolution — beyond this it
+         stretches the last tile, which is correct and free. Without it every
+         zoom-in fires a fresh round of requests that can only 404. */
+      maxzoom: zmaxOf(sat, layer),
+      bounds: boundsOf(sat),
+      attribution: CREDIT
+    });
+    /* The infrared alternate arrives in the palette Now decodes to temperature:
+       a grey ramp for warm scenes with COLOUR for tops colder than about -12C.
+       Beside four true-colour discs that reads as rainbow confetti. MapLibre
+       desaturates a raster source itself — no pixel access, no canvas, no second
+       decoder. It is not free: the coldest tops are dark blues, so greying them
+       makes storm cores darker than the cloud around them rather than brighter.
+       That is a presentation compromise on 8% of pixels (measured on a live
+       frame), taken because the alternative is confetti. */
+    var paint = { 'raster-opacity': 1, 'raster-fade-duration': 0 };
+    if (layer && layer !== sat.layer) paint['raster-saturation'] = -1;
+    _map.addLayer({ id: id.lyr, type: 'raster', source: id.src, paint: paint,
+                    layout: { visibility: _hidden ? 'none' : 'visible' } });
+  }
+
+  function removeAll() {
+    if (!_map) return;
+    dropOne(BASE);   /* unconditional: it may be left over from a previous build */
+    for (var i = 0; i < SATS.length; i++) dropOne(SATS[i]);
+  }
+
+  function build() {
+    _busy = true; announce();
+    var all = USE_BASE ? [BASE].concat(SATS) : SATS.slice();
+    return Promise.all(all.map(function (sat) {
+      return newestFrame(sat).then(function (f) { return { sat: sat, f: f }; });
+    })).then(function (res) {
+      removeAll();
+      _times = {}; _layers = {}; _missing = []; _err = '';
+      var any = false, i;
+      /* Added in SATS order, so the overlap winner is decided here and stays
+         decided rather than changing as the view moves. */
+      for (i = 0; i < res.length; i++) {
+        if (res[i].f) {
+          _times[res[i].sat.id] = res[i].f.iso;
+          _layers[res[i].sat.id] = res[i].f.layer;
+          addOne(res[i].sat, res[i].f.iso, res[i].f.layer);
+          any = true;
+        } else if (res[i].sat !== BASE) {
+          /* The base going quiet is not worth naming in the caption — the live
+             discs are what the user is looking at. */
+          _missing.push(res[i].sat.name);
+        }
+      }
+      if (!any) _err = 'No satellite imagery available';
+      _busy = false; announce();
+      return any;
+    }, function (e) {
+      _busy = false; _err = String((e && e.message) || e); announce(); return false;
+    });
+  }
+
+  /* ------------------------------------------------------------- public API */
+
+  /* SWITCHING MODES MUST NOT THROW THE TILES AWAY. Rebuilding means resolving
+     every frame again and re-requesting every tile, so coming back to a picture
+     that was on screen a moment ago costs seconds. If the sources are still
+     there, just unhide them; the five-minute refresh keeps them current. */
+  function built() {
+    var i;
+    for (i = 0; i < SATS.length; i++) {
+      if (_map.getLayer(ids(SATS[i]).lyr)) return true;
+    }
+    return !!(_map.getLayer(ids(BASE).lyr));
+  }
+
+  function on(m) {
+    _map = m || _map;
+    if (!_map) return Promise.resolve(false);
+    _on = true;
+    if (built()) { show(); announce(); return Promise.resolve(true); }
+    return build();
+  }
+
+  function eachLayer(fn) {
+    var all = [BASE].concat(SATS), i, id;
+    for (i = 0; i < all.length; i++) {
+      id = ids(all[i]).lyr;
+      if (_map.getLayer(id)) { try { fn(id); } catch (e) {} }
+    }
+  }
+
+  function hide() {
+    if (!_map) return;
+    eachLayer(function (id) { _map.setLayoutProperty(id, 'visibility', 'none'); });
+    _hidden = true;
+  }
+
+  function show() {
+    if (!_map) return;
+    eachLayer(function (id) { _map.setLayoutProperty(id, 'visibility', 'visible'); });
+    _hidden = false;
   }
 
   function off() {
-    _on = false; _stamps = []; _at = 0; _again = false;
-    if (_pending) { clearTimeout(_pending); _pending = null; }
-    if (_map) _map.off('moveend', onMoveEnd);
-    removeLayer();
+    _on = false;
+    removeAll();
+    _times = {}; _layers = {}; _missing = [];
+    announce();
   }
 
+  /* A newer frame is a NEW URL, so the source is rebuilt: MapLibre caches tiles
+     by URL and would otherwise serve the old picture forever. Rebuilt layers
+     must inherit the CURRENT visibility, or a refresh while Photo is hidden
+     makes it reappear over Now. */
+  function invalidate() {
+    if (!_on || !_map) return Promise.resolve(false);
+    return build();
+  }
+
+  /* The caption's age must come from the LIVE discs. Including the daily base
+     would report the picture as a day old whenever it happened to sort last. */
   function shownTime() {
-    if (!_stamps.length) return null;
-    var best = _stamps[0], i;
-    for (i = 1; i < _stamps.length; i++) if (_stamps[i] < best) best = _stamps[i];
+    var best = null, i, v;
+    for (i = 0; i < SATS.length; i++) {
+      v = _times[SATS[i].id];
+      if (v && (!best || v > best)) best = v;
+    }
     return best;
   }
 
   window.Imagery = {
-    version: '2026-08-19b',
+    version: '2026-08-20a',
     CREDIT: CREDIT,
-    on: on, off: off,
+    on: on,
+    off: off,
     isOn: function () { return _on; },
-    refresh: refresh,
+    hide: hide,
+    show: show,
+    isHidden: function () { return _hidden; },
+    invalidate: invalidate,
     onFrame: function (fn) { if (typeof fn === 'function') _listeners.push(fn); },
-    missing: function () { return _missing.slice(); },
-    invalidate: function () {
-      if (_busy) return Promise.resolve(false);
-      _probeCache = {}; _at = 0; _drawn = null;
-      return refresh(true).then(function (v) { return v; }, function () { return false; });
-    },
     shownTime: shownTime,
-    error: function () { return _err; },
-    diagnose: function () {
-      return { frames: _stamps.length, missing: _missing.slice(), drawn: _drawn,
-               busy: _busy, layer: !!(_map && _map.getLayer(LAYER)) };
+    frames: function () {
+      var a = [], k;
+      for (k in _times) { if (Object.prototype.hasOwnProperty.call(_times, k)) a.push(_times[k]); }
+      return a;
     },
-    _sats: function () { return SATS.slice(); }
+    missing: function () { return _missing.slice(); },
+    error: function () { return _err; },
+    loading: function () { return _busy; },
+    diagnose: function () {
+      var out = [], i, all = USE_BASE ? [BASE].concat(SATS) : SATS.slice();
+      for (i = 0; i < all.length; i++) {
+        out.push({ sat: all[i].id,
+                   layer: _layers[all[i].id] || null,
+                   alt: !!(_layers[all[i].id] && _layers[all[i].id] !== all[i].layer),
+                   iso: _times[all[i].id] || null,
+                   onMap: !!(_map && _map.getLayer(ids(all[i]).lyr)) });
+      }
+      return { on: _on, busy: _busy, missing: _missing.slice(),
+               shown: shownTime(), error: _err, slots: out };
+    },
+    _sats: function () { return USE_BASE ? [BASE].concat(SATS) : SATS.slice(); },
+    _wms: wms,
+    _template: template
   };
-})();
+}());

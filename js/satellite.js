@@ -185,7 +185,7 @@
   var SRC = 'sat-now', LAYER = 'sat-now';
 
   var _on = false, _map = null, _busy = false, _again = false, _pending = null;
-  var _stamps = [], _missing = [], _err = null, _listeners = [];
+  var _stamps = [], _missing = [], _err = null, _listeners = [], _hidden = false;
   var _lut = null, _cube = null, _at = 0, _painted = 0, _lastGood = {};
   var _timing = {};        /* last render's phase split, read by diagnose()   */
   /* PARALLEL WORK IS MEASURED AS A MAXIMUM, NOT A SUM. Frames are fetched at
@@ -222,9 +222,16 @@
   function viewBox(m) {
     m = m || _map;
     var c = m.getCenter(), z = m.getZoom(), el = m.getCanvas();
-    var worldPx = 512 * Math.pow(2, z), m = 1 + 2 * MARGIN;
-    var lonSpan = el.width / worldPx * 360 * m;
-    var ySpan = el.height / worldPx * (2 * mercY(LAT_MAX)) * m;
+    /* NOT `m` — that is the map, and reassigning it here silently disabled the
+       globe branch below for as long as this function has existed. `m` became a
+       number, m.getProjection threw, the try/catch swallowed it, and `globe` was
+       false on every call. The globe-widening arithmetic underneath was
+       therefore dead code, which is exactly why rotating the globe kept finding
+       areas that had never been requested. */
+    var worldPx = 512 * Math.pow(2, z);
+    var pad = 1 + 2 * MARGIN;
+    var lonSpan = el.width / worldPx * 360 * pad;
+    var ySpan = el.height / worldPx * (2 * mercY(LAT_MAX)) * pad;
 
     /* A GLOBE SHOWS MORE THAN A MERCATOR RECTANGLE OF THE SAME ZOOM, and this
        map is a globe below zoom 6. The sphere compresses toward its limb, so at
@@ -248,12 +255,22 @@
       var aH = Math.asin(Math.min(1, (el.width / 2) / rPx)) * D;
       var aV = Math.asin(Math.min(1, (el.height / 2) / rPx)) * D;
       var cosLat = Math.max(0.25, Math.cos(c.lat * Math.PI / 180));
-      lonSpan = Math.max(lonSpan, 2 * aH / cosLat * m);
+      lonSpan = Math.max(lonSpan, 2 * aH / cosLat * pad);
       ySpan = Math.max(ySpan,
-        (mercY(Math.min(LAT_MAX, c.lat + aV)) - mercY(Math.max(-LAT_MAX, c.lat - aV))) * m);
+        (mercY(Math.min(LAT_MAX, c.lat + aV)) - mercY(Math.max(-LAT_MAX, c.lat - aV))) * pad);
     }
 
-    if (lonSpan >= 355) return { w: -180, e: 180, s: -LAT_MAX, n: LAT_MAX };
+    /* ROTATING A GLOBE MUST NOT COST A REFETCH. Every spin re-centres the view,
+       which moves the box, which drops the composite and rebuilds it — so
+       turning back to where you just were meant waiting for clouds you had
+       already been shown. Once the box is most of the world anyway, widening it
+       to ALL of it is a small extra cost that makes rotation free: covered()
+       then stays true and nothing refetches until the five-minute refresh.
+       Measured at zoom 2 the globe already asks for 249 of 360 degrees, so this
+       is roughly 45% more pixels once, against a full rebuild per spin. */
+    if (lonSpan >= 355 || (globe && lonSpan >= 200)) {
+      return { w: -180, e: 180, s: -LAT_MAX, n: LAT_MAX };
+    }
     var lng = ((c.lng + 180) % 360 + 360) % 360 - 180;
     var yc = mercY(Math.max(-LAT_MAX, Math.min(LAT_MAX, c.lat)));
     return { w: lng - lonSpan / 2, e: lng + lonSpan / 2,
@@ -281,24 +298,75 @@
                                                      invents a time neither has */
   }
 
+  /* EUMETSAT GOES THROUGH OUR OWN DOMAIN. On 2026-08-20 they stopped sending
+     access-control-allow-origin on GetMap — verified against the byte-identical
+     URL that had carried it the evening before, on four endpoints, with and
+     without an Origin header. Now must READ these pixels to decode a
+     temperature, so no header means no Africa, and no amount of client-side work
+     changes that.
+
+     sat.php is same-origin, so CORS never enters into it. It takes discrete WMS
+     parameters rather than a URL because Bluehost's mod_security refuses both a
+     scheme in a query value and a long base64 blob before PHP ever runs.
+
+     GIBS still goes direct: it sends the header and is faster without the hop.
+     If GIBS ever drops it too, add 'gibs' to the same path — sat.php already
+     allows that service. */
+  var PROXY = '/sat.php';
+
   function url(sat, iso, box, w, h, ep) {
-    return (sat.svc === 'gibs' ? GIBS + (ep || GIBS_EP[0]) + '/wms.cgi' : EUM) +
+    var bbox = (R * box.w * Math.PI / 180) + ',' + mercY(box.s) + ',' +
+               (R * box.e * Math.PI / 180) + ',' + mercY(box.n);
+    if (sat.svc === 'eum') {
+      return PROXY +
+        '?s=eum&l=' + encodeURIComponent(sat.layer) +
+        '&b=' + encodeURIComponent(bbox) +
+        '&w=' + w + '&h=' + h +
+        '&t=' + encodeURIComponent(iso);
+    }
+    return GIBS + (ep || GIBS_EP[0]) + '/wms.cgi' +
       '?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap' +
       '&LAYERS=' + encodeURIComponent(sat.layer) +
       '&STYLES=&CRS=EPSG%3A3857&FORMAT=image%2Fpng&TRANSPARENT=TRUE' +
       '&WIDTH=' + w + '&HEIGHT=' + h +
-      '&BBOX=' + (R * box.w * Math.PI / 180) + ',' + mercY(box.s) + ',' +
-                 (R * box.e * Math.PI / 180) + ',' + mercY(box.n) +
+      '&BBOX=' + bbox +
       '&TIME=' + encodeURIComponent(iso);
   }
 
+  /* A HOST THAT HAS STOPPED SENDING CORS IS DEAD FOR THIS CYCLE, and asking it
+     eight more times only makes the user wait.
+     Measured 2026-08-20: view.eumetsat.int began answering GetMap with a valid
+     200 PNG and NO access-control-allow-origin header (present on
+     GetCapabilities, absent on 10 of 10 GetMap calls across four endpoints).
+     crossOrigin='anonymous' then fails every one, and the probe's walk-back
+     turned two dead discs into sixteen doomed requests — 13.2s of fetch on a
+     diagnose where the two GIBS discs were fine.
+     One failure is not enough to condemn a host: a single tile can fail on a
+     flaky connection. Two in a row, with nothing having succeeded, is. The
+     block is cleared on every refresh so a host that comes back is picked up. */
+  var _hostFails = {};
+
+  function hostOf(u) {
+    var m = /^https?:\/\/([^/]+)/.exec(u);
+    return m ? m[1] : '';
+  }
+
+  function hostBlocked(u) { return (_hostFails[hostOf(u)] || 0) >= 2; }
+
+  function clearHostFails() { _hostFails = {}; }
+
   function loadImage(u) {
+    if (hostBlocked(u)) return Promise.reject(new Error('host down'));
     return new Promise(function (res, rej) {
       var im = new Image();
       im.crossOrigin = 'anonymous';   /* both send permissive CORS; without this the
                                          pixels cannot be read back */
-      im.onload = function () { res(im); };
-      im.onerror = function () { rej(new Error('image')); };
+      im.onload = function () { _hostFails[hostOf(u)] = 0; res(im); };
+      im.onerror = function () {
+        var h = hostOf(u);
+        _hostFails[h] = (_hostFails[h] || 0) + 1;
+        rej(new Error('image'));
+      };
       im.src = u;
     });
   }
@@ -459,8 +527,26 @@
       });
     }
 
+    /* EUMETSAT RESOLVES ITS FRAME IN ONE REQUEST, NOT EIGHT. Firing the whole
+       walk in parallel is right against GIBS — one round trip, no six-connection
+       wall on HTTP/2. Through sat.php it is eight PHP processes per disc and
+       sixteen for the two Meteosat ones, and shared hosting runs only a handful
+       concurrently, so they queue and Now took ~15s to draw. sat.php?f=newest
+       does the same walk server-side, caches the answer for four minutes, and
+       returns just the timestamp. */
+    function walkProxied() {
+      return fetch(PROXY + '?s=eum&l=' + encodeURIComponent(sat.layer) + '&f=newest')
+        .then(function (r) { return r.ok ? r.text() : null; })
+        .then(function (iso) {
+          if (!iso) return null;
+          var at = Date.parse(iso);
+          return isNaN(at) ? null : { at: at, ep: null };
+        }, function () { return null; });
+    }
+
     var _pt = Date.now();
-    var p = Promise.all(eps.map(walk)).then(function (r) {
+    var p = (sat.svc === 'eum' ? walkProxied().then(function (h) { return [h]; })
+                               : Promise.all(eps.map(walk))).then(function (r) {
       if (Date.now() - _pt > _tProbe) _tProbe = Date.now() - _pt;
       var best = null, i;
       for (i = 0; i < r.length; i++) if (r[i] && (!best || r[i].at > best.at)) best = r[i];
@@ -954,6 +1040,13 @@
        against 1.0s parallel. */
     var out = new Array(jobs.length), runs = [];
 
+    /* THE FRAME BOX MUST MATCH THE VIEW BOX. Fetching EUMETSAT at a fixed
+       full-disc box was tried to make the proxy cache hit on every pan, and it
+       tore the picture into smeared horizontal bands: background() builds its
+       clear-sky field against the VIEW box, so a frame on a different box is
+       sampled against the wrong background and the rows disagree. Reverted
+       2026-08-20. If the cache-miss cost is worth attacking again, the
+       background field has to move to the frame's box FIRST. */
     function run(job, idx) {
       var pw = Math.max(64, Math.round((job.box.e - job.box.w) / (box.e - box.w) * w));
       return frameFor(job.sat, job.box, pw, h).then(function (fr) {
@@ -1032,7 +1125,14 @@
                       paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 0 } });
       _src = _map.getSource(SRC);
     }
-    try { _map.setLayoutProperty(LAYER, 'visibility', 'visible'); } catch (e) {}
+    /* RESPECT _hidden. This line used to force the layer visible on every call,
+       and ensureLayer() runs on every refresh — so the five-minute tick, or any
+       redraw, made Now reappear ON TOP OF Photo after the user had switched
+       away. Switching modes hides rather than tears down, so hidden is a state
+       this function has to honour, not overwrite. */
+    try {
+      _map.setLayoutProperty(LAYER, 'visibility', _hidden ? 'none' : 'visible');
+    } catch (e) {}
   }
 
   function removeLayer() {
@@ -1040,6 +1140,24 @@
     try { if (_map.getLayer(LAYER)) _map.removeLayer(LAYER); } catch (e) {}
     try { if (_map.getSource(SRC)) _map.removeSource(SRC); } catch (e) {}
     _src = null; _drawn = null;
+  }
+
+  /* SWITCHING MODES MUST NOT THROW THE PIXELS AWAY. Tearing the layer down means
+     the next switch back re-probes, re-fetches and re-composites the whole view —
+     seconds of waiting to see something that was already on screen a moment ago.
+     Hiding keeps the canvas, the source and the decoded frame exactly as they
+     were, so coming back is instant. The five-minute refresh still runs, so what
+     reappears is not stale for long. */
+  function hide() {
+    if (!_map) return;
+    try { if (_map.getLayer(LAYER)) _map.setLayoutProperty(LAYER, 'visibility', 'none'); } catch (e) {}
+    _hidden = true;
+  }
+
+  function show() {
+    if (!_map) return;
+    try { if (_map.getLayer(LAYER)) _map.setLayoutProperty(LAYER, 'visibility', 'visible'); } catch (e) {}
+    _hidden = false;
   }
 
   /* --------------------------------------------------------------- public */
@@ -1101,6 +1219,12 @@
        refresh makes, and its whole purpose is to find a frame newer than the one
        on screen — reusing a cached answer would make it a no-op. */
     _probeCache = {};
+    /* Give a blocked host another chance HERE and nowhere else. Clearing it on
+       every pan would reinstate the sixteen doomed requests each time the globe
+       moves, which is the lag this exists to remove; clearing it never would
+       mean a provider that recovers stays dead until reload. Five minutes is the
+       right cadence for both. */
+    clearHostFails();
     _at = 0; _drawn = null;
     return refresh(true).then(function (v) { return v; }, function () { return false; });
   }
@@ -1138,11 +1262,12 @@
   function hasNight() { return true; }
 
   window.Satellite = {
-    version: '2026-08-19d',
+    version: '2026-08-20a',
     CREDIT: CREDIT,
     on: on, off: off, isOn: isOn, refresh: refresh,
     onFrame: onFrame, missing: missing, invalidate: invalidate,
     coverage: coverage, shownTime: shownTime, hasNight: hasNight,
+    hide: hide, show: show, isHidden: function () { return _hidden; },
     frames: function () { return _stamps.slice(); },
     error: function () { return _err; },
     diagnose: function () {

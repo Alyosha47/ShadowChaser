@@ -71,8 +71,18 @@
     /* Tear the other one down first. Both layers over one map would composite
        into a third thing that means nothing. */
     if (mode !== 'avg' && window.Cloud && Cloud.isOn()) Cloud.disable();
-    if (mode !== 'now' && window.Satellite && Satellite.isOn()) Satellite.off();
-    if (mode !== 'photo' && window.Imagery && Imagery.isOn()) Imagery.off();
+    /* HIDE, DO NOT TEAR DOWN. off() discards the composited canvas and every
+       fetched tile, so switching back re-probed, re-fetched and re-composited a
+       view that had been on screen seconds earlier. Both modules keep their
+       pixels and toggle layer visibility instead, so going back and forth is
+       instant. Their own five-minute refresh keeps what reappears current.
+       off() is still the right call when the whole cloud bar is dismissed. */
+    if (mode !== 'now' && window.Satellite && Satellite.isOn()) {
+      if (Satellite.hide) Satellite.hide(); else Satellite.off();
+    }
+    if (mode !== 'photo' && window.Imagery && Imagery.isOn()) {
+      if (Imagery.hide) Imagery.hide(); else Imagery.off();
+    }
 
     if (mode === 'avg' && window.Cloud && !Cloud.isOn()) Cloud.enable();
     if (mode === 'now' && window.Satellite) {
@@ -84,7 +94,8 @@
          The listener is harmless when the mode is not 'now' — render() returns
          immediately in that case. */
       if (!_framesWired) { _framesWired = true; Satellite.onFrame(function () { render(); }); }
-      Satellite.on(map()).then(render);
+      if (Satellite.isOn() && Satellite.show) { Satellite.show(); render(); }
+      else Satellite.on(map()).then(render);
     }
     if (mode === 'photo' && window.Imagery) {
       if (!_photoWired) { _photoWired = true; Imagery.onFrame(function () { render(); }); }
@@ -249,7 +260,7 @@
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. */
   window.CloudBar = {
-    version: '2026-08-17b',
+    version: '2026-08-20a',
     handleButton: handleButton,
     setMode: setMode,
     mode: function () { return _mode; }
