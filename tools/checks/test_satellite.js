@@ -65,7 +65,12 @@ console.log('\n3. requests cannot silently return an empty image');
 var g = S._url(sats[0], '2026-08-16T11:30:00Z', '0,0,1,1', 8, 8);
 var e = S._url(sats[2], '2026-08-16T11:45:00.000Z', '0,0,1,1', 8, 8);
 ok('GIBS request is EPSG:3857', /EPSG%3A3857/.test(g));
-ok('EUMETSAT request is EPSG:3857', /EPSG%3A3857/.test(e));
+/* EUMETSAT now goes through sat.php, which chooses the CRS itself (it stopped
+   sending access-control-allow-origin and Now must read the pixels). So the
+   client URL carries no CRS at all, and the assertion belongs on the proxy. */
+ok('EUMETSAT request goes same-origin through sat.php', /^\/sat\.php\?s=eum&/.test(e));
+ok('sat.php asks upstream for EPSG:3857',
+   /CRS=EPSG%3A3857/.test(require('fs').readFileSync(path.join(__dirname, '../../sat.php'), 'utf8')));
 ok('nothing anywhere asks for 4326 — the axis flip returns blank with no error',
    !/4326/.test(code));
 ok('never falls back to a service default frame', !/time=default/i.test(code));

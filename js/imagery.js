@@ -100,29 +100,49 @@
     /* ORDER IS PAINT ORDER. A pixel inside two discs shows the last layer added
        and a raster layer cannot vary per pixel, so the only control we have is
        which disc sits on top. BASE is always added before all of these. */
-    /* IODC AND HIMAWARI ARE OUT OF PHOTO, and it is a colour decision, not a
-       technical one. Photo is a PICTURE, and a picture made of four different
-       renderings does not read as one planet: geocolour is true colour,
-       msg_iodc:rgb_natural paints vegetation cyan and desert pink, Himawari's
-       visible band is greyscale, and its infrared is a rainbow temperature
-       palette. Stacked with a hard limb between each, the result was the
-       mishmash of mismatched patches with black edges between them.
-       VIIRS below is true colour and covers both sectors, so dropping them costs
-       currency in the Indian Ocean and the Pacific — hours instead of minutes —
-       and buys a picture that looks like one planet.
-       They remain correct and are one line away if that trade is wrong:
+    /* Listed WEST TO EAST. Order no longer decides overlaps — the extents are
+       clipped at the midpoint between neighbouring nadirs and do not overlap at
+       all (see boxesOf) — so this is just the order it is easiest to read.
+
+       HIMAWARI IS BACK IN, and the reason it was out has been overtaken. It was
+       dropped as a COLOUR decision: geocolour is true colour and Himawari's only
+       GIBS product for this slot is a greyscale visible band (verified against
+       WMTSCapabilities on 2026-08-20 — GIBS publishes Air Mass, Band13 infrared
+       and Band3 red visible for AHI, and no true-colour product at all), so
+       stacked with hard limbs between them the discs read as a mishmash rather
+       than one planet.
+       But without it there is NO IMAGERY AT ALL from 70E to 153E — a blank slice
+       from pole to pole containing China, Japan, Australia and half the Indian
+       Ocean. A greyscale panel that shows the weather beats a hole that shows
+       none, and the midpoint clipping means it butts its neighbour cleanly
+       instead of stacking on it. Its `alt` infrared covers the hours when the
+       visible band publishes nothing, desaturated by addOne so the temperature
+       palette does not read as confetti.
+
+       IODC stays out: Meteosat already covers its longitudes well and it would
+       add a THIRD rendering (rgb_natural paints vegetation cyan and desert pink)
+       for a strip Himawari now reaches. One line away if that is ever wanted:
          { id: 'iodc', name: 'Meteosat IODC', lon: 45.5, svc: 'eum', step: 15,
            layer: 'msg_iodc:rgb_natural', span: 55 },
-         { id: 'himawari', name: 'Himawari', lon: 140.7, svc: 'gibs', step: 10,
-           layer: 'Himawari_AHI_Band3_Red_Visible_1km', zmax: 7,
-           alt: 'Himawari_AHI_Band13_Clean_Infrared', altZmax: 6, span: 70 },
     */
     { id: 'goes-west', name: 'GOES-West', lon: -137.0, svc: 'gibs', step: 10,
       layer: 'GOES-West_ABI_GeoColor',  zmax: 7, span: 70 },
     { id: 'goes-east', name: 'GOES-East', lon: -75.2,  svc: 'gibs', step: 10,
       layer: 'GOES-East_ABI_GeoColor',  zmax: 7, span: 70 },
     { id: 'mtg',       name: 'Meteosat',  lon: 0.0,    svc: 'eum',  step: 10,
-      layer: 'mtg_fd:rgb_geocolour',    span: 70 }
+      layer: 'mtg_fd:rgb_geocolour',    span: 70 },
+    /* INFRARED, NOT THE VISIBLE BAND, and this is the whole reason the slot is
+       usable. Band3 is reflected sunlight: rendered at 19:40Z it filled the
+       Pacific with a BLACK RECTANGLE over the basemap, because its nadir was at
+       dawn and passed the frame probe while most of the disc was still night.
+       Band13 publishes round the clock and shows the same cloud at 03:00 as at
+       15:00, so the panel is never a black hole and never changes character
+       halfway through the day. `grey` desaturates it: the infrared palette adds
+       COLOUR below about -12C, which beside true-colour geocolour reads as
+       confetti. */
+    { id: 'himawari',  name: 'Himawari', lon: 140.7,  svc: 'gibs', step: 10,
+      layer: 'Himawari_AHI_Band13_Clean_Infrared', zmax: 6, grey: true,
+      span: 70 }
   ];
 
   /* `span` is how many degrees either side of nadir a disc is allowed to draw,
@@ -144,7 +164,14 @@
   var _missing = [];
   var _listeners = [];
 
-  function ids(sat) { return { src: 'photo-src-' + sat.id, lyr: 'photo-lyr-' + sat.id }; }
+  /* A disc that crosses the antemeridian needs two sources (see boxesOf), so an
+     id carries a part index. Part 0 keeps the original name, so nothing that
+     already knows a layer id has to change. */
+  var PARTS = 2;
+  function ids(sat, k) {
+    var sfx = k ? '-' + k : '';
+    return { src: 'photo-src-' + sat.id + sfx, lyr: 'photo-lyr-' + sat.id + sfx };
+  }
 
   function announce() {
     for (var i = 0; i < _listeners.length; i++) {
@@ -216,7 +243,13 @@
   var SCHEME = 'sctile';
   var CLEAR_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk' +
                   'YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-  var RETRIES = 2, RETRY_MS = 400;
+  /* FOUR, NOT TWO. The transparent-PNG fallback is PERMANENT — MapLibre keeps
+     the tile it was given — so every attempt that runs out becomes a blank
+     square on the map until the next five-minute rebuild. At the measured drop
+     rate of roughly one in five, three attempts still leaves about 1 tile in
+     125 blank, which is a visible hole on a screen full of tiles; five leaves
+     about 1 in 3000. The cost is only paid on tiles that are already failing. */
+  var RETRIES = 4, RETRY_MS = 400;
   var _protoReady = false;
 
   function clearTile() {
@@ -336,23 +369,95 @@
   /* ------------------------------------------------------------ map plumbing */
 
   function dropOne(sat) {
-    var id = ids(sat);
-    if (_map.getLayer(id.lyr)) _map.removeLayer(id.lyr);
-    if (_map.getSource(id.src)) _map.removeSource(id.src);
+    for (var k = 0; k < PARTS; k++) {
+      var id = ids(sat, k);
+      if (_map.getLayer(id.lyr)) _map.removeLayer(id.lyr);
+      if (_map.getSource(id.src)) _map.removeSource(id.src);
+    }
   }
 
-  /* MapLibre wants one plain west/east pair. A disc that straddles the
-     antemeridian cannot be expressed that way, so it is widened to the whole
-     world and the platform's own wrapping handles it — simpler than splitting,
-     which is precisely the split that used to leave a seam. */
-  function boundsOf(sat) {
-    var w = sat.lon - sat.span, e = sat.lon + sat.span;
-    if (w < -180 || e > 180) return [-180, -85, 180, 85];
-    return [w, -85, e, 85];
+  /* ------------------------------------------------------------------ extent
+     A raster layer cannot vary per pixel, so where two discs overlap the only
+     control is which one is allowed to draw there. `span` alone is not enough:
+     every disc is smeared and dark at its limb, and the disc whose limb it is
+     was painting OVER a neighbour's crisp near-nadir pixels — Meteosat at 70
+     degrees off nadir sat on top of GOES-East all the way across the Atlantic,
+     which is the band of mismatched patches this replaced.
+
+     So each disc is CLIPPED AT THE MIDPOINT BETWEEN ITS NADIR AND THE NEXT
+     SATELLITE'S. Every longitude is then drawn by whichever satellite sees it
+     most squarely, the extents do not overlap at all, and paint order stops
+     mattering. Where there is no neighbour the disc keeps its own `span`, so
+     the honest gap stays a gap.
+
+     A range that crosses the antemeridian is SPLIT INTO TWO BOXES rather than
+     widened to the whole world. Widening is what made GOES-West paint Asia and
+     the Indian Ocean with limb smear it cannot see — the opposite of the gap
+     that was chosen deliberately. Two sources with real bounds ask for exactly
+     the tiles that exist; there is no seam, because both halves are the same
+     template at the same resolution and MapLibre butts them at 180. */
+  function wrap180(d) { return ((d + 540) % 360) - 180; }
+
+  /* A geostationary view reaches about 81 degrees of arc before the surface
+     goes over the horizon. `span` is a QUALITY cutoff well inside that, so
+     between two satellites the midpoint always wins even where it is a little
+     wider than either span: Meteosat's 70 and Himawari's 70 fall 0.7 degrees
+     short of meeting, which left a blank hairline down 70.7E from pole to pole.
+     `span` is what a disc uses on a side where it has NO neighbour, which is
+     where the honest gap belongs. */
+  var HORIZON = 81;
+
+  /* QUALITY DECIDES BOTH THE STACK AND THE EXTENT.
+     Two true-colour discs are equally good, so where they overlap the midpoint
+     between their nadirs wins: every longitude is drawn by whichever satellite
+     sees it most squarely, and neither puts its smeared limb over the other's
+     near-nadir pixels.
+     A GREYSCALE disc is not equal. GIBS publishes no true-colour product for
+     Himawari at all (verified against WMTSCapabilities), so the Pacific slot can
+     only be infrared — but there is no reason for it to show anywhere a colour
+     disc can reach. It is therefore given its FULL HORIZON and painted
+     UNDERNEATH, so the colour discs cover it back to the limit of what they can
+     see and the grey survives only in the band nothing else reaches (70E-153E).
+     That is the smallest greyscale area the available products allow. */
+  function tier(sat) { return sat.grey ? 1 : 0; }
+
+  /* Worst first: MapLibre draws in the order layers are added, so the better
+     picture is added last and sits on top. */
+  function paintOrder() {
+    return SATS.slice().sort(function (a, b) { return tier(b) - tier(a); });
+  }
+
+  function extentOf(sat) {
+    /* A disc is only clipped against others of its OWN quality. Clipping the
+       grey disc at the midpoint too would leave it showing beside a colour disc
+       that could have covered it. */
+    var reach = (tier(sat) > 0) ? HORIZON : (sat.span || HORIZON);
+    var w = -reach, e = reach, i, d, m;
+    var haveW = false, haveE = false;
+    for (i = 0; i < SATS.length; i++) {
+      if (SATS[i] === sat || tier(SATS[i]) !== tier(sat)) continue;
+      d = wrap180(SATS[i].lon - sat.lon);
+      if (d > 0) {
+        m = Math.min(d / 2, HORIZON);
+        if (!haveE || m < e) { e = m; haveE = true; }
+      } else if (d < 0) {
+        m = Math.max(d / 2, -HORIZON);
+        if (!haveW || m > w) { w = m; haveW = true; }
+      }
+    }
+    return [sat.lon + w, sat.lon + e];
+  }
+
+  /* One or two [w,s,e,n] boxes, west to east. */
+  function boxesOf(sat) {
+    var x = extentOf(sat), w = x[0], e = x[1];
+    if (e - w >= 360) return [[-180, -85, 180, 85]];
+    if (w < -180) return [[-180, -85, e, 85], [w + 360, -85, 180, 85]];
+    if (e > 180) return [[-180, -85, e - 360, 85], [w, -85, 180, 85]];
+    return [[w, -85, e, 85]];
   }
 
   function addOne(sat, iso, layer) {
-    var id = ids(sat);
     dropOne(sat);
     /* EUMETSAT TILES ARE 512, NOT 256. Every one of them is a separate PHP
        process on shared hosting fetching a fresh render, and a cold tile is
@@ -367,17 +472,7 @@
     var tpl = template(sat, iso, layer, px);
     var origin = (window.location && window.location.origin) || '';
     if (tpl.charAt(0) === '/' && origin) tpl = origin + tpl;
-    _map.addSource(id.src, {
-      type: 'raster',
-      tiles: [(_protoReady ? SCHEME + '://' : '') + tpl],
-      tileSize: px,
-      /* Stop MapLibre asking past the source's real resolution — beyond this it
-         stretches the last tile, which is correct and free. Without it every
-         zoom-in fires a fresh round of requests that can only 404. */
-      maxzoom: zmaxOf(sat, layer),
-      bounds: boundsOf(sat),
-      attribution: CREDIT
-    });
+    var boxes = boxesOf(sat), k;
     /* The infrared alternate arrives in the palette Now decodes to temperature:
        a grey ramp for warm scenes with COLOUR for tops colder than about -12C.
        Beside four true-colour discs that reads as rainbow confetti. MapLibre
@@ -387,9 +482,24 @@
        That is a presentation compromise on 8% of pixels (measured on a live
        frame), taken because the alternative is confetti. */
     var paint = { 'raster-opacity': 1, 'raster-fade-duration': 0 };
-    if (layer && layer !== sat.layer) paint['raster-saturation'] = -1;
-    _map.addLayer({ id: id.lyr, type: 'raster', source: id.src, paint: paint,
-                    layout: { visibility: _hidden ? 'none' : 'visible' } });
+    if (sat.grey || (layer && layer !== sat.layer)) paint['raster-saturation'] = -1;
+
+    for (k = 0; k < boxes.length; k++) {
+      var id = ids(sat, k);
+      _map.addSource(id.src, {
+        type: 'raster',
+        tiles: [(_protoReady ? SCHEME + '://' : '') + tpl],
+        tileSize: px,
+        /* Stop MapLibre asking past the source's real resolution — beyond this
+           it stretches the last tile, which is correct and free. Without it
+           every zoom-in fires a fresh round of requests that can only 404. */
+        maxzoom: zmaxOf(sat, layer),
+        bounds: boxes[k],
+        attribution: CREDIT
+      });
+      _map.addLayer({ id: id.lyr, type: 'raster', source: id.src, paint: paint,
+                      layout: { visibility: _hidden ? 'none' : 'visible' } });
+    }
   }
 
   function removeAll() {
@@ -400,15 +510,15 @@
 
   function build() {
     _busy = true; announce();
-    var all = USE_BASE ? [BASE].concat(SATS) : SATS.slice();
+    var all = USE_BASE ? [BASE].concat(paintOrder()) : paintOrder();
     return Promise.all(all.map(function (sat) {
       return newestFrame(sat).then(function (f) { return { sat: sat, f: f }; });
     })).then(function (res) {
       removeAll();
       _times = {}; _layers = {}; _missing = []; _err = '';
       var any = false, i;
-      /* Added in SATS order, so the overlap winner is decided here and stays
-         decided rather than changing as the view moves. */
+      /* Added worst-picture-first (see paintOrder), so the overlap winner is
+         decided here and stays decided rather than changing as the view moves. */
       for (i = 0; i < res.length; i++) {
         if (res[i].f) {
           _times[res[i].sat.id] = res[i].f.iso;
@@ -438,9 +548,9 @@
   function built() {
     var i;
     for (i = 0; i < SATS.length; i++) {
-      if (_map.getLayer(ids(SATS[i]).lyr)) return true;
+      if (_map.getLayer(ids(SATS[i], 0).lyr)) return true;
     }
-    return !!(_map.getLayer(ids(BASE).lyr));
+    return !!(_map.getLayer(ids(BASE, 0).lyr));
   }
 
   function on(m) {
@@ -452,10 +562,12 @@
   }
 
   function eachLayer(fn) {
-    var all = [BASE].concat(SATS), i, id;
+    var all = [BASE].concat(SATS), i, k, id;
     for (i = 0; i < all.length; i++) {
-      id = ids(all[i]).lyr;
-      if (_map.getLayer(id)) { try { fn(id); } catch (e) {} }
+      for (k = 0; k < PARTS; k++) {
+        id = ids(all[i], k).lyr;
+        if (_map.getLayer(id)) { try { fn(id); } catch (e) {} }
+      }
     }
   }
 
@@ -525,7 +637,7 @@
                    layer: _layers[all[i].id] || null,
                    alt: !!(_layers[all[i].id] && _layers[all[i].id] !== all[i].layer),
                    iso: _times[all[i].id] || null,
-                   onMap: !!(_map && _map.getLayer(ids(all[i]).lyr)) });
+                   onMap: !!(_map && _map.getLayer(ids(all[i], 0).lyr)) });
       }
       return { on: _on, busy: _busy, missing: _missing.slice(),
                shown: shownTime(), error: _err, slots: out };

@@ -22,12 +22,18 @@ function makeMap(){
     getLayer(id){return layers[id];}};
 }
 
-const sb={console,setTimeout,clearTimeout,Promise,fetch,window:{},
+const sb={console,setTimeout,clearTimeout,Promise,fetch:(u,o)=>global.fetch(u,o),window:{},
           document:{createElement:()=>({getContext:()=>({})})}};
 sb.window.window=sb.window;vm.createContext(sb);
 vm.runInContext(fs.readFileSync('js/imagery.js','utf8'),sb);
 const I=sb.window.Imagery;
 
+// The module builds same-origin '/sat.php' URLs. Node has no origin, so resolve
+// them against the live site — that also exercises the real proxy.
+const ORIGIN_HOST='https://followtheshadow.com';
+const ORIGIN='';
+const _f=fetch;
+global.fetch=(u,o)=>_f(typeof u==='string'&&u[0]==='/'?ORIGIN_HOST+u:u,o);
 const R=20037508.342789244;
 function bbox(z,x,y){const n=2**z,s=2*R/n;
   return [-R+x*s,R-(y+1)*s,-R+(x+1)*s,R-y*s].map(v=>v.toFixed(1)).join(',');}
@@ -50,9 +56,22 @@ function lonOf(x,z){return x/(2**z)*360-180;}
     for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
       // honour the source's bounds, as MapLibre does
       if(b){const l0=lonOf(x,z),l1=lonOf(x+1,z);if(l1<b[0]||l0>b[2])continue;}
-      const u=tpl.replace('{bbox-epsg-3857}',bbox(z,x,y));
-      const r=await fetch(u).catch(()=>null);
-      if(!r||!r.ok)continue;
+      // The shipped module installs TWO template shapes: WMS {bbox-epsg-3857}
+      // for EUMETSAT and WMTS {z}/{y}/{x} for GIBS. Substituting only the first
+      // left every GIBS URL with literal braces in it, so every fetch failed and
+      // the mosaic came out empty — the harness was blind to two of three discs.
+      const u=tpl.replace('{bbox-epsg-3857}',bbox(z,x,y))
+                       .replace('{z}',z).replace('{x}',x).replace('{y}',y);
+      // GIBS drops roughly one request in five. In the browser the shipped
+      // addProtocol handler retries; Node has no maplibregl, so without the
+      // same retry here the harness reports holes the map will not have.
+      let r=null;
+      for(let a=0;a<3;a++){
+        r=await fetch(u).catch(()=>null);
+        if(r&&r.ok)break;
+        await new Promise(res=>setTimeout(res,400*(a+1)));
+      }
+      if(!r||!r.ok){console.log('  DROP '+(r?r.status:'net')+' '+lyrId+' z'+z+'/'+x+'/'+y);continue;}
       const buf=Buffer.from(await r.arrayBuffer());
       if(buf.length<300)continue;
       const f=`/tmp/t_${lyrId}_${x}_${y}.png`;
@@ -71,6 +90,10 @@ m=json.load(open('/tmp/tiles.json'))
 c=Image.new('RGBA',(m['w'],m['h']),(0,0,0,255))
 for f,x,y,grey in m['files']:
     t=Image.open(f).convert('RGBA')
+    # EUMETSAT tiles are requested at 512 (addOne), GIBS at 256. The cell is one
+    # z-tile either way, so scale to the cell or a 512 tile laps over its
+    # neighbours -- which looked exactly like a compositing bug in the module.
+    if t.size!=(256,256): t=t.resize((256,256),Image.LANCZOS)
     if grey:
         r,g,b,a=t.split()
         l=Image.merge('RGB',(r,g,b)).convert('L')
