@@ -89,7 +89,7 @@ _COLD = CMAP[CMAP[:, 3] < -11.5]
 GREY_A, GREY_B = -0.38598, 57.2375
 
 def decode_gibs(rgb):
-    """GIBS RGB -> degrees C. Mirrors tempOf() in js/satellite.js."""
+    """GIBS RGB -> degrees C. Mirrors tempOf() in js/cloud-now.js."""
     r = rgb[..., 0].astype(int); g = rgb[..., 1].astype(int); b = rgb[..., 2].astype(int)
     mx = np.maximum(np.maximum(r, g), b); mn = np.minimum(np.minimum(r, g), b)
     grey = (mx - mn) <= 12          # saturation, not channel differences

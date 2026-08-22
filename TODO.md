@@ -10,59 +10,43 @@
   notes, the refactor ledger — ordered by priority. It accretes and is pruned, not rewritten.
 
 **Rules to keep them from drifting:**
+0. **There is no third document.** One was tried and lasted a day (see below). If HANDOFF is hard to
+   navigate, fix its §0 index; if this file is, prune it. Do not start another.
 1. When an item here is done, **delete it** — HANDOFF records the closure. No "DONE" tombstones.
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-08-18 — **live cloud "Now" (#F2c) made usable** (HANDOFF §10A). Four days
-and ~90 versions; the feature works and is not finished. Fixed this session: the dateline
-stripe (a GIBS bbox-edge bug, not our geometry), render 13× faster (`bgAt` was 89% of it),
-parallel fetch and a cached frame probe, the globe-vs-Mercator fetch box, storms hollowing
-themselves out (a 4-day clear-sky reference, now 10), polar extrapolation, and the ☁-off
-bug (which was in `cloud.js`, not `satellite.js`). `test_satellite.js` rewritten — it had
-been testing an architecture two rewrites old and its last four sections had never run.
-**The four `SESSION-2026-08-*.md` files were folded into HANDOFF §10A and deleted.**
-
-Prior: 2026-08-11 — **cloud-cover overlay (#F2 climatology) SHIPPED** (HANDOFF §10).
-ERA5 1991–2020, 0.5°, 8 local-solar-time slices × 12 months, 3.3 MB of WebP; each point
-timed to when the eclipse peaks *there* via `findMaximum()`, not to greatest eclipse.
-Two canvases (world base + sharp viewport) — read §10.3 before touching the render path,
-three plausible alternatives were tried and all lose. Precached since 2026-08-13.
-`Cloud.version` must be bumped on every change to that file.
-
-Prior sessions: the narrative for 2026-08-05 → 08-13 lived here with section references into
-an older HANDOFF numbering that the 2026-08-12 restructure invalidated — every one of them
-pointed at the wrong place. The story belongs in HANDOFF anyway (rule 2 at the top of this
-file), so it has been dropped rather than renumbered. **HANDOFF §15 is the change log.**
+Last touched: 2026-08-20 — **`Photo` rebuilt on MapLibre raster tiles and all three cloud modes
+working** (HANDOFF §10A.8c). Also this session: `START-HERE.md` was folded into HANDOFF and deleted —
+it had become a third home for facts that already had two, and within a day it and HANDOFF §6
+disagreed about which branch was live. **There are two documents: `HANDOFF.md` and this one.**
+HANDOFF §3 no longer carries a task list; everything open is here.
 
 ## PRIORITY ORDER (suggested re-entry)
-*(The map is stable and cosmetically finished as of 2026-07-13/14. Offline works. Terrain
-shadows are DONE and wired in (HANDOFF §4). Priorities are the USER's to set — this is a
-suggestion.)*
-1. **#R5 iOS pinch-zoom not blocked** (detail under BUGS). Known cause, known fix —
+
+0. **PHOTO'S REPEATING TILES — HANDOFF §10A.8d.** Open, reproducible on the user's device, not
+   reproduced in the rig yet. Read the ruled-out list before touching anything; six threads have gone
+   into this feature. The method is mechanical: run the REAL index.html in the rig, reproduce the
+   grid, then remove one variable at a time.
+
+*(Priorities are the USER's to set — this is a suggestion. The map is stable and cosmetically
+finished; offline works; terrain shadows are done and wired in.)*
+
+1. **`Now` takes ~15 s on first load** — the only remaining defect a user in a field would notice.
+   Measured, and the obvious fix has already been tried and reverted. Detail under **#F2c** below;
+   read it before touching anything.
+2. **Evaluate a non-GIBS imagery source** — the single change that improves every complaint at once:
+   freshness, resolution and reliability. Detail under **#F2c**.
+3. **#R5 iOS pinch-zoom not blocked** (detail under BUGS). Known cause, known fix —
    `touch-action: pan-y` on the scrollable panels, LEAVING the map container alone. Small and
    contained, but needs a real iPhone to confirm, so it is the user's to verify.
-2. **Scan ignores non-location filters** (detail under BUGS). TODO's own note calls this the
-   REAL scan win: filter by date/type BEFORE loading chunks instead of walking ~30 of them on
-   every first scan. No user-visible change, no data restructuring.
-3. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
-   Deliberately NOT first: it is the least visible and the most likely to consume a whole
-   session. Read HANDOFF §11.4 before starting.
-4. **Search temporal tokens** — needs a design decision before any code (low priority; not
-   currently bothering the user).
-5. Remaining open bugs → UX deliberations → Features.
-
-**Dropped 2026-08-09 — "Overlay sheet pattern".** It was premised on three overlays arriving
-at once, each growing its own control cluster. That premise is gone: the shadow scrubber
-stays where it is (the user likes it there), shadow-on-globe is shelved, **cloud cover
-shipped with a single toggle and no panel at all** (HANDOFF §10 — which rather makes the point),
-and the planned desirability heatmap may need no controls at all. Building a
-generic control pattern for imagined consumers produces an abstraction that fits none of
-them. **`.sheet` already exists, works, and has a real consumer in the poster** — it will
-still be there when an overlay actually needs a panel, and by then its contents will be
-known. Do not resurrect this as speculative work.
-
----
+4. **Scan ignores non-location filters** (detail under BUGS). Filter by date/type BEFORE loading
+   chunks instead of walking ~30 of them on every first scan. No user-visible change, no data
+   restructuring.
+5. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
+   Deliberately NOT first: least visible, most likely to consume a whole session. Read HANDOFF §11.4.
+6. **Search temporal tokens** — needs a design decision before any code. Not currently bothering him.
+7. Remaining open bugs → UX deliberations → Features.
 
 ## MAP COSMETICS — mostly DONE (2026-07-12/13). What remains:
 - **Limb not perfectly round** — the globe silhouette shows slight facets at grazing angle
@@ -348,6 +332,89 @@ The data-key and safety-rail traps are renderer-agnostic.)*
 - Night-sky-during-totality view — planets/comets/bright stars near the Sun at totality,
   positioned for the selected eclipse.
 
+## MOVED FROM HANDOFF §3 on 2026-08-20 — file these properly next time you are in here
+
+These were duplicated in both documents and had begun to disagree. They are verbatim from HANDOFF and
+belong under the headings above; folding them in is a five-minute job for whoever is next.
+
+### Open, measured, not fixed
+- **`Now` takes ~15 s on first load.** Measured live: a full-size EUMETSAT render is 3.1 s at their
+  end plus ~4 s of Bluehost overhead = 7.3 s cold, 0.13 s cached, ×2 discs. The proxy cache only
+  helps when the URL repeats, and `Now` requests a **view-shaped bbox**, so every pan is a new URL.
+  **The obvious fix was TRIED AND IT FAILED — do not repeat it blindly.** Fetching EUMETSAT at a
+  fixed full-disc box makes one canonical cacheable URL, and `compose()` maps each frame by lat/lon
+  through `fr.box`, so a larger box composites fine — but **`background()` builds its clear-sky field
+  against the VIEW box**, so a frame on a different box is sampled against the wrong background and
+  the picture tears into smeared horizontal bands. Reverted. To attack it properly: move the
+  background field onto the frame's own box FIRST, *then* fix the fetch box, and verify with
+  `fullpreview.js` before shipping. This is the only remaining defect a user in a field would notice.
+
+### Not done, by choice — in rough priority order
+1. **Scan ignores non-location filters.** Filter by date/type BEFORE loading chunks instead of
+   walking ~30 of them on every first scan. No user-visible change, no data restructuring.
+2. **Forecast half of #F2** — near-term, online, one eclipse. The climatology half shipped.
+3. **Cloud indicators in the details panel** — depends on `Cloud.sampleAt` (§10.7).
+4. **Search by country.** Requested 2026-08-13, not yet scoped. The pieces exist —
+   `countries.geojson.gz` is already precached, and `search_parser.js` already does
+   longest-match-first multi-word matching for cities — so it is plausible rather than easy. The real
+   question is semantics, and it is the same one #F5 asks: "total eclipses in Chile" means the path
+   crossed the country, which is a polygon test against path geometry, not a point lookup like a
+   city. Decide that before writing anything.
+5. **Greatest duration for all ~11,900 eclipses.** GE ≠ greatest duration even for ordinary eclipses
+   (median +0.07 s, max +49.8 s and 10,686 km away). Needs a trustworthy global search, not the hill
+   climb used for the 94 non-central ones. Full handoff in **`GREATEST-DURATION.md`** (repo root) —
+   read it before starting.
+6. **#F3 animated shadow with time slider** — scrub umbra/penumbra in real time; most on-brand.
+7. **#F5 global-vs-local eclipse-type search semantics** — "1960+ total St. Louis": total globally +
+   visible, vs total AS SEEN from STL. Four options in TODO. Settle this and #4 together.
+8. **Duplicate downloads** (§12.4) — measured, harmless, has a known real fix.
+
+### Polish queued (Sonnet-grade)
+Merge "Coordinates" + "City" into one "Location" section (caveat: the parser doesn't handle
+bracketed multi-word cities yet); move the eclipse date to an overlay on desktop and make it more
+visible on mobile; distinguish web vs app banner size; server-side share page
+`followtheshadow.com/share?e=XXXXX` (the only way past the plain-text ceiling of
+`navigator.share`/`mailto`); Global Circumstances panel is tall.
+
+### Deferred infrastructure
+Production bundling (single JS/CSS). Offline city **labels**: MapLibre symbol layers need PBF glyphs
+(system fonts are unavailable to WebGL), so offline is dots-only today — bundling Noto Sans PBF is
+~2–3 MB. CSS module split (only after a build step). `map.js` single-file size. Shrinking git
+history of `data/paths/` (~274 MB) needs a destructive `git filter-repo` + force-push.
+
+
+### #F2c — live cloud, the two real jobs
+
+**1. `Now`'s ~15 s first load.** See "Open, measured, not fixed" immediately above for the measurement
+and the failed attempt. The route through is: move the background field onto the frame's own box
+FIRST, *then* fix the fetch box to a canonical cacheable one. Verify with `fullpreview.js` before
+shipping — build a fresh scene, change one thing, `cmp` the two PPMs (HANDOFF §10A.10).
+
+**2. Evaluate a non-GIBS imagery source.** GIBS is NASA's *archive and visualisation* service, not an
+operational weather feed — zoom.earth and AccuWeather do not use it. We do, because it was the only
+source verified to work from a browser with CORS, no key, and one request. It is 18–50 min behind and
+drops roughly one request in five (HANDOFF §3, §10A.7).
+
+In order, and **report what you measure before writing any code**:
+
+1. **Confirm `rammb-slider.cira.colostate.edu` is reachable** — it and `www.accuweather.com` were
+   added to the allowlist at the very end of 2026-08-19 and were still blocked in that session.
+   CIRA's SLIDER serves GOES *and* Himawari at roughly 5 minutes' latency. **It is also the only
+   known route to a true-colour Himawari**, which is the one thing that would close `Photo`'s
+   greyscale band — but its tiles are in the satellite's own fixed-grid projection, not Web Mercator,
+   so it is a **reprojection job, not a source swap**. Establish that before promising it.
+2. **Find out what shape it is.** Expect pre-rendered JPEG tiles on a directory-style URL scheme —
+   *not* WMS, so no `BBOX`. Note HANDOFF §10A.9: `addProtocol` once produced provably correct data
+   that never displayed and the cause was never found. The fault was in the display wiring, not the
+   data path. `Photo` now uses `addProtocol` successfully for retry, so that ground is less unknown
+   than it was.
+3. **CORS decides how far it goes.** Without permissive headers we cannot read pixels — but `Photo`
+   only *displays* pixels, so SLIDER may serve `Photo` even where it cannot serve `Now`. And
+   `sat.php` already exists as a same-origin proxy if reading is needed (HANDOFF §10A.7b).
+4. `www.accuweather.com` was allowlisted so you can see what they actually pull instead of guessing.
+
+---
+
 ## FEATURES — HARD
 - **Greatest duration for ALL eclipses (not just the 94).** ⇒ **Handoff exists:
   `docs/GREATEST-DURATION.md` — read it first, don't re-derive any of this.**
@@ -432,8 +499,8 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   forecast data if a freely available source exists** — no key, no quota, cacheable for
   offline. That week is when a chaser commits to travel, and climatology is worthless at
   that range: a 40%-cloudy-in-August average tells you nothing about next Tuesday. The
-  handover should be driven by days-to-eclipse. Rendering is solved twice over — `js/cloud.js`
-  owns a canvas layer, a palette and a point sampler, `js/satellite.js` owns a live overlay
+  handover should be driven by days-to-eclipse. Rendering is solved twice over — `js/cloud-average.js`
+  owns a canvas layer, a palette and a point sampler, `js/cloud-now.js` owns a live overlay
   and the `Average | Now` strip is a third cell away from carrying a forecast (§10A.1).
   **The open question is entirely the data source**, and it is harder than the climatology one was: forecasts are current-state
   services with quotas, where ERA5 was a one-time static download. Do not start by writing
@@ -537,7 +604,7 @@ The data-key and safety-rail traps are renderer-agnostic.)*
     dead `corridorToPolygonData` (harmless; remove only as part of a real verified refactor).
     Also `sunArrowImage()` is now unused (billboard arrow replaced by surface geometry) —
     remove in the next map.js cleanup pass.
-  - `AppState.on()` — **now has real subscribers** (`js/map.js` redraws, `js/cloud.js`).
+  - `AppState.on()` — **now has real subscribers** (`js/map.js` redraws, `js/cloud-average.js`).
     No longer speculative; leave it.
   - **Connectivity state** — now a real subsystem (post 2026-07-29 rewrite): active probe (3 s
     timeout, cache-busted, 15 s poll + event-driven, 3 s reprobe on failure), two-strike debounce,

@@ -1,4 +1,4 @@
-/* tools/checks/test_satellite.js — js/satellite.js, the parts that need no map
+/* tools/checks/test_satellite.js — js/cloud-now.js, the parts that need no map
  * and no network. Resolves its input two levels up, like every suite here.
  *
  * REWRITTEN for the composite architecture. The old suite asserted things that
@@ -21,7 +21,7 @@ function ok(n, c, x) {
   else { fail++; console.log('  FAIL ' + n + (x ? '  \u2192 ' + x : '')); }
 }
 
-var src = fs.readFileSync(path.join(__dirname, '../../js/satellite.js'), 'utf8');
+var src = fs.readFileSync(path.join(__dirname, '../../js/cloud-now.js'), 'utf8');
 var sb = { window: {}, console: console,
            fetch: function () { throw new Error('tests must not hit the network'); } };
 vm.createContext(sb); vm.runInContext(src, sb);
@@ -132,14 +132,14 @@ console.log('\n8b. the deleted patches stay deleted');
      !h[1].test(code));
 });
 
-console.log('\n9. the contract js/cloudbar.js actually calls');
+console.log('\n9. the contract js/cloud-ui.js actually calls');
 /* This suite once passed while the strip threw on its first click, because the
-   API was checked against a stale copy of satellite.js in the repo rather than
-   against its only caller. Every name cloudbar.js reaches for is asserted here.
+   API was checked against a stale copy of cloud-now.js in the repo rather than
+   against its only caller. Every name cloud-ui.js reaches for is asserted here.
    If cloudbar grows a call, add it to this list, not to a comment. */
 ['on', 'off', 'isOn', 'onFrame', 'shownTime', 'missing', 'invalidate', 'CREDIT']
   .forEach(function (name) {
-    ok('exports ' + name, S[name] !== undefined, 'cloudbar.js calls Satellite.' + name);
+    ok('exports ' + name, S[name] !== undefined, 'cloud-ui.js calls Satellite.' + name);
   });
 ok('onFrame accepts a callback without a map', (function () {
   try { S.onFrame(function () {}); return true; } catch (err) { return false; }

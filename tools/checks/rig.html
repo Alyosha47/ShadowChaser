@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link href="/vendor/maplibre-gl-5.5.0.css" rel="stylesheet">
+<style>html,body,#m{margin:0;height:100%;width:100%;background:#0b0e14}</style>
+</head><body><div id="m"></div>
+<script src="/vendor/maplibre-gl-csp-5.5.0.js"></script>
+<script>
+maplibregl.workerUrl='/vendor/maplibre-gl-csp-worker-5.5.0.js';
+window.BUILD='test';
+var params=new URLSearchParams(location.search);
+var map=new maplibregl.Map({container:'m',
+  style:{version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#1b2430'}}]},
+  center:[+(params.get('lon')||10),+(params.get('lat')||30)],
+  zoom:+(params.get('z')||1.5)});
+/* MapLibre 5.x takes the projection from the STYLE, not the map options — passing
+   it here silently does nothing and you get Mercator while believing you have a
+   globe. Set it explicitly and read it back. */
+map.on('style.load',function(){ map.setProjection({type:params.get('proj')||'globe'}); });
+window.__ready=false;
+map.on('load',function(){
+  Imagery.on(map).then(function(){
+    // wait for tiles to settle
+    var idle=0,t=setInterval(function(){ if(map.loaded()){ if(++idle>6){clearInterval(t);window.__ready=true;} } else idle=0; },400);
+    setTimeout(function(){window.__ready=true;},45000);
+  });
+});
+</script>
+<script src="/js/cloud-photo.js"></script>
+</body></html>

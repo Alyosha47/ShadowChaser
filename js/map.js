@@ -758,6 +758,9 @@ function applyOnlineState() {
   /* shadow-ui greys its toggle offline, but it listens to the raw online/offline
      events — the signal iOS doesn't reliably fire. Drive it from the truth. */
   if (typeof refreshShadowAvailability === 'function') refreshShadowAvailability();
+  /* Same reason: the cloud bar greys Now and Photo offline and had no way to
+     learn that the connection returned. */
+  if (window.CloudBar && CloudBar.refresh) CloudBar.refresh();
   renderBasemapPicker();
 }
 
@@ -1041,24 +1044,47 @@ function updateMapState() {
    Safari 16.4+). No third-party library required, which keeps the app fully
    offline-capable. If we ever need to support older browsers, vendor pako
    locally and add a fallback here. */
+var _pathMiss = {}, _pathPending = {};
+var PATH_MISS_TTL = 30000;   /* remember a failure for 30s, then allow one retry */
+
 function loadPathChunk(entry) {
   var chunkName = entry._chunk;
   if (!chunkName) return Promise.resolve(null);
   if (pathCache[chunkName]) return Promise.resolve(pathCache[chunkName]);
+  /* A FAILURE IS A RESULT AND MUST BE REMEMBERED. Only successes were cached, so
+     every caller refetched a chunk that had already failed — 14 identical
+     attempts in one offline session. Each one stalls before failing, a search
+     walks ~30 chunks, and the tab freezes for a minute. It also disables the
+     Average layer, whose _render catches the failure and turns itself off.
+     One in-flight promise per chunk, and the miss is remembered for MISS_TTL so
+     a genuine reconnection still recovers without a reload. */
+  var now = Date.now();
+  if (_pathMiss[chunkName] && now - _pathMiss[chunkName] < PATH_MISS_TTL) {
+    return Promise.resolve(null);
+  }
+  if (_pathPending[chunkName]) return _pathPending[chunkName];
   var url = DATA_BASE+'/paths/paths_'+chunkName+'.json.gz?v='+BUILD;
-  return fetch(url).then(function (r) {
+  var p = fetch(url).then(function (r) {
     if (!r.ok) return null;
     /* Pipe the gzipped body through DecompressionStream, then parse as JSON. */
     var ds = new DecompressionStream('gzip');
     var stream = r.body.pipeThrough(ds);
     return new Response(stream).json();
   }).then(function (d) {
-    if (d) pathCache[chunkName] = d;
+    if (d) { pathCache[chunkName] = d; delete _pathMiss[chunkName]; }
+    else   { _pathMiss[chunkName] = Date.now(); }
+    delete _pathPending[chunkName];
     return d;
   }).catch(function (err) {
-    console.error('loadPathChunk failed for', chunkName, err);
+    /* Logged ONCE per TTL, not once per caller. The repeated identical error was
+       most of the noise that made the real fault hard to see. */
+    if (!_pathMiss[chunkName]) console.error('loadPathChunk failed for', chunkName, err);
+    _pathMiss[chunkName] = Date.now();
+    delete _pathPending[chunkName];
     return null;
   });
+  _pathPending[chunkName] = p;
+  return p;
 }
 
 /* HTML markers (observer dot, greatest-eclipse dot) are DOM overlays. MapLibre

@@ -75,7 +75,7 @@ for part in parts:
         if a is None: continue
         if sat['id'] not in BG:
             st=[]
-            for day in range(1,11):   # MUST MATCH BG_FRAMES in js/satellite.js
+            for day in range(1,11):   # MUST MATCH BG_FRAMES in js/cloud-now.js
                 bgf=fetch(sat,bgbox,bw,bh,10+day*1440)
                 if bgf is not None: st.append(np.where(bgf[...,3]>250,temp(sat,bgf),-999.0))
             if not st: continue

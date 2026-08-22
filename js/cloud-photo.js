@@ -1,4 +1,4 @@
-/* imagery.js — LIVE SATELLITE PICTURE ("Photo", #F2d)
+/* cloud-photo.js — LIVE SATELLITE PICTURE ("Photo", #F2d)
  *
  * The third cloud mode. Average is a climatology, Now is a MEASUREMENT of cloud
  * derived from infrared, and this is a PHOTOGRAPH: the geostationary view drawn
@@ -29,7 +29,7 @@
  *
  * Photo never needed the canvas. Now genuinely does — it reads pixels to decode
  * infrared into temperature. Photo only ever DISPLAYS pixels. It inherited the
- * compositor by being written as a copy of satellite.js, and that inheritance
+ * compositor by being written as a copy of cloud-now.js, and that inheritance
  * was the bug.
  *
  * HANDOFF's standing rule is to name the platform API before writing per-frame
@@ -241,8 +241,18 @@
      corners genuinely have no data. Returning an image keeps them out of the
      console and stops MapLibre marking the tile as errored. */
   var SCHEME = 'sctile';
-  var CLEAR_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk' +
-                  'YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  /* THIS MUST BE FULLY TRANSPARENT, AND FOR MONTHS IT WAS NOT. The previous
+     blob decoded to rgb(0,0,255) at alpha 127 — a HALF-OPAQUE BLUE pixel — while
+     the comment above it said "transparent". MapLibre stretches a 1x1 tile
+     across the whole tile, and at globe zoom one tile is a quarter of the
+     planet, so every tile that ran out of retries painted a translucent blue
+     slab over the map: the "whole-continent smears", the repeated rectangles at
+     different scales, the washed-out wedges. It looked like a projection or
+     compositing fault and was neither.
+     Verified on write: decodes to 1x1 RGBA (0,0,0,0). If this line is ever
+     edited, decode it and check the alpha — test_imagery does exactly that. */
+  var CLEAR_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNg' +
+                  'YGBgAAAABQABeqhXUAAAAABJRU5ErkJggg==';
   /* FOUR, NOT TWO. The transparent-PNG fallback is PERMANENT — MapLibre keeps
      the tile it was given — so every attempt that runs out becomes a blank
      square on the map until the next five-minute rebuild. At the measured drop

@@ -36,7 +36,7 @@ const sb={console,setTimeout,clearTimeout,Promise,fetch:fakeFetch,
           document:{createElement:()=>({getContext:()=>({})})}};
 sb.window.window=sb.window;
 vm.createContext(sb);
-vm.runInContext(fs.readFileSync('js/imagery.js','utf8'),sb);
+vm.runInContext(fs.readFileSync('js/cloud-photo.js','utf8'),sb);
 const I=sb.window.Imagery;
 
 (async function(){
@@ -62,6 +62,35 @@ const I=sb.window.Imagery;
   const groups=ranked.map(s=>partsOf(s.id));
   const nParts=groups.reduce((a,g)=>a+g.length,0);
   const mtgParts=partsOf('mtg').length;   /* counted while it is still up */
+  /* THE FALLBACK TILE MUST BE INVISIBLE. It shipped for months as a half-opaque
+     BLUE pixel while the comment beside it said "transparent" — and MapLibre
+     stretches a 1x1 tile across the whole tile, so at globe zoom every exhausted
+     retry painted a translucent blue slab across a quarter of the planet.
+     Decode it and look at the alpha; reading the comment is not enough. */
+  (()=>{
+    const m=/CLEAR_PNG\s*=\s*'([^']*)'\s*\+\s*'([^']*)'/.exec(
+      fs.readFileSync('js/cloud-photo.js','utf8'));
+    if(!m){ ok('CLEAR_PNG is present and readable', false); return; }
+    const buf=Buffer.from(m[1]+m[2],'base64');
+    ok('the fallback tile is a PNG', buf.slice(1,4).toString()==='PNG');
+    /* Walk the chunks to the IDAT, inflate, and read the single pixel. */
+    const zlib=require('zlib');
+    let off=8, ihdr=null, idat=[];
+    while(off<buf.length){
+      const len=buf.readUInt32BE(off), typ=buf.slice(off+4,off+8).toString();
+      if(typ==='IHDR') ihdr={w:buf.readUInt32BE(off+8),h:buf.readUInt32BE(off+12),
+                             depth:buf[off+16],color:buf[off+17]};
+      if(typ==='IDAT') idat.push(buf.slice(off+8,off+8+len));
+      off+=12+len;
+    }
+    const raw=zlib.inflateSync(Buffer.concat(idat));
+    ok('the fallback tile is 1x1 RGBA', ihdr && ihdr.w===1 && ihdr.h===1 && ihdr.color===6,
+       JSON.stringify(ihdr));
+    /* raw = [filter byte, R, G, B, A] */
+    ok('THE FALLBACK TILE IS FULLY TRANSPARENT', raw[4]===0,
+       'alpha='+raw[4]+' rgb='+raw[1]+','+raw[2]+','+raw[3]);
+  })();
+
   ok('every satellite draws, as one part or two',
      groups.every(g=>g.length>=1)&&Object.keys(map.sources).length===nParts);
   ok('every source is a raster source',

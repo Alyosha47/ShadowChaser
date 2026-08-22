@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tools/checks/calibrate_cloud.py — fit js/satellite.js's cloud-fraction
+"""tools/checks/calibrate_cloud.py — fit js/cloud-now.js's cloud-fraction
 constants against official cloud products, with no human in the loop.
 
 WHY THIS EXISTS
@@ -83,7 +83,7 @@ def usable(a, floor=0.5):
     return a is not None and float((a[..., 3] > 250).mean()) > floor and int(a[..., 0].max()) > 5
 
 # ------------------------------------------------------------ the algorithm
-# This must mirror js/satellite.js exactly. If they drift, the constants fitted
+# This must mirror js/cloud-now.js exactly. If they drift, the constants fitted
 # here describe something the app does not do.
 
 def cloud_fraction(v, ok, floor, cell=48, rad=3, pct=0.20, span_lo=0.20, span_hi=0.985):
@@ -286,7 +286,7 @@ def main():
     except Exception as e:
         print("goes-e  TEMPO unavailable (%s) — leave chained through the overlap" % e)
 
-    print("\nFLOORS for js/satellite.js:")
+    print("\nFLOORS for js/cloud-now.js:")
     for k, v in results.items():
         print("    '%s': %.2f," % (k, v))
     print("\nHimawari has no geostationary truth product. Chain it to GOES-West\n"

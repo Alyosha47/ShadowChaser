@@ -94,17 +94,28 @@
       padding-top: env(safe-area-inset-top, 0px);
     }
 
+    /* The banner mark is the LOCKSCREEN ICON itself (icons/mark.png — the same
+       corona art as icons/icon-512-v2.png, background keyed out and cropped
+       tight). It is used as a MASK, not an <img>, so it still takes --gold like
+       the ☉ glyph it replaced and still glows. Change the mask to a different
+       file and the colour follows automatically; set `background: #fff` for the
+       white version that appears on the home screen. */
     .app-header::before {
-      content:   '\2609';
-      font-size: 1.8rem;
-      color:     var(--gold);
-      animation: glow 4s ease-in-out infinite;
-      flex-shrink: 0;
+      content:         '';
+      width:           1.9rem;
+      height:          1.9rem;
+      flex-shrink:     0;
+      background:      var(--gold2);
+      -webkit-mask:    url('../icons/mark.png') center / contain no-repeat;
+              mask:    url('../icons/mark.png') center / contain no-repeat;
+      animation:       glow 4s ease-in-out infinite;
     }
 
+    /* A mask has no text to cast a text-shadow, so the glow is a drop-shadow on
+       the painted result instead. Same timing and colour as before. */
     @keyframes glow {
-      0%, 100% { text-shadow: 0 0 30px rgba(200,169,110,0.4); }
-      50%       { text-shadow: 0 0 60px rgba(200,169,110,0.7); }
+      0%, 100% { filter: drop-shadow(0 0 6px rgba(232,201,142,0.55)); }
+      50%      { filter: drop-shadow(0 0 12px rgba(232,201,142,0.85)); }
     }
 
     .app-title {

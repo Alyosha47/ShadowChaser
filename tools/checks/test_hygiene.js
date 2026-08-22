@@ -220,6 +220,50 @@ ok('no JS reaches for an element that does not exist',
 const build = (html.match(/var BUILD\s*=\s*'([^']+)'/) || [])[1];
 const stamped = [...html.matchAll(/(?:src|href)="(?:js|css)\/[^"?]+\?v=([^"]+)"/g)]
   .map(m => m[1]);
+/* ── cloud-average.js staleness guards ────────────────────────────────────────────
+   The Average overlay is drawn for ONE eclipse, and twice it has been left
+   showing the wrong one. Both guards below are the fix; both are cheap to
+   delete by accident, and neither has a visible symptom until someone jumps
+   from the log to an eclipse in a different month. */
+const cloud = fs.readFileSync(ROOT + '/js/cloud-average.js', 'utf8');
+ok('_covered() checks WHICH eclipse the canvas was drawn for, not just the box',
+   /_drawnKey\s*!==\s*_eclipseKey\(selectedEntry\)/.test(cloud));
+ok('_drawnKey is set whenever the detail canvas is drawn',
+   /_drawnKey\s*=\s*_eclipseKey\(rec\)/.test(cloud));
+
+/* A function declared twice in one scope is silently the LAST one. A helper
+   added as _key() shadowed the slice-cache _key() already at the top of
+   cloud-average.js, every _loadSlice lookup returned garbage, and the Average layer
+   disabled itself outright. No syntax error, no runtime error, no test. */
+const FN_DUP_SCAN = ['js/cloud-average.js','js/cloud-now.js','js/cloud-photo.js','js/map.js',
+                  'js/list.js','js/details.js','js/userlog.js','js/search.js'];
+const fnDupes = [];
+for (const f of FN_DUP_SCAN) {
+  const src = fs.readFileSync(ROOT + '/' + f, 'utf8');
+  const seen = {};
+  for (const m of src.matchAll(/^\s*function\s+([A-Za-z_$][\w$]*)\s*\(/gm)) {
+    if (seen[m[1]]) fnDupes.push(f + ':' + m[1]);
+    seen[m[1]] = true;
+  }
+}
+ok('no function name is declared twice in the same file', fnDupes.length === 0,
+   fnDupes.join(', '));
+ok('a deferred render stays FORCED, or _covered() throws it away',
+   /_again\s*=\s*true;\s*if\s*\(force\)\s*_againForce\s*=\s*true/.test(cloud) &&
+   /_againForce\s*=\s*false;\s*_render\(f\)/.test(cloud));
+
+/* sw.js builds its CORE list from BARE MODULE NAMES mapped to js/<n>.js, so a
+   rename that rewrites filenames across the tree does not touch it and the app
+   silently loses those files offline. Compare the two lists directly. */
+const swSrc = fs.readFileSync(ROOT + '/sw.js', 'utf8');
+const htmlScripts = [...html.matchAll(/<script src="(js\/[^?"]+)/g)].map(m => m[1]);
+const notPrecached = htmlScripts.filter(p => {
+  const bare = p.replace('js/', '').replace('.js', '');
+  return !(swSrc.includes("'" + bare + "'") || swSrc.includes(p));
+});
+ok('every script index.html loads is in the service worker CORE list',
+   notPrecached.length === 0, notPrecached.join(', '));
+
 ok('BUILD is declared', !!build, build);
 ok('every js/css asset carries the current BUILD',
    stamped.length > 0 && stamped.every(v => v === build),

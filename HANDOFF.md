@@ -4,8 +4,13 @@ Single authoritative status + knowledge document. **Organised by TOPIC, one home
 `TODO.md` owns the open task list; this file owns status, architecture, derivations and lessons.
 Do not duplicate between them.
 
-**Repo:** github.com/Alyosha47/ShadowChaser — active branch **`maplibre`**.
-**Site:** followtheshadow.com/app
+**Repo:** `https://github.com/Alyosha47/ShadowChaser.git` — branch **`main`**.
+`maplibre` and `cesium` were consolidated into `main` on 2026-08-19 and `main` is the default. If a
+clone is on `maplibre`, it is stale. **Clone deep** — `--depth N` silently truncates history, and a
+shallow clone once produced a false report that two branches had unrelated histories.
+**Site:** followtheshadow.com — the app is served from the **site ROOT**, not `/app`. `sat.php` sits
+beside it at the root, which is why `PROXY = '/sat.php'` is absolute. Deploy is a **manual file
+upload**; git does not deploy (§4).
 
 > ### THE FILING RULE — read before adding to this file
 > This document was restructured on 2026-08-12 because it had grown two filing systems at once:
@@ -17,6 +22,73 @@ Do not duplicate between them.
 > **So: a session does not get a section.** When work lands, fold it into the topical section that
 > owns that subject — correcting or replacing what is there — and add one dated line to the CHANGE
 > LOG at the end. If you catch yourself writing "supersedes §X", stop and edit §X instead.
+>
+> **A THIRD DOCUMENT IS THE SAME MISTAKE.** A `START-HERE.md` was added on 2026-08-19 for the
+> reasonable-sounding reason that this file is long. Within one day it and §6 gave opposite answers
+> about which branch was live, and the t-shirt's three failing assertions had three homes. It was
+> folded back in on 2026-08-20 and deleted. **There are two documents: this one and `TODO.md`.**
+> If this file is hard to navigate, fix the index below — do not start another file.
+
+---
+
+## 0. START HERE — the ten lines a new session needs
+
+> **The cloud feature is CLOSED as of 2026-08-22c.** Photo's repeating tiles — the bug that ran for
+> six threads — were the SERVICE WORKER, not the map (§10A.8d, §12.1). What remains in `Photo` and
+> `Now` are SOURCE limits, listed in §3, and none of them is a code fix.
+>
+> **The single most important instruction in this file: REPRODUCE BEFORE YOU DIAGNOSE.** Every wrong
+> answer in this feature's history — and there have been many — came from explaining a screenshot
+> instead of rendering one. §13.1 is a real browser rig: headless Chromium, real MapLibre, real
+> modules, the live proxy. It exists because two weeks of "verified" fixes were checked against a
+> flat Mercator mosaic at z3 that could not render the mode the user actually looks at. **It also
+> lied three separate times before it was trustworthy** — a static server returned the PHP source as
+> a valid frame, the container's TLS proxy made three of four satellites report missing, and
+> `projection` passed in the map options silently did nothing so it rendered Mercator while claiming
+> a globe. **Sanity-check the rig against something you know before believing it.**
+>
+> **This person has been let down repeatedly and has spent weeks uploading files by hand.** Do not
+> tell them to stop, pause, cut the feature, or accept a workaround. Do not announce a breakthrough
+> until a render proves it. Say plainly what is fixed, what is not, and what you measured.
+
+
+**You are talking to someone who should not have to tell you any of this.** Being asked is a direct
+cost to him.
+
+1. **Clone fresh from `main`, deep.** He applies changes by hand, so the repo may lag what he is
+   actually running — and the *live site* may lag both. Check all three before believing any of them.
+2. **`npm i jsdom`, then `node tools/checks/run.js`.** Expect exactly one failing suite:
+   `test_tshirt`, with exactly 3 assertions (§11.4). Everything else passes. The runner separates
+   `CANNOT RUN` (setup) from `FAIL` (regression) — **if you see CANNOT RUN, fix that first.** Three
+   suites were reported as failing for a week when they were only missing `jsdom`.
+3. **`node --check` on any JS you touch.** There is no bundler; a syntax error ships.
+4. **Check your network allowlist before planning any work on imagery** — it is fixed at session
+   start, so a mid-session addition does not take effect. Both of these should return 200:
+   ```
+   curl -s -o /dev/null -w "%{http_code}\n" "https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?SERVICE=WMS&REQUEST=GetCapabilities"
+   curl -s -o /dev/null -w "%{http_code}\n" "https://view.eumetsat.int/geoserver/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0"
+   ```
+   A 403 with `x-deny-reason: host_not_allowed` means it is stale. Without direct access every fact
+   about a live service travels through him uploading a probe page and describing a screenshot —
+   **that loop is why one feature took five days.**
+5. **Read §2 before you type.** It is how he works, and it is load-bearing.
+
+### Where things are
+
+| you want | go to |
+|---|---|
+| how he works, and the rules earned the hard way | **§2** |
+| what is open right now | **`TODO.md`** — it owns the task list |
+| what is closed, limited, or must not be re-attempted | **§3** |
+| deploy, BUILD stamps, file permissions | **§4** |
+| the map, basemaps, markers, camera | **§7** |
+| terrain shadows | **§8** |
+| eclipse maths and path generation | **§9** |
+| cloud: climatology | **§10** |
+| cloud: live `Now`, `Photo`, `sat.php`, the harness | **§10A** *(long, because five days went into it)* |
+| UI, log, poster, visual language | **§11** |
+| service worker | **§12** |
+| a one-line answer to "why did that break?" | **§14 gotcha index** |
 
 ---
 
@@ -36,7 +108,9 @@ must work fully offline in the field.
 
 ## 2. HOW TO WORK WITH THIS USER (load-bearing)
 
-- **BE EXTREMELY CONCISE.** Reference docs like this are the exception; chat is not.
+- **BE EXTREMELY CONCISE. His default is 40 words.** Reference docs like this are the exception;
+  chat is not. When he says `tldr` he means it — he said it six times in one session and every reply
+  overran. **Verbosity is billed to him.** A long explanation of a failure is still a failure.
 - **ONE step at a time.** Don't pile up instructions or interleave threads of work.
 - **NEVER break working code.** `node -c` proves syntax, not behaviour.
 - **NEVER GUESS. Verify.** Read the repo/library/API. If you can't verify, say so. *(Corollary
@@ -51,7 +125,19 @@ must work fully offline in the field.
 - **Don't say "you're right" reflexively.** If the user pushes back, honestly re-examine — don't
   fold instantly, don't dig in.
 - **When asked "is this OCD-tidy/elegant?"** — honest audit, both sides, never reflexive yes.
-- **Never assume he's tired. Never suggest stopping.** The user decides when done.
+- **Never assume he's tired. Never suggest stopping, pausing or banking progress.** `NEVER GIVE UP`
+  is a standing instruction, and suggesting he stop is the failure that ended two previous sessions.
+  **If something is cheap to check, CHECK IT — do not offer to.**
+- **Never describe or interpret his screen.** Instrument the page, ask for the number, act on the
+  number. Three separate claims about what was on it were false, including one where the basemap had
+  been removed two versions earlier by the assistant itself.
+- **Own mistakes plainly and briefly.** He responds well to a straight admission, badly to hedging,
+  and does not want grovelling either.
+- **Do not go down rabbit holes.** He asked "is it worth it"; the answer was one number, followed by
+  an hour on three hypotheses he had not asked about, two of which the assistant disproved itself.
+  Answer the question asked, offer the next step, let him choose.
+- **He does not edit files. You do.** Never hand him a patch, a diff, or an instruction to change a
+  line. Produce the whole file, every time.
 - Never do Mac-side debugging of the iPhone (settled; don't re-raise).
 - **He uses git** — branches, commits and pushes from the command line. He still prefers receiving
   **finished files** ready to drop into their folders.
@@ -74,8 +160,21 @@ fight, decide which must win and check the arithmetic at BOTH extremes.
   the right one agree.
 - **Validate by running the real pipeline**, not by feeding published numbers into a formula by
   hand. A mid-session spot-check that did the latter looked 175° wrong; the bug was in the check.
-- **When debugging something visual, LOOK at it.** Rasterise and render. Days were lost on the
-  poster measuring polygon area and quad widths — proxies that moved while the picture stayed wrong.
+- **When debugging something visual, LOOK at it. You can.** The container has PIL and the `view`
+  tool renders a PNG. Days were lost on the poster measuring polygon area and quad widths — proxies
+  that moved while the picture stayed wrong; and sixty versions of the cloud composite were shipped
+  across three days without anyone rendering one. The first time one was actually looked at it
+  immediately showed a defect no description would have produced.
+- **When the harness and the module disagree, CHECK THE HARNESS FIRST.** Two rounds were once spent
+  hunting a defect that existed only in the test; and on 2026-08-20 `Photo` shipped broken because
+  its only witness, `tilepreview.js`, could not render it at all (§10A.10). **Before trusting a
+  harness, make it draw something you already know is right.** Keep harness and module in step:
+  `BG_FRAMES` was once changed in the module and not in `mkframes.py`, so the shipped configuration
+  had never been through the harness.
+- **Ask the module for a number.** `Satellite.diagnose().timing` and `Imagery.diagnose()` report
+  their own phases. This found the 89% `bgAt` cost and the 91% probe cost, both of which had been
+  "optimised" somewhere else first. **Every performance claim made from the shape of the code was
+  wrong; every one from a number held.**
 
 ### Recurring anti-patterns (user's own words)
 1. *"You waste my money."* — reflexive over-engineering on simple tasks (the textarea-autogrow saga,
@@ -100,25 +199,56 @@ and is where a lost session goes to be found.
 
 ---
 
-## 3. STATUS — WHAT IS OPEN
+## 3. STATUS — WHAT IS RUNNING, AND WHAT IS KNOWN-LIMITED
 
-Everything not listed here is done and covered in its topical section.
+**`TODO.md` owns the open task list.** This section owns *status* and *limits* — what is deployed,
+what is known-broken-and-accepted, and what must not be re-attempted. If an item here is something
+someone should DO, it belongs in TODO; if it is something someone should KNOW, it belongs here.
 
-### Housekeeping, one command each
+### What is deployed
 
-### Open bugs
-- **#R5 pinch-zoom on iOS not blocked** — `user-scalable=no` is ignored by iOS Safari. Fix:
-  `touch-action: pan-y` on scrollable panels but NOT the map container. Needs a real iPhone to
-  confirm, so it is the user's to verify. **The only open bug on the list.**
-- **`tools/checks/test_tshirt.js` fails exactly 3 catalogue-wide assertions** — one band over 8% of
-  the map, some bands extended past their limbs without cause, some centrelines drawn where the band
-  doesn't reach. All in the polar tail; date from the polar work and were never resolved (§11.4).
+`BUILD 2026-08-20u`. `cloud-now.js 2026-08-20a`, `cloud-photo.js 2026-08-20a`, `cloud-ui.js 2026-08-20a`.
+The map, offline mode, terrain shadows, the user log and the poster are all shipped and working.
+
+The cloud overlay has **three modes** in one strip (`js/cloud-ui.js`), and **all three work**:
+
+| mode | module | what it is |
+|---|---|---|
+| **Average** | `js/cloud-average.js` | ERA5 climatology, precached, works offline (§10). |
+| **Now** | `js/cloud-now.js` | Cloud *inferred* from geostationary infrared. A measurement (§10A). |
+| **Photo** | `js/cloud-photo.js` | The satellite picture itself, as MapLibre raster tiles (§10A.8c). |
+
+**Do not reintroduce a compositor for Photo.** `Now` needs a canvas because it reads pixels to decode
+temperature; Photo only displays them, and inherited a compositor by being written as a copy of
+`cloud-now.js`. Removing it removed every symptom it had been causing.
+
+### Known-limited — none of these are bugs, and none are new
+- **`test_tshirt` fails exactly 3 catalogue-wide assertions** — one band over 8% of the map, some
+  bands extended past their limbs without cause, some centrelines drawn where the band doesn't reach.
+  All in the polar tail, all dating from the polar work (§11.4). **That is the baseline; treat
+  anything else as a regression.**
+- **`Now` finds only ~49% of the cloud** an operational mask finds, ~30% of it over sea, at 1–2%
+  false alarms (§10A.8). **The map reads CLEARER than reality** — the dangerous direction for a tool
+  that tells someone where to stand. Two candidate fixes, a visible channel and a sea-surface-
+  temperature reference, were tested and are **dead**. Read §10A.8 before proposing either.
+- **Nothing above ~65°N in `Now`.** Geostationary cannot see it; the 2026-08-12 track's Greenland leg
+  is blank. Polar orbiters were tested and the obvious method does not transfer (§10A.8b).
+- **`Photo` is capped at 1223 m/px** — GIBS serves GeoColor from `GoogleMapsCompatible_Level7` and
+  that is its maximum, so a city view is visibly blocky. **A source limit, not a bug.**
+- **`Photo` is greyscale from 70°E to 153°E** — China, Australia, the Indian Ocean edge. GIBS has no
+  true-colour Himawari product at all. It is already the smallest such band the available products
+  allow (§10A.8c). **Closing it needs a different source, not a code change.**
+- **`Photo` logs 404s in the console and they are CORRECT** — the frame probe walking back through
+  frames GIBS has not published yet (§10A.8c). Do not "fix" it.
+- **GIBS is stale and unreliable.** 18–50 min behind, jittering. It has served a GOES-East frame with
+  a slab of the disc filled *opaque white* — which decodes to −91.6 °C, the coldest cloud there is —
+  and another 92.6% white; both are rejected by `partlyWritten()`. It also returns a blank or failed
+  answer for a valid request roughly 1 time in 5.
 - **Ross Ice Shelf seam (Antarctica)** — a cut from the coast to the pole and back. Ruled out as a
   stroke problem: the Antarctic ring has 8 points, 6 at lat −89.999, cut at lon −180, and both of
   `seamFreeLines`' tests should already catch it. So it is very likely the globe-projection **fill**,
   which `seamFreeLines` explicitly leaves alone. Different mechanism, real work. User can live with
   it.
-- **Umbral grazing-tip zigzag** — root-caused and a fix proven, blocked on one sub-problem (§9.5).
 
 ### Chaff — CLEARED 2026-08-12
 Nothing outstanding. Cleared this session: `js/map_works.js` (a 1,756-line hand-kept backup of
@@ -149,50 +279,9 @@ ignore rule obsolete.)*
   it. Either a layer was dropped and the precache entry left behind, or it is pending use. Worth one
   look before the next `sw.js` change.
 
-### Open, measured, not fixed
-- **`Now` takes ~15 s on first load.** Measured live: a full-size EUMETSAT render is 3.1 s at their
-  end plus ~4 s of Bluehost overhead = 7.3 s cold, 0.13 s cached, ×2 discs. The proxy cache only
-  helps when the URL repeats, and `Now` requests a **view-shaped bbox**, so every pan is a new URL.
-  **The obvious fix was TRIED AND IT FAILED — do not repeat it blindly.** Fetching EUMETSAT at a
-  fixed full-disc box makes one canonical cacheable URL, and `compose()` maps each frame by lat/lon
-  through `fr.box`, so a larger box composites fine — but **`background()` builds its clear-sky field
-  against the VIEW box**, so a frame on a different box is sampled against the wrong background and
-  the picture tears into smeared horizontal bands. Reverted. To attack it properly: move the
-  background field onto the frame's own box FIRST, *then* fix the fetch box, and verify with
-  `fullpreview.js` before shipping. This is the only remaining defect a user in a field would notice.
-
-### Not done, by choice — in rough priority order
-1. **Scan ignores non-location filters.** Filter by date/type BEFORE loading chunks instead of
-   walking ~30 of them on every first scan. No user-visible change, no data restructuring.
-2. **Forecast half of #F2** — near-term, online, one eclipse. The climatology half shipped.
-3. **Cloud indicators in the details panel** — depends on `Cloud.sampleAt` (§10.7).
-4. **Search by country.** Requested 2026-08-13, not yet scoped. The pieces exist —
-   `countries.geojson.gz` is already precached, and `search_parser.js` already does
-   longest-match-first multi-word matching for cities — so it is plausible rather than easy. The real
-   question is semantics, and it is the same one #F5 asks: "total eclipses in Chile" means the path
-   crossed the country, which is a polygon test against path geometry, not a point lookup like a
-   city. Decide that before writing anything.
-5. **Greatest duration for all ~11,900 eclipses.** GE ≠ greatest duration even for ordinary eclipses
-   (median +0.07 s, max +49.8 s and 10,686 km away). Needs a trustworthy global search, not the hill
-   climb used for the 94 non-central ones. Full handoff in **`GREATEST-DURATION.md`** (repo root) —
-   read it before starting.
-6. **#F3 animated shadow with time slider** — scrub umbra/penumbra in real time; most on-brand.
-7. **#F5 global-vs-local eclipse-type search semantics** — "1960+ total St. Louis": total globally +
-   visible, vs total AS SEEN from STL. Four options in TODO. Settle this and #4 together.
-8. **Duplicate downloads** (§12.4) — measured, harmless, has a known real fix.
-
-### Polish queued (Sonnet-grade)
-Merge "Coordinates" + "City" into one "Location" section (caveat: the parser doesn't handle
-bracketed multi-word cities yet); move the eclipse date to an overlay on desktop and make it more
-visible on mobile; distinguish web vs app banner size; server-side share page
-`followtheshadow.com/share?e=XXXXX` (the only way past the plain-text ceiling of
-`navigator.share`/`mailto`); Global Circumstances panel is tall.
-
-### Deferred infrastructure
-Production bundling (single JS/CSS). Offline city **labels**: MapLibre symbol layers need PBF glyphs
-(system fonts are unavailable to WebGL), so offline is dots-only today — bundling Noto Sans PBF is
-~2–3 MB. CSS module split (only after a build step). `map.js` single-file size. Shrinking git
-history of `data/paths/` (~274 MB) needs a destructive `git filter-repo` + force-push.
+### The open task list lives in `TODO.md`
+Open bugs, the feature pool, queued polish and deferred infrastructure were all moved there on
+2026-08-20 — they were duplicated in both files and had begun to disagree. **`TODO.md` is the list.**
 
 ### Explicitly dropped — do not resurrect
 - **"Overlay sheet pattern."** Premised on three overlays arriving at once, each growing its own
@@ -289,8 +378,9 @@ ShadowChaser/
 ├── sw.js               (service worker — the most fragile file in the project)
 ├── manifest.webmanifest
 ├── .gitignore          (data/paths/, .DS_Store, *.pyc, __pycache__/)
-├── HANDOFF.md          (this file — status & knowledge)
-├── TODO.md             (open task list)
+├── HANDOFF.md          (this file — status & knowledge. THE only reference doc)
+├── TODO.md             (open task list — the only other one)
+├── sat.php             (same-origin imagery proxy, §10A.7b — SITE ROOT on the server)
 ├── PARITY.md           (maplibre ⇄ cesium branch sync rules)
 ├── DESIGN_SPEC_cesium_map.md   (pin / arrow / palette values — ported, still authoritative)
 ├── shadow-layer-README.md      (terrain-shadow engine API + integration notes)
@@ -320,10 +410,10 @@ ShadowChaser/
 ├── GREATEST-DURATION.md   handoff for the all-eclipse version (repo ROOT, not docs/)
 └── js/
     ├── cities.js       lookupCity, lazy index from basemapData.cities
-    ├── cloud.js        CLOUD OVERLAY — climatology layer, palette, sampleAt (§10)
-    ├── satellite.js    LIVE CLOUD — geostationary IR, temperature model (§10A)
-    ├── imagery.js      PHOTO MODE — the satellite picture composited (§10A.8c)
-    ├── cloudbar.js     the Average | Now mode strip (§10A.1)
+    ├── cloud-average.js        CLOUD OVERLAY — climatology layer, palette, sampleAt (§10)
+    ├── cloud-now.js    LIVE CLOUD — geostationary IR, temperature model (§10A)
+    ├── cloud-photo.js      PHOTO MODE — the satellite picture composited (§10A.8c)
+    ├── cloud-ui.js     the Average | Now mode strip (§10A.1)
     ├── details.js      renderData, buildContactRows, contactIcon, lookupElevationAndTz
     ├── eclipse.js      computeEclipse, fundamentalArgs, sunAltAz, findMaximum, findContact,
     │                   getV(t,interior)   — strict-mode UMD
@@ -376,11 +466,11 @@ recommended on a false premise and cost months.
 **Do not re-recommend Cesium for shadows. Do not assert that a library does something "natively"
 without verifying it first.** This is the single most expensive lesson in the project's history.
 
-### Branches
-- **`maplibre`** — active, pushed. MapLibre GL 5.5.0 (CSP build) + deck.gl.
-- **`cesium`** — preserved, functional, heavier. Kept for the seam-free sphere.
-- **`PARITY.md`** (repo root) — shared vs renderer-only files, and known behavioural differences.
-  **Follow it** or the branches silently diverge.
+### Branches — ONE BRANCH NOW *(consolidated 2026-08-19)*
+- **`main`** — the only live branch. MapLibre GL 5.5.0 (CSP build) + deck.gl.
+- **`cesium` is dead**, tagged `archive/cesium`. The seam-free-sphere argument for keeping it is
+  recorded in the table above; it is history, not an option. **PARITY.md's two-branch sync rules are
+  therefore moot** — nothing is being kept in step any more.
 - `sw-dedupe` — abandoned experiment, unmerged (§12.4).
 
 ### Renderer wiring (already done — don't re-break)
@@ -1060,7 +1150,7 @@ deferred).
 ## 10. CLOUD-COVER OVERLAY (#F2, climatology half) — SHIPPED
 
 The `☁` button draws mean historical cloud cover for the selected eclipse, sampled at each point's
-own local solar time at the moment the eclipse peaks *there*. `js/cloud.js`, ~700 lines,
+own local solar time at the moment the eclipse peaks *there*. `js/cloud-average.js`, ~700 lines,
 self-contained. **The live half is §10A; the forecast half (#F2b) is lost and unstarted.**
 
 ### 10.1 Data and the pipeline
@@ -1198,10 +1288,33 @@ truth for a hillside.
 
 ---
 
+### 10.5 The overlay is drawn for ONE eclipse — and twice it showed the wrong one
+
+`_covered()` decides whether the canvas on screen can be reused. It tested the drawn BOX and the
+zoom, and nothing else — so it could not tell a valid canvas from one drawn for a different eclipse.
+
+**Symptom:** picking an eclipse from the search list updated the overlay; jumping to one from the
+user log did not, leaving a climatology for the wrong month over the new path.
+
+**Why only the log.** The log jump calls `onSearchChanged(true)` *before* `selectEclipse`, and
+`redrawIfMapVisible` is itself an `AppState.on('selectedEntry')` listener — so a render is already in
+flight when the eclipse changes. `_render(force)` defers a call that arrives while `_busy`, but the
+replay was `_render()` **with no argument**. The forced redraw came back unforced, found `_drawn`
+repopulated by the render that had just finished for the OLD eclipse, and `_covered()` returned true.
+The box was right and the month was wrong. A plain list click has nothing in flight, so it never
+showed the bug.
+
+**Fixed at both ends**, because either alone leaves the trap armed:
+- `_againForce` — a deferred render that was forced stays forced.
+- `_drawnKey` — `_covered()` compares the eclipse the canvas was drawn for against the selected one.
+  Geometry cannot answer a question about staleness.
+
+Guarded in `test_hygiene.js`; the failure has no visible symptom until someone jumps between months.
+
 ## 10A. LIVE CLOUD — "Now" (#F2c) — WORKING, NOT FINISHED
 
-`js/satellite.js` (~1070 lines) draws **current** cloud from geostationary infrared, as an overlay
-over the basemap. `js/cloudbar.js` is the mode strip that chooses between this and §10's
+`js/cloud-now.js` (~1070 lines) draws **current** cloud from geostationary infrared, as an overlay
+over the basemap. `js/cloud-ui.js` is the mode strip that chooses between this and §10's
 climatology. Four days and roughly ninety versions went into it (2026-08-15 → 18); this section
 replaces the four `SESSION-2026-08-*.md` files, which contradicted each other in resolved ways and
 have been deleted. Where they disagreed, what follows is the surviving answer.
@@ -1219,9 +1332,9 @@ credit and a two-cell segmented control, `Average | Now`.
   a value can be read off the map, which was not true without a colour bar. The gradient is built
   from `Cloud.stops()`, not copied, so bar and pixels cannot drift.
 - Adding a third mode later is a third cell, not a redesign.
-- `js/cloud.js` changed in three places only, all additive: it delegates the button click *if*
+- `js/cloud-average.js` changed in three places only, all additive: it delegates the button click *if*
   `CloudBar` exists, stops writing `aria-pressed` *if* `CloudBar` exists, and exports
-  `enable`/`disable`/`stops`. Delete `cloudbar.js` and the button reverts to the toggle it was.
+  `enable`/`disable`/`stops`. Delete `cloud-ui.js` and the button reverts to the toggle it was.
 
 ### 10A.2 The model — four steps, every constant traced to a measurement
 
@@ -1293,7 +1406,7 @@ across recent frames — specifically the **second**-warmest, so one bad scan li
 ### 10A.5 Geometry — the four traps
 
 - **`map.getBounds()` is unusable in globe projection.** It reports the whole world at almost any
-  zoom. `cloud.js` guards this by falling back to the entire globe, harmless for a climatology and
+  zoom. `cloud-average.js` guards this by falling back to the entire globe, harmless for a climatology and
   fatal here: the module was fetching **five satellites at world extent on every pan**. The box comes
   from zoom and centre arithmetically — MapLibre's world is exactly `512 * 2^zoom` pixels across.
 - **But that arithmetic is Mercator's, and this map is a globe** *(fixed 2026-08-18)*. A sphere
@@ -1404,7 +1517,7 @@ pin the failure for the whole TTL.
 **`f=newest` matters.** The client used to probe 8 candidate timestamps in parallel — one round trip
 against GIBS, but 8 PHP processes per disc through the proxy, 16 for two discs, and shared hosting
 runs only a handful at once. They queued and `Now` took ~15 s. Resolved server-side it is one
-request, cached. **`satellite.js` uses it; `imagery.js` does not** — Photo still walks back client
+request, cached. **`cloud-now.js` uses it; `cloud-photo.js` does not** — Photo still walks back client
 side, which is where its console 404s come from and is harmless there.
 
 **It lives at the SITE ROOT.** `followtheshadow.com/sat.php`, and `PROXY = '/sat.php'` is absolute.
@@ -1414,7 +1527,7 @@ what remains — a relative path would not survive that.
 
 **A `502` from it means EUMETSAT failed upstream.** One is normal and the frame walk absorbs it; a
 steady stream means Meteosat is down. **When EUMETSAT restores CORS**, the proxy can be bypassed by
-reverting the `eum` branches in `url()` (satellite.js) and `wms()` (imagery.js). Keeping it is
+reverting the `eum` branches in `url()` (cloud-now.js) and `wms()` (cloud-photo.js). Keeping it is
 probably wiser — it also caches, and it survives the next provider that does this.
 
 ### 10A.8 What this cannot do yet
@@ -1541,7 +1654,7 @@ against the same rule.
 - **Himawari has no Dust product**, so the three-product recipe does not transfer to the Pacific. Air
   Mass is the candidate substitute and is untested.
 
-### 10A.8c PHOTO MODE — the picture (`js/imagery.js`)
+### 10A.8c PHOTO MODE — the picture (`js/cloud-photo.js`)
 
 Given §10A.8, a third mode was added that does not infer anything: the geostationary picture itself,
 drawn as imagery. Side by side over the Gulf, the picture shows a sky full of small cumulus and the
@@ -1554,8 +1667,8 @@ inferred layer shows most of it as clear — the 49% made visible.
   returns a number and this cannot. The picture is what to look at; `Now` is what to read a value
   from. Both stay.
 
-**IT IS MAPLIBRE RASTER TILES. THE COMPOSITOR IS GONE** *(2026-08-20)*. `imagery.js` was written as
-a copy of `satellite.js` and inherited its canvas compositor — `compose()`, `readPixels()`,
+**IT IS MAPLIBRE RASTER TILES. THE COMPOSITOR IS GONE** *(2026-08-20)*. `cloud-photo.js` was written as
+a copy of `cloud-now.js` and inherited its canvas compositor — `compose()`, `readPixels()`,
 `hasContent()`, the dateline split, the weight blend, the night-alternate machinery, the lit-fraction
 gate, the JPEG black test, the whole-globe wrap. All deleted. It is now **one MapLibre `raster`
 source per satellite**, and tiling, caching, wrapping past the antemeridian, progressive zoom and pan
@@ -1616,7 +1729,7 @@ overlap between colour discs.
   which beside geocolour reads as confetti.
 - **The cost, and it is permanent with these products: 70°E–153°E is greyscale.** China, Australia,
   the Indian Ocean edge. That is the smallest grey area the available products allow, and closing it
-  needs a Mercator true-colour Himawari source, which GIBS does not have (see START-HERE §4).
+  needs a Mercator true-colour Himawari source, which GIBS does not have (see `TODO.md`, #F2c).
 - **`msg_iodc:rgb_natural` stays OUT** — it paints vegetation cyan and desert pink, and would add a
   third rendering for a strip Himawari now reaches. One line away, commented in place.
 - **The VIIRS global base stays OUT** (`USE_BASE = false`). It loaded first and complete, so the
@@ -1650,7 +1763,44 @@ GOES-West's newest published frame was **19:30Z** — 19:30 returned 200 at ever
 404'd at every zoom. Whole frames, not corner tiles. That is §10A.7's 18–50 min republication lag,
 and the walk-back doing its job: about five 404s per satellite per five-minute refresh. **Do not
 "fix" it by widening the retry or narrowing the walk.** If the noise ever matters, the cheap halving
-is the one `satellite.js` already uses — cache the newest-frame answer per satellite for half a step.
+is the one `cloud-now.js` already uses — cache the newest-frame answer per satellite for half a step.
+
+### 10A.8d PHOTO'S REPEATING TILES — CLOSED 2026-08-22c. IT WAS `sw.js`.
+
+**The cause.** `sw.js` matched every same-origin GET with `caches.match(req, { ignoreSearch: true })`.
+`sat.php` is same-origin. Per the Cache API spec `ignoreSearch` compares URLs with the query string
+stripped, so every EUMETSAT tile — `/sat.php?s=eum&…&b=<bbox>&w=512&h=512&t=…` — collapsed onto ONE
+cache entry, `/sat.php`. The first tile to land was cached and then handed back for **every**
+subsequent tile request, and MapLibre stretched that single picture into each cell. Meteosat spans
+107° of longitude, so at z3 the repeated cells are ~45° wide: "roughly an eighth of the planet each",
+exactly as reported.
+
+**Why it looked like it kept coming back.** The entry only dies when the cache name changes, i.e.
+when BUILD changes. And per §12.4, site data cleared between builds leaves no worker controlling the
+page at load — so the FIRST load after a clear was ungoverned and clean, and the second load, with
+the worker now in charge, had the grid. That is the "seemed to work, then broke" pattern.
+
+**The frame probe shares the key.** `sat.php?f=newest` returns TEXT, not an image, under the same
+`/sat.php` key. So whichever arrived first poisoned the other: a probe answered with a PNG, or every
+tile answered with a timestamp and the disc rendering nothing. Intermittent EUMETSAT no-shows in
+`Now` are very likely the same bug.
+
+**The fix, one line, before the cache-first branch:**
+```js
+if (/\/sat\.php$/.test(url.pathname)) return;   // live proxy → untouched, never cached
+```
+`ignoreSearch` STAYS for everything else — it is what makes `foo.js?v=BUILD` match cached `foo.js`
+(§12.1). `sat.php` is the only same-origin dynamic endpoint in the app; `test_sw.js` asserts that it
+stays the only one, and fails if the bail is removed or moved after the match.
+
+**Why six threads missed it, and this is the durable lesson.** Everything ruled out by measurement
+was ruled out correctly — GIBS was not serving duplicates (eight tiles hashed, seven distinct), tile
+selection was right, the `sctile://` handler held no state, off-disc tiles were transparent. All true.
+The repetition happened **between the network and MapLibre**, in a layer nobody was looking at.
+**And the browser rig (§13.1) registers no service worker, so it was structurally incapable of
+reproducing it** — the rig's failure to reproduce was the strongest clue available and was read as a
+puzzle rather than as evidence about the rig. Verified closed: Cache Storage filtered on `sat` shows
+**zero entries**, which is the mechanism being absent rather than the symptom being invisible.
 
 ### 10A.9 Approaches already tried and abandoned — DO NOT RE-ATTEMPT
 
@@ -1685,7 +1835,7 @@ attempt someday knowing the data path is provably fine and the fault is in the d
 - `tools/checks/mkframes.py LON LAT ZOOM out.json` — fetches a real multi-satellite composite for that
   view, including each satellite's daily backgrounds, exactly as the module builds them.
 - `tools/checks/fullpreview.js out.json out.ppm` — runs the **shipped** `compose()` from
-  `js/satellite.js` on those pixels, reports drawn percentage and empty columns, and writes an image.
+  `js/cloud-now.js` on those pixels, reports drawn percentage and empty columns, and writes an image.
   Convert with PIL and **look at it**.
 - `tools/checks/calib.py`, `cmap.json`, `eum_temp_lut.json` are its dependencies. They were missing
   from the repo until 2026-08-18, which made the harness unrunnable for anyone but the author.
@@ -1705,7 +1855,7 @@ a Pacific view straddling the dateline (`mkframes.py 175 20 2.2`), a North Ameri
 (`-112 40 4.2`), and a south-polar one (`150 -68 1.6`). Add a high-zoom convective scene
 (`-88 22 5.0`) if the work touches the clear-sky reference.
 
-**PHOTO'S HARNESS — `tools/checks/tilepreview.js`.** It runs the *shipped* `imagery.js` against a
+**PHOTO'S HARNESS — `tools/checks/tilepreview.js`.** It runs the *shipped* `cloud-photo.js` against a
 fake map and the real network, fetches the tile templates the module installed, and assembles a PNG.
 `node tools/checks/tilepreview.js 3 0 7 1 5 /tmp/world.png`. It duplicates no logic deliberately: an
 earlier version re-implemented the frame walk-back, missed a fallback the module had, and reported a
@@ -1724,7 +1874,7 @@ alone at z3 is a good control, because it is one satellite, one template and unm
 not.
 
 `mkphoto.py` and `photopreview.js` were **deleted**: they drove `compose()`, which no longer exists.
-`fullpreview.js` had a hardcoded `repo/js/satellite.js` path and died silently anywhere but one
+`fullpreview.js` had a hardcoded `repo/js/cloud-now.js` path and died silently anywhere but one
 directory; `mkframes.py` could not find `cmap.json` unless run from `tools/checks/`. Both fixed.
 
 **`test_satellite.js` was rewritten 2026-08-18** — it had been testing an architecture two rewrites
@@ -1737,29 +1887,29 @@ from scratch.**
 
 ### 10A.11 Teardown, refresh and state
 
-- **`cloud.js` `_disable()` puts each removal in its OWN `try`** *(fixed 2026-08-18)*. All four shared
+- **`cloud-average.js` `_disable()` puts each removal in its OWN `try`** *(fixed 2026-08-18)*. All four shared
   one try with a silent catch, and MapLibre throws on `removeSource` while a layer still references
   the source — so one throw skipped every removal after it and left `cloud-base` painted while the
   button reported off. Simulated: a throw on `removeSource('cloud')` left three objects behind;
-  per-pair it leaves only the one that threw. `satellite.js` already tore down this way.
-- **MODE SWITCHING HIDES, IT DOES NOT TEAR DOWN** *(2026-08-20)*. `cloudbar.js` called
+  per-pair it leaves only the one that threw. `cloud-now.js` already tore down this way.
+- **MODE SWITCHING HIDES, IT DOES NOT TEAR DOWN** *(2026-08-20)*. `cloud-ui.js` called
   `Satellite.off()` / `Imagery.off()` when switching, discarding the composite and every fetched
   tile, so returning to a picture that was on screen a moment ago cost seconds. Both modules now have
   `hide()` / `show()` / `isHidden()` and toggle layer visibility; their own five-minute refresh keeps
   what reappears current. `off()` is still correct when the cloud bar is dismissed entirely.
-  **Trap that bit once:** `ensureLayer()` in `satellite.js` ended with an unconditional
+  **Trap that bit once:** `ensureLayer()` in `cloud-now.js` ended with an unconditional
   `setLayoutProperty(LAYER,'visibility','visible')` and runs on every refresh — so `Now` un-hid
   itself **on top of Photo**. Any code path that sets visibility must honour `_hidden`; `addOne()` in
-  `imagery.js` sets `layout.visibility` from `_hidden` when rebuilding, for the same reason.
-- **`cloudbar.js` owns the refresh loop** — a 5-minute `invalidate()`, skipped while the tab is hidden
-  with the missed tick run on return. `satellite.js` has **no timer**; one was briefly added there on
+  `cloud-photo.js` sets `layout.visibility` from `_hidden` when rebuilding, for the same reason.
+- **`cloud-ui.js` owns the refresh loop** — a 5-minute `invalidate()`, skipped while the tab is hidden
+  with the missed tick run on return. `cloud-now.js` has **no timer**; one was briefly added there on
   the strength of grepping that file alone and concluding the feature never refreshed. It did.
 - **The frame age ticks on its own**, every 30 s, rewriting only that text node so the mode buttons
   are never rebuilt under a finger mid-tap. It used to be written once when a refresh completed, so
   "14 min ago" still read "14 min ago" an hour later — worse than showing nothing, because it looks
   live. A countdown to the next refresh was considered and rejected: it answers "when will this
   update" when the question is "how old is what I am looking at".
-- **`Satellite.onFrame` only pushes** — there is no removal — so `cloudbar.js` registers its listener
+- **`Satellite.onFrame` only pushes** — there is no removal — so `cloud-ui.js` registers its listener
   once, not on every switch to Now.
 
 ### 10A.12 Process lessons specific to this feature
@@ -1776,7 +1926,7 @@ from scratch.**
   layers; six GIBS names were guessed, all missed, and the wrong conclusion drawn until enumeration
   settled it.
 - **Check the harness before the module.** A Python reproduction had its own gap bug and two rounds
-  were spent hunting a defect that did not exist in `satellite.js`.
+  were spent hunting a defect that did not exist in `cloud-now.js`.
 - **Isolate before attributing.** The 18.7/255 seam delta was presented as a calibration result while
   a timestamp gap sat unaddressed in the same log. The attribution was probably right, but not
   earned. Relatedly: a "EUMETSAT is 90–110 min stale" conclusion came from comparing an 11:00Z frame
@@ -1979,6 +2129,34 @@ needle's arrowhead, not as a separator.
 
 ---
 
+### 11.6 The banner mark and favicon — why the icon is redrawn, not resized
+
+The lockscreen icon (`icons/icon-512-v2.png`) is a corona of **96 radial rays**, measured: 1.74° wide,
+3.75° apart, inner radius ~111 px, outer 122–202 px of 512. It is beautiful at 512 and **illegible
+below about 64**, because at the 30 px the banner renders at, 3.75° is well under one pixel — the rays
+merge into a smudge with no corona visible at all. Resizing cannot fix that; the drawing has to change.
+
+`icons/mark.png` is therefore drawn from **each original ray's own start and end radius** — so the
+irregular outline that gives the mark its character is preserved exactly — with rays dropped and the
+survivors thickened.
+
+**THE MARK ART IS SETTLED — DO NOT REDRAW IT.** Two regenerations were tried on 2026-08-22 and both
+were rejected on sight: thinning further and thickening the survivors (every 3rd ray at 2.4x), and
+resampling the identical drawing by max-pooling so the thin rays survive the downscale. Both raised
+peak alpha from 90/255 to 255 and both looked wrong. **The faintness is fixed in CSS, on the paint,
+not in the PNG.** `.app-header::before` takes `--gold2` rather than `--gold`, and the `glow` keyframes
+carry the same brighter value at 0.55/0.85 rather than 0.40/0.70. If it is still too faint, the next
+lever is the colour or the glow again, or the 1.9rem box — never the art.
+
+**`favicon.ico` is a FAMILY, not one image scaled.** Each size is redrawn with the thinning its pixel
+budget allows: 48 px every 2nd ray at 1.7×, 32 px every 3rd at 2.2×, 16 px every 4th at 2.8×. Only the
+16 px drawing has genuinely opaque pixels (3.6% against 0% for a thinned-but-not-thickened version) —
+which is the difference between a mark and a grey smear in a tab strip.
+
+The generator is not committed; it reads `icons/icon-512-v2.png`, detects the rays by angular runs at
+a radius just outside the inner envelope, and re-strokes them. If the source art ever changes, the
+mark must be regenerated the same way — **do not just scale the new icon down.**
+
 ## 12. SERVICE WORKER / PWA
 
 A true no-signal reload loads the app from Cache Storage. Verified offline: globe renders, present-day
@@ -1988,9 +2166,13 @@ eclipse draws, map-click gives local circumstances, per-century scan works.
 ### 12.1 Design (deliberately simple)
 - **One version source.** `VERSION` is read from the registration URL (`sw.js?v=BUILD`), so BUILD stays
   the only number. Cache name = `followtheshadow-<BUILD>`; `activate` deletes every other cache.
-- **`ignoreSearch` on all cache lookups.** The cache name already pins the build, so precache URLs are
-  query-free and `foo.js?v=BUILD` matches cached `foo.js`. This killed a long-running phantom-cache-miss
-  bug (the "blue marble, no land" symptom).
+- **`ignoreSearch` on cache lookups — AND ITS ONE EXCEPTION.** The cache name already pins the build,
+  so precache URLs are query-free and `foo.js?v=BUILD` matches cached `foo.js`. This killed a
+  long-running phantom-cache-miss bug (the "blue marble, no land" symptom). **But it is lethal to any
+  same-origin URL whose QUERY IS ITS IDENTITY**, and `sat.php` is exactly that: it cost six threads
+  (§10A.8d). The fetch handler therefore passes `/sat.php` straight through, ahead of the cache-first
+  branch. **If a second dynamic same-origin endpoint is ever added, it needs the same bail** —
+  `test_sw.js` fails when one appears without it.
 - **`updateViaCache:'none'`** on registration, or stale HTTP-cached worker code never updates.
 - **Navigations are network-first, time-bounded.** Online → fresh index.html, so a deploy is picked up
   immediately and registers the new worker (no manual clear). If the device reports offline, serve the
@@ -2065,7 +2247,7 @@ decisions in this document were made, silently undone, and re-litigated.
   before doing any work.
 - `test_satellite.js` — the live-cloud module: exports, enumerated layer names, EPSG:3857 on both
   services, stamp formats, the red ramp, the five deleted patches, coverage geometry, the contract
-  `cloudbar.js` calls, staleness. **Passes 45/45 as of 2026-08-18** (§10A.10).
+  `cloud-ui.js` calls, staleness. **Passes 45/45 as of 2026-08-18** (§10A.10).
 
 **`run.js` now says CANNOT RUN when a suite could not start** — a missing module, an ENOENT, or a
 crash before the first assertion — and counts those separately from real failures. It was reporting
@@ -2087,6 +2269,37 @@ everything downstream: blank details panel, no map pin. **Touching any js/css wi
 fails a test.**
 
 ---
+
+### 13.1 THE BROWSER RIG — use this before believing any visual fix
+
+`tools/checks/rig-server.js` serves the repo and forwards `/sat.php` to the live proxy;
+`tools/checks/rig-shot.js` drives headless Chromium and screenshots it. Real MapLibre, real modules,
+real network, any projection, any zoom, any viewport.
+
+```
+node tools/checks/rig-server.js &
+node tools/checks/rig-shot.js "http://127.0.0.1:8899/tools/checks/rig.html?proj=globe&z=1.2&lon=15&lat=35" out.png 430 860
+```
+
+**THE RIG REGISTERS NO SERVICE WORKER, AND THAT IS A REAL BLIND SPOT.** `rig.html` is a stripped page;
+the shipped `index.html` registers `sw.js`, which sits between every same-origin fetch and the network.
+The bug that cost six threads lived exactly there, and the rig could never have shown it (§10A.8d).
+**When the rig cannot reproduce something the app does, treat the difference between them as the
+evidence — do not keep investigating the part they share.**
+
+**Two setup traps, both of which look exactly like application bugs:**
+- Chromium is snap-only in the Ubuntu 24 repos. A portable build from
+  `github.com/macchrome/linchrome` releases works; it needs `libnss3 libatk1.0-0t64
+  libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3
+  libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64`.
+- The container proxy re-signs TLS, so Chromium rejects every GIBS certificate and three of four
+  satellites report `missing`. `--ignore-certificate-errors` fixes it. **Without that flag the rig
+  lies in the same direction the old harness did.**
+- Serve `/sat.php` through the forwarding server, NOT a plain static server. A static server returns
+  the PHP SOURCE — 6894 bytes — and the frame probe accepts it, because the probe checks only
+  `r.ok` and `bytes > 1500` and never that the body is an image. **That hole is real in production
+  too:** any HTML error page is larger than 1500 bytes and would be taken as a good frame, after
+  which every tile for it fails and the disc renders nothing.
 
 ## 14. QUICK GOTCHA INDEX
 
@@ -2140,6 +2353,10 @@ fails a test.**
 - Nothing pushes to `mapMarkers`/`pathMarkers` except `registerMarker` (§7.4).
 - Low ΔT-era agreement in `noncentral_durations.py` is the ΔT upgrade working, not a bug. Gate on the
   USNO rows (§9.6).
+- `sw.js` matches same-origin with `ignoreSearch`, so any URL whose QUERY is its identity collapses to
+  one cache entry. `/sat.php` is bailed out ahead of it; a new dynamic endpoint needs the same (§12.1).
+- The banner mark is a CSS mask, so its ALPHA is its brightness. Gate a redraw on peak alpha at the
+  render size, never on ink coverage (§11.6).
 - The generator's in-run AUDIT checks gaps and turns only — a missing or 2-point-stub limb passes it
   silently. Structural limb checks live in `audit_paths.py` (§9.7).
 
@@ -2149,7 +2366,55 @@ fails a test.**
 
 One line per session. **The knowledge lives in the topical sections above; this is only a trail.**
 
-- **2026-08-20** — **Photo rebuilt on MapLibre raster tiles**; the hand-rolled compositor deleted
+- **2026-08-22c** — **PHOTO'S REPEATING TILES: IT WAS `sw.js`, NOT THE MAP.** `caches.match(req,
+  {ignoreSearch:true})` on same-origin GETs collapsed every `/sat.php?…&b=<bbox>…` tile onto one cache
+  entry, so the first EUMETSAT tile was served for all of them (§10A.8d). One-line bail; `ignoreSearch`
+  untouched elsewhere. `test_sw.js` added — 6/6 on the fix, 3 failing on the old file, verified both
+  directions. Verified closed by absence of mechanism: zero `sat` entries in Cache Storage. **§10A.8d
+  moves from OPEN to CLOSED and the cloud feature is done** — what remains in §3 is source limits.
+  Also: the banner mark was regenerated because peak alpha, not ink coverage, is the gate — it had no
+  pixel above alpha 128 at its own render size (§11.6). BUILD `2026-08-22c`.
+- **2026-08-22 (later)** — **PHOTO IS NOT FIXED.** The blue slabs were real and are fixed, but a
+  SEPARATE bug remains: a grid of identical magnified tiles on the globe at low zoom (§10A.8d). Ruled
+  out by measurement: GIBS duplicates, tile selection, the protocol handler, off-disc opacity. The
+  browser rig (§13.1) was built and found the blue slabs, but does NOT reproduce the grid — closing
+  the gap between the rig and the real app is the next step.
+- **2026-08-22** — **THE BLUE SLABS: `CLEAR_PNG` WAS NOT TRANSPARENT.** The fallback tile served to
+  MapLibre after a tile exhausts its retries decoded to rgb(0,0,255) at alpha 127 — a half-opaque
+  blue pixel — while the comment beside it said "transparent". MapLibre stretches a 1x1 tile across
+  the whole tile, and at globe zoom one tile is a quarter of the planet, so every exhausted retry
+  painted a translucent blue slab over the map. Measured before/after on a real render: 10.90% of the
+  world covered, down to 0.01%. This is the "whole-continent smears", the "same tile repeated at
+  different distorted scales", and the washed-out wedges on mobile. It looked like a projection or
+  compositing fault for two weeks and was neither. `test_imagery` now decodes the blob and asserts
+  alpha 0 — verified to fail on the old value.
+  **A REAL BROWSER RIG WAS ADDED (§13.1), and it is the reason this was found.** Every previous
+  "verified" fix was checked against a flat Mercator mosaic at z3 built by a Python script, which
+  cannot render the globe projection, cannot exercise MapLibre's tile handling, and never once tested
+  the case the user actually looks at. Also this session: a stale background is now kept when a
+  refresh loses its race, instead of the satellite being deleted (§10A.6). BUILD `2026-08-22b`.
+- **2026-08-21** — **The four cloud modules renamed** so the filename says which mode it is:
+  `cloud.js`->`cloud-average.js`, `satellite.js`->`cloud-now.js`, `imagery.js`->`cloud-photo.js`,
+  `cloudbar.js`->`cloud-ui.js`. The exported globals are UNCHANGED (`Cloud`, `Satellite`, `Imagery`,
+  `CloudBar`) — renaming those too would have touched every call site for no gain. `sw.js` builds its
+  CORE list from BARE MODULE NAMES, so the rename did not reach it and the app would have silently
+  lost all four offline; `test_hygiene` now compares that list against index.html's script tags. Dead
+  harness files `mkphoto.py` and `photopreview.js` deleted — they drove the compositor that no longer
+  exists. Also: `cloud-average.js` had a **duplicate `_key()`** shadowing the slice-cache key, which
+  disabled the Average layer outright (§10.5); `test_hygiene` now rejects any function declared twice
+  in a file. BUILD `2026-08-21d`.
+- **2026-08-21** — Banner mark and favicon rebuilt from the lockscreen icon's MEASURED geometry with
+  every second ray dropped (§11.6). Banner mark is now the lockscreen icon itself, applied as a CSS mask so it keeps
+  `--gold` and the glow (§11). Favicon options generated. **`sw.js` was precaching
+  `icons/icon-192.png` and `icons/icon-512.png`, NEITHER OF WHICH HAS EVER EXISTED** — the real files
+  carry `-v1`/`-v2` — so every install fetched two 404s inside an atomic `addAll` (§12). Fixed, and
+  `icons/mark.png` added. **Average overlay went stale when jumping from the log** (§10.5). BUILD
+  `2026-08-21a`.
+- **2026-08-20** — Documentation consolidated to **two files**: `START-HERE.md` was folded into §0,
+  §2 and §3 and deleted, after it and §6 gave opposite answers about which branch was live within a
+  day of its creation; §3 stopped carrying a task list and `TODO.md` now owns all open work. The
+  repo/site header was wrong on both counts and is corrected — branch `main`, app served from the
+  site ROOT. Also: **Photo rebuilt on MapLibre raster tiles**; the hand-rolled compositor deleted
   (§10A.8c), and with it every symptom it had been causing. `sat.php` added at the site root after
   EUMETSAT dropped CORS on GetMap (§10A.7b). Tile retry via `addProtocol`, four attempts, because
   MapLibre never re-requests a failed tile and its permanent transparent fallback was the blank
@@ -2163,7 +2428,7 @@ One line per session. **The knowledge lives in the topical sections above; this 
   this one shipped Photo broken (§10A.10). `test_satellite`'s EUMETSAT CRS assertion moved onto
   `sat.php`, where the CRS now lives; `test_imagery` taught about parts, tiers and full-longitude
   coverage. BUILD `2026-08-20u`.
-- **2026-08-19** — Third cloud mode **Photo** (`js/imagery.js`): the satellite picture itself,
+- **2026-08-19** — Third cloud mode **Photo** (`js/cloud-photo.js`): the satellite picture itself,
   composited from five positions and drawn as imagery rather than as an overlay, because `Now`
   finds only ~49% of the cloud an operational mask does (§10A.8) and the difference is visible.
   Track and umbra survive because deck.gl draws above all MapLibre layers, and mode handover keeps
@@ -2176,11 +2441,11 @@ One line per session. **The knowledge lives in the topical sections above; this 
 - **2026-08-18** — Live cloud (#F2c) made usable (§10A). Dateline stripe traced to a GIBS bbox-edge
   bug, not our geometry; render 13× faster (`bgAt` was 89% of it); fetch parallelised and the frame
   probe cached; globe-vs-Mercator fetch box fixed; storm hollowing traced to a 4-day clear-sky
-  reference and fixed at 10; polar extrapolation removed; `cloud.js` teardown fixed (the ☁-off bug);
+  reference and fixed at 10; polar extrapolation removed; `cloud-average.js` teardown fixed (the ☁-off bug);
   frame age now ticks. `test_satellite.js` rewritten — it had been testing an architecture two
   rewrites old and sections 7–10 had never run. `test_forecast` and `js/forecast.js` confirmed lost.
   The four `SESSION-2026-08-*.md` files were folded into §10A and deleted.
-- **2026-08-13** — Cloud slices precached; `js/cloud.js`, `shadow-layer.js`, `shadow-ui.js` found
+- **2026-08-13** — Cloud slices precached; `js/cloud-average.js`, `shadow-layer.js`, `shadow-ui.js` found
   missing from CORE and added (§12). BUILD `2026-08-13a`. **Deployed and verified on iOS**: Safari
   site data cleared, loaded online, installed standalone, went offline — cloud layer renders, and
   renders for an eclipse in a different month, so all 96 slices landed. Found while verifying: test suites are in

@@ -1,6 +1,6 @@
-/* js/satellite.js — live satellite cloud, the "Now" mode (#F2c).
+/* js/cloud-now.js — live satellite cloud, the "Now" mode (#F2c).
  *
- * DATA + LAYER, no UI. js/cloud.js is the sibling that owns the climatology.
+ * DATA + LAYER, no UI. js/cloud-average.js is the sibling that owns the climatology.
  *
  * FOUR STEPS, AND NOTHING ELSE.
  *
@@ -214,7 +214,7 @@
      reports the whole world at almost any zoom, and this module once fetched
      five satellites at world extent on every pan because of it. MapLibre's world
      is exactly 512 * 2^zoom pixels across in both Mercator axes. */
-  /* The map is a PARAMETER, defaulting to this module's own. js/imagery.js
+  /* The map is a PARAMETER, defaulting to this module's own. js/cloud-photo.js
      borrows this function so the globe sizing and the dateline rules have one
      home rather than two — but it runs when THIS module is off, and _map is null
      then, so reading it directly threw on the first line of the picture mode's
@@ -678,6 +678,14 @@
     var have = _bg[sat.id];
     if (have && (Date.now() - have.at) < BG_TTL) return Promise.resolve(have);
     if (have && have.pending) return have.pending;
+    /* The last good field, kept for the whole refresh. It used to be thrown away
+       the instant a refresh started (see the bottom of this function), so a
+       refresh that lost its race left the satellite with no background at all —
+       and a satellite with no background is DELETED by the caller, leaving a
+       blank band that reads as clear sky. Clear-sky ground temperature does not
+       meaningfully change between refreshes, so a stale field is a good answer
+       and no field is the one answer this map must never give. */
+    var prev = (have && have.T) ? have : null;
     var box = bgBox();
     var bw = BG_W, bh = Math.round(BG_W * (mercY(box.n) - mercY(box.s)) /
                                    (R * (box.e - box.w) * Math.PI / 180));
@@ -711,13 +719,21 @@
           else if (t > second[i]) second[i] = t;
         }
       }
-      if (!best) return null;
+      /* Nothing came back this time — keep what we had rather than reporting the
+         satellite dead. Only a satellite that has NEVER had a background gives
+         up, and that is a genuine "no data", not a lost race. */
+      if (!best) { if (prev) delete prev.pending; return prev; }
       for (i = 0; i < best.length; i++) if (second[i] < -900) second[i] = best[i];
       var rec = { at: Date.now(), w: bw, h: bh, T: second, box: box };
       _bg[sat.id] = rec;
       return rec;
-    });
-    _bg[sat.id] = { at: 0, pending: pending };
+    }, function () { if (prev) delete prev.pending; return prev; });
+    /* Hang the in-flight promise ON the existing record instead of REPLACING it.
+       Replacing was the bug: `have.pending` at the top of this function still
+       dedupes concurrent callers, and `have.at` is left stale so the refresh
+       still happens on schedule. */
+    if (prev) prev.pending = pending;
+    else _bg[sat.id] = { at: 0, pending: pending };
     return pending;
   }
 
@@ -1191,7 +1207,7 @@
     _pending = setTimeout(function () { _pending = null; refresh(false); }, 200);
   }
 
-  /* NO TIMER HERE. cloudbar.js has owned the refresh loop all along — a 5-minute
+  /* NO TIMER HERE. cloud-ui.js has owned the refresh loop all along — a 5-minute
      interval calling invalidate(). A timer was briefly added here as well, on
      the strength of grepping this file alone and concluding the feature never
      refreshed. It did. Two loops on different periods is worse than one, and the
@@ -1262,7 +1278,7 @@
   function hasNight() { return true; }
 
   window.Satellite = {
-    version: '2026-08-20a',
+    version: '2026-08-22a',
     CREDIT: CREDIT,
     on: on, off: off, isOn: isOn, refresh: refresh,
     onFrame: onFrame, missing: missing, invalidate: invalidate,
@@ -1282,6 +1298,10 @@
     _cmap: function () { return CMAP; },
     _eumT: function () { return EUM_T; },
     _url: url,
+    /* Exposed so the decode can be checked against REAL pixels rather than
+       reasoned about — see tools/checks/irdecode.js. The coldest storm cores
+       reading as clear sky has been the failure mode twice. */
+    _tempOf: tempOf, _buildCube: buildCube,
     _viewBox: function (m) { return viewBox(m); }
   };
 })();

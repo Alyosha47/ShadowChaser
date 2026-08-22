@@ -1,8 +1,8 @@
-/* js/cloudbar.js — the cloud overlay's caption strip and mode switch.
+/* js/cloud-ui.js — the cloud overlay's caption strip and mode switch.
  *
  * WHAT PROBLEM THIS SOLVES. There are now two cloud datasets that render as
  * similar coloured washes over the same map: a 30-year climatological mean
- * (js/cloud.js) and live satellite imagery (js/satellite.js). Two things follow.
+ * (js/cloud-average.js) and live satellite imagery (js/cloud-now.js). Two things follow.
  *
  *   1. The user must always know WHICH they are looking at. Two datasets that
  *      look alike cannot be distinguished by an icon — the same lesson as the
@@ -29,8 +29,8 @@
  * cells grey individually with a reason, exactly as the shadow button does
  * offline. Adding a third mode later is a third cell, not a redesign.
  *
- * OWNERSHIP. This module owns the button's pressed state and the mode; cloud.js
- * and satellite.js own their own layers and know nothing about each other.
+ * OWNERSHIP. This module owns the button's pressed state and the mode; cloud-average.js
+ * and cloud-now.js own their own layers and know nothing about each other.
  */
 (function () {
   'use strict';
@@ -111,13 +111,13 @@
     render();
   }
 
-  /* Called by cloud.js when the cloud button is pressed. The button's job is
+  /* Called by cloud-average.js when the cloud button is pressed. The button's job is
      unchanged — overlay on or off — and the strip decides which mode that is. */
   function handleButton() { setMode(_mode ? null : _last); }
 
   /* ------------------------------------------------------------------ legend */
 
-  /* A gradient built from cloud.js's own STOPS, so the bar and the pixels can
+  /* A gradient built from cloud-average.js's own STOPS, so the bar and the pixels can
      never disagree. Banded to the same 5% classes the map uses: a smooth ramp
      here would promise a precision the 0.5 deg data does not have. */
   function gradientCss() {
@@ -260,9 +260,16 @@
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. */
   window.CloudBar = {
-    version: '2026-08-20a',
+    version: '2026-08-21a',
     handleButton: handleButton,
     setMode: setMode,
+    /* CALLED WHEN CONNECTIVITY CHANGES. Now and Photo are drawn `disabled` while
+       offline (see blocked()), and nothing redrew the bar when the connection
+       came back — so the two buttons stayed dead until something else happened
+       to re-render. applyOnlineState() in map.js is the one place that knows the
+       truth, and it now drives this the same way it drives the shadow toggle and
+       the basemap picker. */
+    refresh: render,
     mode: function () { return _mode; }
   };
 })();

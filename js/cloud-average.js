@@ -1,4 +1,4 @@
-/* js/cloud.js — historical cloud-cover overlay (#F2, climatology half).
+/* js/cloud-average.js — historical cloud-cover overlay (#F2, climatology half).
  *
  * WHAT IT SHOWS
  *   ERA5 total cloud cover, 1991-2020 mean, 0.5 deg, for the selected eclipse's
@@ -139,6 +139,8 @@
   var _drawnZoom = -1;
   var _canvasB = null, _srcB = null;
   var _baseKey = '';                     /* eclipse the base canvas was drawn for */
+  var _drawnKey = '';                    /* eclipse the DETAIL canvas was drawn for */
+  var _againForce = false;               /* a deferred render that must not be skipped */
   var _moving = false;
   var _lastRec = null;                   /* Besselian rec from the last render  */
 
@@ -308,6 +310,13 @@
      mean rendering the data at the wrong resolution. */
   function _covered() {
     if (!_drawn) return false;
+    /* Geometry alone cannot answer "is this still valid" — it says nothing about
+       WHICH eclipse the pixels are for. Jumping from the log used to leave the
+       old eclipse's overlay in place: the jump kicks a render, `selectedEntry`
+       changes while that one is still in flight, and the queued redraw then
+       found the box unchanged and skipped. The box was right and the month was
+       wrong. */
+    if (_drawnKey !== _eclipseKey(selectedEntry)) return false;
     if (Math.abs(map.getZoom() - _drawnZoom) > 0.25) return false;
     var b = map.getBounds();
     var w = b.getWest(), e = b.getEast();
@@ -454,10 +463,21 @@
     _baseKey = key;
   }
 
+  /* NOT _key — that name was already taken by the slice cache key at the top of
+     this file, and declaring it twice in one scope silently redefined it: every
+     _loadSlice() lookup started returning garbage and the whole layer disabled
+     itself. Guarded in test_hygiene now. */
+  function _eclipseKey(e) {
+    return e ? e.year + '_' + e.month + '_' + e.day : '';
+  }
+
   function _render(force) {
     if (!_on || !map || !mapReady || !selectedEntry) return;
     if (!force && _covered()) return;
-    if (_busy) { _again = true; return; }
+    /* A FORCED render must stay forced when it is deferred. Replaying it
+       unforced let `_covered()` throw it away against a box the in-flight
+       render had just repopulated — the log-jump staleness above. */
+    if (_busy) { _again = true; if (force) _againForce = true; return; }
     _busy = true;
 
     var rec = selectedEntry;
@@ -529,14 +549,14 @@
            against CanvasSource.prepare() in maplibre-gl 5.5.0. */
         _src.play(); _src.pause();
       }
-      _drawn = box; _drawnZoom = map.getZoom();
+      _drawn = box; _drawnZoom = map.getZoom(); _drawnKey = _eclipseKey(rec);
       _swap(!_moving);
     }).catch(function (err) {
       console.warn('[cloud]', err && err.message || err);
       _disable();
     }).then(function () {
       _busy = false;
-      if (_again) { _again = false; _render(); }
+      if (_again) { _again = false; var f = _againForce; _againForce = false; _render(f); }
     });
   }
 
@@ -606,12 +626,12 @@
        the source — so one throw skipped every removal after it and the catch
        swallowed the reason. Simulated against a map that throws where MapLibre
        does, a throw on removeSource('cloud') left cloud-base still painted while
-       the button reported off. satellite.js already tears down this way. */
+       the button reported off. cloud-now.js already tears down this way. */
     try { if (map && map.getLayer(LAYER))    map.removeLayer(LAYER); }    catch (e) {}
     try { if (map && map.getSource(SRC))     map.removeSource(SRC); }     catch (e) {}
     try { if (map && map.getLayer(LAYER_B))  map.removeLayer(LAYER_B); }  catch (e) {}
     try { if (map && map.getSource(SRC_B))   map.removeSource(SRC_B); }   catch (e) {}
-    _src = null; _srcB = null; _baseKey = ''; _moving = false;
+    _src = null; _srcB = null; _baseKey = ''; _drawnKey = ''; _moving = false;
     _drawn = null; _drawnZoom = -1;
     _syncBtn();
   }
@@ -652,7 +672,7 @@
        MapLibre in the meantime, which reads as motion blur rather than as a bug. */
     if (typeof AppState !== 'undefined') {
       AppState.on('selectedEntry', function () {
-        _drawn = null; _baseKey = '';     /* new eclipse — nothing is still valid */
+        _drawn = null; _baseKey = ''; _drawnKey = '';   /* new eclipse — nothing is still valid */
         if (_on) _render(true);
       });
       AppState.on('mapReady', function () {
@@ -681,7 +701,7 @@
   /* Bump on every change. The script tags carry a hardcoded ?v= and the service
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. Check Cloud.version. */
-  window.Cloud = { version: '2026-08-15a',
+  window.Cloud = { version: '2026-08-21a',
                    toggle: toggle, sampleAt: sampleAt,
                    enable: _enable, disable: _disable,
                    /* The legend must be built from the same numbers the pixels

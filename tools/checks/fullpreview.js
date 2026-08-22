@@ -8,7 +8,7 @@ const ctx={createImageData:(a,b)=>({data:new Uint8ClampedArray(a*b*4),width:a,he
 const sb={window:{},console,setTimeout,clearTimeout,Promise,Image:function(){},
   document:{createElement:()=>({getContext:()=>ctx})}};
 vm.createContext(sb);
-const src=fs.readFileSync('repo/js/satellite.js','utf8')
+const src=fs.readFileSync('repo/js/cloud-now.js','utf8')
   .replace('window.Satellite = {','window.__T={compose:compose,bp:buildPalette,bc:buildCube,init:function(c){_ctx=c;}};\n  window.Satellite = {');
 vm.runInContext(src,sb);
 sb.window.__T.init(ctx); sb.window.__T.bp(); sb.window.__T.bc();

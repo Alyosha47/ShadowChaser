@@ -8,11 +8,11 @@
   must not be guessed: the layer identifier, the TileMatrixSet, and a timestamp
   that actually has imagery behind it. The assistant writing this had no network
   route to gibs.earthdata.nasa.gov, so rather than hardcode plausible-looking
-  names into js/satellite.js and discover in the field that they 404, this page
+  names into js/cloud-now.js and discover in the field that they 404, this page
   tries every candidate and reports which ones are real.
 
   Open it in a browser. It needs nothing from the app and touches nothing.
-  Whatever comes back green gets copied into js/satellite.js as a constant.
+  Whatever comes back green gets copied into js/cloud-now.js as a constant.
 
   THE TIMESTAMP PROBLEM, which is the non-obvious part. Geostationary layers are
   "subdaily": GIBS wants YYYY-MM-DDTHH:MM:SSZ, and it does NOT accept "current".
@@ -62,7 +62,7 @@
 'use strict';
 
 /* Candidates. These ARE guesses — that is the entire point of the page. Nothing
-   here reaches js/satellite.js until it has come back green.
+   here reaches js/cloud-now.js until it has come back green.
 
    `probeAt` is the z=2 tile to sample, and it MUST be one the satellite can see.
    The first run of this page failed Himawari purely because every layer was
@@ -91,7 +91,7 @@ var SETS = ['GoogleMapsCompatible_Level7', 'GoogleMapsCompatible_Level6',
 
 var ROOT = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/';
 
-/* DOES GIBS SPEAK WMS? This decides whether satellite.js needs one code path or
+/* DOES GIBS SPEAK WMS? This decides whether cloud-now.js needs one code path or
    two. EUMETSAT is WMS-only, and the canvas alpha-remap the layer now needs
    wants ONE arbitrary-bbox image per viewport, not a tile pyramid. If GIBS
    serves WMS too, both providers collapse into a single fetcher. Tested by
@@ -118,7 +118,7 @@ function testGibsWms() {
   function next() {
     if (i >= tries.length) {
       row(['<b>GIBS WMS endpoint</b>', '—', '—',
-           'NO — GIBS is WMTS only; satellite.js needs two fetchers', ''], 'bad');
+           'NO — GIBS is WMTS only; cloud-now.js needs two fetchers', ''], 'bad');
       return;
     }
     var t = tries[i++];

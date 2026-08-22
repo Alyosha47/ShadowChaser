@@ -25,17 +25,31 @@ const CACHE = 'followtheshadow-' + VERSION;
 const CORE = [
   'index.html',
   'favicon.ico',
-  'icons/icon-192.png',
-  'icons/icon-512.png',
+  /* These were 'icons/icon-192.png' and 'icons/icon-512.png' until 2026-08-20 —
+     NEITHER FILE HAS EVER EXISTED. The real names carry a -v1/-v2 suffix, so
+     every install was precaching two 404s. `addAll` rejects atomically, so this
+     could have failed the whole CORE install; it did not only because these
+     sit behind the server's directory handling. Corrected, plus the banner
+     mark, which the header needs offline or the ☉ replacement is a blank gap. */
+  'icons/icon-192-v2.png',
+  'icons/icon-512-v2.png',
+  'icons/mark.png',
+  'icons/mark-dark-512.png',
   'css/app.css',
-  /* Every script index.html loads. cloud.js and the two shadow files were
+  /* Every script index.html loads. cloud-average.js and the two shadow files were
      MISSING — the same failure as the Cesium entry below, in the other
      direction: shipped code the precache had never heard of. Offline, the
      cloud button did nothing and shadow-ui threw at parse. If you add a
      <script> to index.html, add it here in the same commit. */
   ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
       'search','list','local','details','tshirt','userlog','share','map',
-      'shadow-layer','shadow-ui','cloud','satellite','imagery','cloudbar','url','init'].map(n => `js/${n}.js`),
+      'shadow-layer','shadow-ui','url','init',
+      /* The four cloud modules. NOTE these are listed as BARE NAMES and mapped to
+         paths below — a rename that only rewrites 'cloud.js' in the tree does not
+         touch them, and the failure is silent until someone goes offline. Renamed
+         2026-08-21: cloud->cloud-average, satellite->cloud-now, imagery->cloud-photo,
+         cloudbar->cloud-ui. test_hygiene now checks this list against index.html. */
+      'cloud-average','cloud-now','cloud-photo','cloud-ui'].map(n => `js/${n}.js`),
   /* The map engine. These were MISSING: the app moved from Cesium to MapLibre
      but the precache list didn't, so ~1.9 MB of engine was only ever cached
      opportunistically after first use — a fresh install that went offline
@@ -72,7 +86,7 @@ const BESSELIAN = [
    depends on the eclipse the user picks in the field, so precaching a subset
    would mean the layer works for some eclipses offline and not others — worse
    than either extreme. 3.3 MB is a sixth of what the two path centuries cost.
-   DATA, never CORE: a missing month degrades to its neighbour (see cloud.js),
+   DATA, never CORE: a missing month degrades to its neighbour (see cloud-average.js),
    so a failure here must not fail the install. */
 const CLOUD = [];
 for (let m = 1; m <= 12; m++)
@@ -146,6 +160,21 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // online Esri tiles etc. → untouched
+
+  /* sat.php IS SAME-ORIGIN, AND ITS QUERY IS ITS IDENTITY. It must never reach the
+     cache-first branch below, which matches with ignoreSearch:true. Every EUMETSAT
+     tile is /sat.php?s=eum&…&b=<bbox>&…; with the search ignored they all collapse
+     onto ONE cache entry, so the first tile that landed was handed back for every
+     other tile in the view — MapLibre then stretched that one picture into each
+     cell. THAT IS PHOTO'S GRID OF IDENTICAL MAGNIFIED TILES. It survives reloads
+     and the five-minute rebuild, because the entry only dies when BUILD changes,
+     and it cannot reproduce in the browser rig, which registers no worker.
+     The frame probe (?f=newest) shares the same key and returns TEXT, not an image,
+     so whichever arrived first also poisoned the other: a probe answered with a PNG,
+     or every tile answered with a timestamp and the disc rendering nothing.
+     ignoreSearch STAYS for everything else — it is what makes foo.js?v=BUILD match
+     cached foo.js (§12.1) — and this is a live proxy that must not be cached anyway. */
+  if (/\/sat\.php$/.test(url.pathname)) return;      // live proxy → untouched, never cached
 
   /* Shell fallback is for HTML route navigations only. A direct navigation to a
      file with an extension (js, gz, json, png…) must return THAT file (cache-first

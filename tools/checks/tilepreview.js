@@ -1,5 +1,5 @@
 // Assemble a real tile mosaic exactly as MapLibre would, by RUNNING the shipped
-// imagery.js against a fake map and the real network, then fetching the tile
+// cloud-photo.js against a fake map and the real network, then fetching the tile
 // templates it installed.
 //
 //   node tools/checks/tilepreview.js Z X0 X1 Y0 Y1 out.png
@@ -25,7 +25,7 @@ function makeMap(){
 const sb={console,setTimeout,clearTimeout,Promise,fetch:(u,o)=>global.fetch(u,o),window:{},
           document:{createElement:()=>({getContext:()=>({})})}};
 sb.window.window=sb.window;vm.createContext(sb);
-vm.runInContext(fs.readFileSync('js/imagery.js','utf8'),sb);
+vm.runInContext(fs.readFileSync('js/cloud-photo.js','utf8'),sb);
 const I=sb.window.Imagery;
 
 // The module builds same-origin '/sat.php' URLs. Node has no origin, so resolve
