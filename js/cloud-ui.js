@@ -36,7 +36,21 @@
   'use strict';
 
   var MODES = ['avg', 'now', 'photo'];
-  var LABEL = { avg: 'Average', now: 'Now', photo: 'Photo' };
+  var LABEL = { avg: 'Average', now: 'Map', photo: 'Pic' };
+
+  /* THE STRIP IS TWO-LEVEL, AND THE REASON IS THE TAXONOMY, NOT THE LOOK.
+     Three equal cells said Average, Now and Photo were three peers. They are not:
+     `avg` is ERA5 climatology, a different dataset and a different question, while
+     `now` and `photo` are THE SAME MOMENT shown two ways — a readable field you can
+     sample a number from, and a picture you cannot. So `now` and `photo` sit as
+     sub-cells under a shared `Now` cap, and `avg` stands alone beside them.
+     Two things fall out of the grouping for free:
+       - Offline greys the CAP and both sub-cells as one unit carrying ONE reason,
+         instead of two adjacent cells that each look independently broken.
+       - Adding a fourth live representation later is a third sub-cell.
+     Still NOT a cycle — see the rejection at the top of this file. `Now` is dead
+     offline and outside coverage, so cycling would contain a silent dead tap. */
+  var LIVE = ['now', 'photo'];
 
   var _mode = null;        /* null = overlay off; otherwise one of MODES */
   var _last = 'avg';       /* mode to restore when switched back on      */
@@ -184,15 +198,36 @@
                  (live ? live.CREDIT : '') + '</div>');
     }
 
-    var cells = MODES.map(function (mo) {
+    function cell(mo, extra) {
       var why = blocked(mo);
-      return '<button type="button" class="cloudbar-cell' +
+      return '<button type="button" class="cloudbar-cell' + (extra || '') +
              (mo === _mode ? ' active' : '') + '"' +
              (why ? ' disabled title="' + why + '"' : '') +
              ' data-mode="' + mo + '">' + LABEL[mo] + '</button>';
-    }).join('');
+    }
 
-    _host.innerHTML = '<div class="cloudbar-modes">' + cells + '</div>' + parts.join('');
+    /* The cap is a LABEL, not a control. It was tempting to make it a button that
+       selects the last-used live mode, but that reintroduces the dead tap the cycle
+       was rejected for: offline, the cap would be the biggest target in the strip
+       and would do nothing. It carries the group's state and its reason instead. */
+    var deadNow = blocked('now'), deadPic = blocked('photo');
+    var groupDead = deadNow && deadPic;
+    var cap = '<div class="cloudbar-cap' +
+              (LIVE.indexOf(_mode) !== -1 ? ' active' : '') +
+              (groupDead ? ' blocked" title="' + deadNow : '"') +
+              '">Now</div>';
+
+    _host.innerHTML =
+      '<div class="cloudbar-modes">' +
+        cell('avg') +
+        '<div class="cloudbar-group' + (groupDead ? ' blocked' : '') + '">' +
+          cap +
+          '<div class="cloudbar-subs">' +
+            cell('now', ' cloudbar-sub cloudbar-sub-l') +
+            cell('photo', ' cloudbar-sub cloudbar-sub-r') +
+          '</div>' +
+        '</div>' +
+      '</div>' + parts.join('');
   }
 
   /* ------------------------------------------------------------------- wire */
@@ -260,7 +295,7 @@
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. */
   window.CloudBar = {
-    version: '2026-08-21a',
+    version: '2026-08-22d',
     handleButton: handleButton,
     setMode: setMode,
     /* CALLED WHEN CONNECTIVITY CHANGES. Now and Photo are drawn `disabled` while

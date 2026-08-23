@@ -1471,6 +1471,40 @@
        explaining why, exactly as the shadow button does when offline. */
     .cloudbar-cell:disabled { opacity: 0.35; cursor: not-allowed; }
 
+    /* Two-level strip: `Average` beside a capped `Now` group holding Map and Pic.
+       `align-items: stretch` on the row is what makes Average full height without
+       a hardcoded height that would drift from the cells' padding. */
+    .cloudbar-modes { align-items: stretch; }
+    .cloudbar-group {
+      flex:           2;      /* two sub-cells, so twice Average's share */
+      display:        flex;
+      flex-direction: column;
+      gap:            2px;
+      min-width:      0;      /* or the nowrap sub-labels push the row wide */
+    }
+    .cloudbar-cap {
+      font-size:      0.62rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-align:     center;
+      padding:        1px 0;
+      color:          var(--text-dim);
+      border:         1px solid var(--border2);
+      border-bottom:  none;
+      border-radius:  calc(var(--radius) - 2px) calc(var(--radius) - 2px) 0 0;
+    }
+    .cloudbar-cap.active { color: var(--gold); border-color: var(--gold); }
+    .cloudbar-subs { display: flex; gap: 2px; }
+    /* Square off the edges the cap sits on, so cap and sub-cells read as one
+       object rather than a label that happens to be above two buttons. */
+    .cloudbar-sub    { min-width: 0; padding-left: 0.3rem; padding-right: 0.3rem; }
+    .cloudbar-sub-l  { border-radius: 0 0 0 calc(var(--radius) - 2px); }
+    .cloudbar-sub-r  { border-radius: 0 0 calc(var(--radius) - 2px) 0; }
+    /* Offline greys the WHOLE group at once. The cell rule already dims each
+       button; dimming the cap here is what makes it read as one unavailable
+       thing carrying one reason, rather than two broken buttons. */
+    .cloudbar-group.blocked .cloudbar-cap { opacity: 0.35; cursor: not-allowed; }
+
     /* The colour bar. Height is deliberately small — it is a key, not a chart —
        and the end labels are words rather than numbers because the underlying
        quantity is a mean fraction, which a percentage scale would make look more
@@ -1501,6 +1535,7 @@
     @media (max-width: 900px) {
       #cloudbar { top: 2.9rem; max-width: min(14rem, calc(100vw - 1.6rem)); }
       .cloudbar-cell { font-size: 0.68rem; }
+      .cloudbar-cap  { font-size: 0.58rem; }
     }
 
     /* Right-hand map controls: basemap picker + locate pin, one row.

@@ -413,7 +413,7 @@ ShadowChaser/
     ├── cloud-average.js        CLOUD OVERLAY — climatology layer, palette, sampleAt (§10)
     ├── cloud-now.js    LIVE CLOUD — geostationary IR, temperature model (§10A)
     ├── cloud-photo.js      PHOTO MODE — the satellite picture composited (§10A.8c)
-    ├── cloud-ui.js     the Average | Now mode strip (§10A.1)
+    ├── cloud-ui.js     the Average | Now[Map|Pic] mode strip (§10A.1)
     ├── details.js      renderData, buildContactRows, contactIcon, lookupElevationAndTz
     ├── eclipse.js      computeEclipse, fundamentalArgs, sunAltAz, findMaximum, findContact,
     │                   getV(t,interior)   — strict-mode UMD
@@ -1322,8 +1322,19 @@ have been deleted. Where they disagreed, what follows is the surviving answer.
 ### 10A.1 The mode strip — SETTLED, don't redesign
 
 `☁` keeps its single job: overlay on or off. The strip below it carries the colour bar, the source
-credit and a two-cell segmented control, `Average | Now`.
+credit and a **two-level** segmented control: `Average` beside a capped `Now` group holding **Map**
+and **Pic**.
 
+- **THE STRIP IS TWO-LEVEL AS OF 2026-08-22d, AND THE REASON IS TAXONOMY.** Three equal cells asserted
+  that `Average`, `Now` and `Photo` are peers. They are not: `avg` is ERA5 climatology, a different
+  dataset answering a different question, while `now` and `photo` are **the same moment shown two
+  ways**. `Map` is the readable field you can sample a number from; `Pic` is the photograph you
+  cannot. The labels now state the difference `Cloud.sampleAt()` already enforced in code.
+- **The cap is a LABEL, not a button.** Making it select the last-used live mode would put the
+  strip's largest target there and have it do nothing when offline — the same dead-tap objection
+  that killed the cycle.
+- **Offline greys the cap and both sub-cells as ONE unit carrying ONE reason**, rather than two
+  adjacent cells that each look independently broken. This is the main thing the grouping buys.
 - **A 3-state cycling button was rejected.** "Now" is unavailable offline and outside coverage, so a
   cycle would contain a dead state — silently skipped or a no-op tap.
 - **The mode switch IS the source label**, so there is only ever one statement of which dataset is
@@ -1331,7 +1342,7 @@ credit and a two-cell segmented control, `Average | Now`.
 - `Average` gained a legend at the same time; §10.5 justified banding the palette on the grounds that
   a value can be read off the map, which was not true without a colour bar. The gradient is built
   from `Cloud.stops()`, not copied, so bar and pixels cannot drift.
-- Adding a third mode later is a third cell, not a redesign.
+- Adding a fourth live representation later is a third SUB-cell, not a redesign.
 - `js/cloud-average.js` changed in three places only, all additive: it delegates the button click *if*
   `CloudBar` exists, stops writing `aria-pressed` *if* `CloudBar` exists, and exports
   `enable`/`disable`/`stops`. Delete `cloud-ui.js` and the button reverts to the toggle it was.
@@ -2366,6 +2377,17 @@ evidence — do not keep investigating the part they share.**
 
 One line per session. **The knowledge lives in the topical sections above; this is only a trail.**
 
+- **2026-08-22d** — Info tab icon is drawn SVG, not the `ⓘ` glyph (U+24D8). The glyph read as a
+  capital I because its tittle merges into the stem in several system fonts, and a font glyph is not
+  ours to control. Now a serifed lowercase i in a ring, `viewBox="0 0 20 20"` with `.tab-icon-svg`
+  like Details and Log, so it inherits `currentColor`, the drop-shadow and `tab-throb` for free.
+  Both call sites changed — mobile tab bar AND desktop sidebar. Rendered and checked at both real
+  sizes: the serif foot reads at 20px (mobile is the LARGE case, `@media (max-width: 600px)` sets
+  `.tab-btn` to 1.1rem) and survives as a thickening at 13px in the desktop sidebar.
+- **2026-08-22d** — Mode strip is two-level: `Average` beside a capped `Now` group holding **Map** and
+  **Pic** (§10A.1). Labels now state what the code already enforced — Map is samplable, Pic is not.
+  Offline greys the group as one. Instructions panel gained the cloud paragraphs, in the slot its own
+  comment had been reserving. Mark art unchanged; the banner was brightened in CSS only (§11.6).
 - **2026-08-22c** — **PHOTO'S REPEATING TILES: IT WAS `sw.js`, NOT THE MAP.** `caches.match(req,
   {ignoreSearch:true})` on same-origin GETs collapsed every `/sat.php?…&b=<bbox>…` tile onto one cache
   entry, so the first EUMETSAT tile was served for all of them (§10A.8d). One-line bail; `ignoreSearch`
