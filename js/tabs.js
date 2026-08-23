@@ -39,6 +39,53 @@ document.querySelectorAll('.sidebar-tab-btn').forEach(function (b) {
 document.body.setAttribute('data-sidebar-tab', sidebarTab);
 
 
+/* ── Sidebar drag-to-resize (desktop only) ───────────────────────────────
+   Sets --sidebar-w on the root element; CSS clamps it (min-width/max-width
+   on .sidebar), so the drag math itself doesn't need to enforce the limits
+   precisely. Not persisted — resets to the 360px default on reload, by
+   design (session-only). */
+(function () {
+  var handle = document.getElementById('sidebar-resize-handle');
+  var sidebar = document.querySelector('.sidebar');
+  if (!handle || !sidebar) return;
+
+  var dragging = false;
+  var startX, startW;
+
+  var MIN_W = 360, MAX_W = 720;   /* must match .sidebar's min-width/max-width in app.css */
+
+  function onMove(e) {
+    if (!dragging) return;
+    var dx = startX - e.clientX;   /* handle is on the LEFT edge, so dragging
+                                       left (dx > 0) widens the sidebar */
+    var w  = startW + dx;
+    /* Clamp here, not just in CSS: the handle's own position tracks this var
+       directly (see .sidebar-resize-handle in app.css), so if we let the var
+       run past the sidebar's rendered min/max, the handle drifts away from
+       the edge it's supposed to hug once the sidebar stops growing. */
+    if (w < MIN_W) w = MIN_W;
+    if (w > MAX_W) w = MAX_W;
+    document.documentElement.style.setProperty('--sidebar-w', w + 'px');
+  }
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+  }
+  handle.addEventListener('pointerdown', function (e) {
+    dragging = true;
+    startX = e.clientX;
+    startW = sidebar.getBoundingClientRect().width;
+    handle.classList.add('dragging');
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    e.preventDefault();
+  });
+})();
+
+
 /* ── Timezone selector ───────────────────────────────────────────────── */
 
 /* Compact list of common named zones with their standard UTC offsets (hours).

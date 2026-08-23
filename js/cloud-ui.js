@@ -38,6 +38,19 @@
   var MODES = ['avg', 'now', 'photo'];
   var LABEL = { avg: 'Average', now: 'Map', photo: 'Pic' };
 
+  /* Icons for the mode buttons — inline SVG, not the Tabler web font: this is
+     an offline-first PWA (see sw.js precache), so a CDN font is a dependency
+     the app can't guarantee. These ARE Tabler's icons though — exact outline
+     paths (chart-histogram / map-2 / camera), just self-hosted as raw markup
+     instead of loaded from a font. currentColor so they pick up the same
+     text-dim/gold/disabled coloring the text labels used. LABEL is kept as
+     the accessible name (title attr + screen readers), not shown on screen. */
+  var ICON = {
+    avg:   '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M20 18v3"/><path d="M16 16v5"/><path d="M12 13v8"/><path d="M8 16v5"/><path d="M3 11c6 0 5 -5 9 -5s3 5 9 5"/></svg>',
+    now:   '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 18.5l-3 -1.5l-6 3v-13l6 -3l6 3l6 -3v7.5"/><path d="M9 4v13"/><path d="M15 7v5.5"/><path d="M21.121 20.121a3 3 0 1 0 -4.242 0c.418 .419 1.125 1.045 2.121 1.879c1.051 -.89 1.759 -1.516 2.121 -1.879"/><path d="M19 18v.01"/></svg>',
+    photo: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2"/><path d="M9 13a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></svg>'
+  };
+
   /* THE STRIP IS TWO-LEVEL, AND THE REASON IS THE TAXONOMY, NOT THE LOOK.
      Three equal cells said Average, Now and Photo were three peers. They are not:
      `avg` is ERA5 climatology, a different dataset and a different question, while
@@ -193,7 +206,7 @@
         /* A satellite that failed leaves a hole, and a hole reads as clear sky. */
         (gone.length ? ' · no ' + gone.join(', ') : '') + '</div>');
       parts.push('<div class="cloudbar-note" id="cloudbar-age">' +
-        (t ? ageText(_shown) : 'loading…') + '</div>');
+        (t ? ageText(_shown) : '<span class="cloudbar-spinner"></span>loading…') + '</div>');
       parts.push('<div class="cloudbar-note cloudbar-credit">' +
                  (live ? live.CREDIT : '') + '</div>');
     }
@@ -202,8 +215,10 @@
       var why = blocked(mo);
       return '<button type="button" class="cloudbar-cell' + (extra || '') +
              (mo === _mode ? ' active' : '') + '"' +
-             (why ? ' disabled title="' + why + '"' : '') +
-             ' data-mode="' + mo + '">' + LABEL[mo] + '</button>';
+             ' title="' + (why || LABEL[mo]) + '"' +
+             ' aria-label="' + LABEL[mo] + '"' +
+             (why ? ' disabled' : '') +
+             ' data-mode="' + mo + '">' + ICON[mo] + '</button>';
     }
 
     /* The cap is a LABEL, not a control. It was tempting to make it a button that
@@ -227,7 +242,11 @@
             cell('photo', ' cloudbar-sub cloudbar-sub-r') +
           '</div>' +
         '</div>' +
-      '</div>' + parts.join('');
+      '</div>' +
+      /* Fixed min-height (see .cloudbar-info in app.css): Average's caption is
+         two lines, Map/Pic's is three, so without this the whole box grew and
+         shrank by a line every time the mode switched. */
+      '<div class="cloudbar-info">' + parts.join('') + '</div>';
   }
 
   /* ------------------------------------------------------------------- wire */

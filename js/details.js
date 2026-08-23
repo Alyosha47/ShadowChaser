@@ -186,13 +186,13 @@ function renderData(rec, _tz, _lat, _lon) {
        when it had been pushed down past the contacts and the track, out of
        reach of that heading. If it ever moves again, give it one back. */
     var localSummary =
-      '<table class="detail-table"><tbody>'
+      '<div class="circs-grid">'
     +   (res.durCentral ? row('Duration (' + lbl.toLowerCase() + ')', fmtDur(res.durCentral)) : '')
     +   (res.durPartial ? row('Partial duration', fmtDur(res.durPartial)) : '')
     +   row('Magnitude',           res.mag.toFixed(4))
     +   row('Obscuration',         res.osc.toFixed(1) + '%')
     +   row('Sun alt / az at max', fmtAng(res.sun.alt) + ' / ' + fmtAng(res.sun.az))
-    + '</tbody></table>';
+    + '</div>';
 
     html +=
       localSummary
@@ -224,7 +224,7 @@ function renderData(rec, _tz, _lat, _lon) {
 
   /* ── Global Circumstances (reference data — least actionable, so last) ── */
   html += '<div class="detail-section-h">Global Circumstances</div>'
-       + '<table class="detail-table"><tbody>'
+       + '<div class="circs-grid">'
        +   row('Greatest eclipse (UT)', selectedEntry.td_ge || '--')
        +   row('GE location',           coordStr(selectedEntry.lat_dd_ge, selectedEntry.lng_dd_ge))
        +   row('Sun alt / az at GE',    fmtAng(selectedEntry.sun_alt) + ' / ' + fmtAng(selectedEntry.sun_azm))
@@ -235,7 +235,7 @@ function renderData(rec, _tz, _lat, _lon) {
                        + (selectedEntry.nSeq && selectedEntry.nSer
                           ? ': ' + selectedEntry.nSeq + '/' + selectedEntry.nSer : ''))
        +   row('\u0394T', dtVal.toFixed(1) + '\u2009s')
-       + '</tbody></table>';
+       + '</div>';
 
   inner.innerHTML = html;
 
@@ -272,7 +272,7 @@ function maxDurationRows(e) {
 
 
 function row(label, value) {
-  return '<tr><td class="l">' + label + '</td><td class="v">' + value + '</td></tr>';
+  return '<div class="circ-row"><span class="l">' + label + '</span><span class="v">' + value + '</span></div>';
 }
 
 /* Interactive sun-track diagram: the Sun's path across the sky (x = azimuth,

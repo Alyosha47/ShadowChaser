@@ -265,6 +265,11 @@
     </div>
 
 
+    <!-- Drag handle for the sidebar's left edge (desktop only via CSS). A
+         sibling of .sidebar, not a child — .sidebar has overflow:hidden,
+         which would clip a handle straddling its edge. JS in tabs.js. -->
+    <div class="sidebar-resize-handle" id="sidebar-resize-handle" title="Drag to resize"></div>
+
     <!-- ── Sidebar wrapper (desktop only — mobile lets panels behave as siblings) -->
     <div class="sidebar">
 

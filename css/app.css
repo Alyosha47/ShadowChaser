@@ -102,8 +102,8 @@
        white version that appears on the home screen. */
     .app-header::before {
       content:         '';
-      width:           1.9rem;
-      height:          1.9rem;
+      width:           64px;
+      height:          64px;
       flex-shrink:     0;
       background:      var(--gold2);
       -webkit-mask:    url('../icons/mark.png') center / contain no-repeat;
@@ -592,39 +592,63 @@
       color:          var(--text-dim);
     }
 
-    /* Data table: label column left, value column right. Real table so
-       column edges align across all rows. */
-    .detail-table {
-      width:           100%;
-      border-collapse: collapse;
-      font-family:     var(--mono);
-      table-layout:    fixed;
+    /* Container-query root for .circs-grid below: its inline size is the
+       sidebar's width on desktop and the full screen on mobile, either way
+       the thing .circs-grid actually needs to react to. */
+    #data-panel {
+      container-name: circs-panel;
+      container-type: inline-size;
     }
-    .detail-table td {
+
+    /* Data display: a grid of label/value pairs (Local + Global Circumstances).
+       Plain flex rows, not a table — that's what lets the grid below reflow
+       from one pair per row to two once the container (the sidebar, which the
+       user can drag wider — see .sidebar-resize-handle) has the room. Default
+       is a single column, identical in effect to the old two-column table. */
+    .circs-grid {
+      display:               grid;
+      grid-template-columns: 1fr;
+      column-gap:            1.2rem;
+      font-family:           var(--mono);
+    }
+    .circ-row {
+      display:         flex;
+      justify-content: space-between;
+      align-items:     baseline;
+      gap:             0.6rem;
       /* Softer than --border and roomier than before. Nine rows of Global
          Circumstances at full border weight read as a ladder; the eye wants the
          rows grouped, not fenced. Enough contrast to guide a horizontal read,
          not enough to draw attention. */
       padding:        0.3rem 0;
       border-bottom:  1px solid var(--border);
-      vertical-align: baseline;
     }
-    .detail-table tr:last-child td { border-bottom: none; }
-    .detail-table .l {
-      width:          11rem;
+    /* Only the true last row loses its rule — with two columns active the row
+       above it may keep one. A minor cosmetic gap, not worth chasing further. */
+    .circs-grid > .circ-row:last-child { border-bottom: none; }
+    .circ-row .l {
       font-size:      0.66rem;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color:          var(--text-dim);
       white-space:    nowrap;
+      flex:           0 0 auto;
     }
-    .detail-table .v {
-      font-size:   0.82rem;
-      color:       var(--gold2);
-      text-align:  right;
-      overflow:    hidden;
+    .circ-row .v {
+      font-size:     0.82rem;
+      color:         var(--gold2);
+      text-align:    right;
+      overflow:      hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space:   nowrap;
+      flex:          1 1 auto;
+    }
+    /* Two pairs per row once the grid's own container is wide enough to hold
+       them without crowding — independent of viewport, so it reacts to the
+       sidebar's dragged width, not just desktop-vs-mobile. Needs an ancestor
+       with container-type: inline-size; see #data-panel below. */
+    @container circs-panel (min-width: 460px) {
+      .circs-grid { grid-template-columns: 1fr 1fr; }
     }
 
     /* Sits directly under "Local Circumstances" and names the place the figures
@@ -1432,7 +1456,10 @@
       top:             3.2rem;
       left:            0.6rem;
       z-index:         200;
-      max-width:       min(17rem, calc(100vw - 1.6rem));
+      /* Was 17rem — sized for the widest text label ('Average'). Icon-only
+         buttons need much less, and a narrower box is directly the "less
+         space on mobile" ask. */
+      max-width:       min(12rem, calc(100vw - 1.6rem));
       padding:         0.4rem;
       display:         flex;
       flex-direction:  column;
@@ -1454,22 +1481,31 @@
     }
     .cloudbar-cell {
       flex:            1;
-      padding:         0.25rem 0.45rem;
-      font-family:     inherit;
-      font-size:       0.72rem;
-      letter-spacing:  0.02em;
+      display:         flex;
+      align-items:     center;
+      justify-content: center;
+      /* Fixed square-ish footprint, icon-only now — the old text labels
+         ('Average' vs 'Map') were different widths, which is most of why the
+         group used to visibly resize. A number, not 'auto', is what makes
+         that stop: every cell claims the same space regardless of icon. */
+      padding:         0.35rem 0;
       color:           var(--text-dim);
       background:      transparent;
       border:          1px solid var(--border2);
       border-radius:   calc(var(--radius) - 2px);
       cursor:          pointer;
-      white-space:     nowrap;
     }
     .cloudbar-cell:hover:not(:disabled) { color: var(--text); border-color: var(--edge); }
     .cloudbar-cell.active { color: var(--gold); border-color: var(--gold); }
     /* Unavailable, not broken: the cell keeps its place and carries a title
        explaining why, exactly as the shadow button does when offline. */
     .cloudbar-cell:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* Reserves height for the taller of the two caption states (Map/Pic's
+       three lines vs Average's two) so switching modes doesn't grow or shrink
+       the box. min-height, not height — a genuinely longer satellite-missing
+       line still gets to wrap without clipping. */
+    .cloudbar-info { min-height: 2.7rem; }
 
     /* Two-level strip: `Average` beside a capped `Now` group holding Map and Pic.
        `align-items: stretch` on the row is what makes Average full height without
@@ -1532,10 +1568,26 @@
     }
     .cloudbar-credit { opacity: 0.7; }
 
+    /* Small spinner shown to the left of "loading…" in the age line while
+       waiting for the first frame. A CSS-only ring, no image asset. */
+    .cloudbar-spinner {
+      display:        inline-block;
+      width:          0.55rem;
+      height:         0.55rem;
+      margin-right:   0.3rem;
+      vertical-align: -1px;
+      border:         1.5px solid var(--border2);
+      border-top-color: var(--gold);
+      border-radius:  50%;
+      animation:      cloudbar-spin 0.7s linear infinite;
+    }
+    @keyframes cloudbar-spin {
+      to { transform: rotate(360deg); }
+    }
+
     @media (max-width: 900px) {
-      #cloudbar { top: 2.9rem; max-width: min(14rem, calc(100vw - 1.6rem)); }
-      .cloudbar-cell { font-size: 0.68rem; }
-      .cloudbar-cap  { font-size: 0.58rem; }
+      #cloudbar { top: 2.9rem; max-width: min(10rem, calc(100vw - 1.6rem)); padding: 0.3rem; }
+      .cloudbar-cap { font-size: 0.58rem; }
     }
 
     /* Right-hand map controls: basemap picker + locate pin, one row.
@@ -1944,9 +1996,9 @@
       .pill         { font-size: 0.8rem; }
       .section-label { font-size: 0.85rem; }
       .top-section-header, .detail-section-h { font-size: 0.95rem; }
-      .detail-table .l    { font-size: 0.72rem; }
-      .detail-table .v    { font-size: 0.95rem; }
-      .detail-table td    { padding: 0.4rem 0; }
+      .circ-row .l        { font-size: 0.72rem; }
+      .circ-row .v        { font-size: 0.95rem; }
+      .circ-row           { padding: 0.4rem 0; }
 
       /* Hide map popup on mobile — it renders off-screen */
       .map-popup { display: none !important; }
@@ -1957,6 +2009,7 @@
           visually hidden on mobile, shown on desktop) ─────────────────── */
 
     .sidebar-tabs { display: none; }
+    .sidebar-resize-handle { display: none; }
 
     .sidebar-tab-btn {
       flex:           1;
@@ -1996,10 +2049,15 @@
          re-trigger. */
       #btn-locate { display: none; }
 
-      /* Two-column flex inside .tab-content: map flexes, sidebar fixed-width */
+      /* Two-column flex inside .tab-content: map flexes, sidebar fixed-width.
+         position:relative anchors .sidebar-resize-handle (a sibling of
+         .sidebar, positioned in tab-content's coordinate space so it can
+         straddle the sidebar's edge without being clipped by the sidebar's
+         own overflow:hidden). */
       .tab-content {
         display:        flex;
         flex-direction: row;
+        position:       relative;
       }
 
       /* Bottom tab-bar (mobile only) is hidden on desktop */
@@ -2014,14 +2072,59 @@
         padding:  0;
       }
 
-      /* Sidebar: fixed-width right column with sub-tabs on top */
+      /* Sidebar: right column with sub-tabs on top. Width is a CSS var so the
+         drag handle (below) can resize it; 360px is both the default and the
+         floor — set as min-width too, so the var can never shrink the layout
+         past what a fixed-width sidebar used to guarantee. */
+      :root { --sidebar-w: 360px; }
       .sidebar {
         display:        flex;
         flex-direction: column;
-        flex:           0 0 360px;
+        flex:           0 0 var(--sidebar-w);
+        min-width:      360px;
+        max-width:      720px;
         border-left:    1px solid var(--border);
         background:     #1a2030;
         overflow:       hidden;
+        position:       relative;   /* anchors .sidebar-resize-handle */
+      }
+
+      /* Discreet drag handle on the sidebar's left edge. Invisible at rest —
+         only the border-left already there marks the edge — and lights up
+         gold on hover/drag so it reads as interactive without adding a
+         permanent visual seam. */
+      .sidebar-resize-handle {
+        display:  block;
+        position: absolute;
+        /* Positioned from the right so it tracks the sidebar's actual left
+           edge as --sidebar-w changes (this element lives in .tab-content's
+           coordinate space, not .sidebar's, so it isn't clipped by the
+           sidebar's overflow:hidden). ±4px around that edge, same straddle
+           as before. */
+        right:    calc(var(--sidebar-w) - 4px);
+        top:      0;
+        bottom:   0;
+        width:    8px;
+        cursor:   ew-resize;
+        z-index:  6;
+        touch-action: none;
+      }
+      .sidebar-resize-handle::after {
+        content:      '';
+        position:     absolute;
+        left:         2px;
+        top:          50%;
+        width:        4px;
+        height:       36px;
+        transform:    translateY(-50%);
+        border-radius: 2px;
+        background:   var(--text-dim);
+        opacity:      0.5;
+      }
+      .sidebar-resize-handle:hover::after,
+      .sidebar-resize-handle.dragging::after {
+        background: var(--gold);
+        opacity:    1;
       }
       .sidebar-tabs {
         display:        flex;
