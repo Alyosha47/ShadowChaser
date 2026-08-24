@@ -41,8 +41,8 @@ const CORE = [
      direction: shipped code the precache had never heard of. Offline, the
      cloud button did nothing and shadow-ui threw at parse. If you add a
      <script> to index.html, add it here in the same commit. */
-  ...['tz_lookup','format','state','tabs','cities','search_parser','eclipse',
-      'search','list','local','details','tshirt','userlog','share','map',
+  ...['tz_lookup','format','state','tabs','cities','search-parser','eclipse',
+      'search-ui','search-list','local','details','tshirt','userlog','share','map',
       'shadow-layer','shadow-ui','url','init',
       /* The four cloud modules. NOTE these are listed as BARE NAMES and mapped to
          paths below — a rename that only rewrites 'cloud.js' in the tree does not

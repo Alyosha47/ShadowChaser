@@ -21,7 +21,7 @@
 
    Globals consumed (defined elsewhere, resolved at call time): map, mapReady,
    selectedEntry, isOffline (map.js); loadChunk (state.js); parseCoords
-   (search.js); computeEclipse (eclipse.js); window.sunTrackJump (details.js).
+   (search-ui.js); computeEclipse (eclipse.js); window.sunTrackJump (details.js).
    Depends on window.createShadowLayer (js/shadow-layer.js). */
 
 /* ---- tuning constants ---- */

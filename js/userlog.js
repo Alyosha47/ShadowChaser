@@ -191,8 +191,14 @@ var SC_ICON = {
      scLogRenderTools. The three pick-* marks are ONE control in three states
      (none / some / all), drawn as a checkbox because that is what it behaves
      like; the box is identical in all three so only the mark inside changes. */
-  tshirt:   '<path d="M7.3 3.2 3.6 5.4l1.5 3.1 2.2-1.1v9.4h5.4V7.4l2.2 1.1 1.5-3.1-3.7-2.2z"/>'
-          + '<path d="M7.3 3.2a2.7 2.7 0 0 0 5.4 0"/>',
+  /* Folded-map glyph — same shape family as cloud-ui.js's own map icon
+     (scaled to this set's 20x20/1.5-stroke convention), reused here since
+     "Make map" makes an actual folded/printed map, not a t-shirt. Renamed
+     2026-08-23: this is what used to be the tshirt icon; SC_ICON key and the
+     poster/tshirt.js machinery it triggers are untouched — ask if you want
+     those renamed too. */
+  tshirt:   '<path d="M10 15.4l-2.5-1.2l-5 2.5v-10.8l5-2.5l5 2.5l5-2.5v6.2"/>'
+          + '<path d="M7.5 3.3v10.8"/><path d="M12.5 5.8v4.6"/>',
   pickNone: '<rect x="3.6" y="3.6" width="12.8" height="12.8" rx="2.6"/>',
   pickSome: '<rect x="3.6" y="3.6" width="12.8" height="12.8" rx="2.6"/>'
           + '<path d="M6.9 10h6.2"/>',

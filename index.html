@@ -32,7 +32,7 @@
        512 PNG covers tab-strip HiDPI and bookmark tiles. Version-stamped like
        every other asset, because sw.js is cache-first with ignoreSearch. -->
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="icons/mark-dark-512.png?v=2026-08-22d" sizes="512x512">
+  <link rel="icon" type="image/png" href="icons/mark-dark-512.png?v=2026-08-23a" sizes="512x512">
   <!-- Launch images. iOS ignores any apple-touch-startup-image whose pixel
        size does not match the device exactly, hence one tag per device per
        orientation. Files are in icons/splash/ — see the README there.
@@ -114,7 +114,7 @@
   </script>
     <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-08-22d">
+  <link rel="stylesheet" href="css/app.css?v=2026-08-23a">
 </head>
 <body>
 
@@ -163,7 +163,7 @@
         <option value="winkel">Winkel Tripel</option>
       </select>
       <select id="ts-theme" onchange="tsRedraw()" aria-label="Theme">
-        <option value="tshirt">T-Shirt</option>
+        <option value="tshirt">Poster</option>
         <option value="midnight">Midnight</option>
         <option value="blueprint">Blueprint</option>
         <option value="mono">Mono Ink</option>
@@ -328,6 +328,29 @@
           </div>
           <div id="status-msg"></div>
 
+          <!-- Was the Info tab's whole "Settings" section (id sg-settings) —
+               this was the only control left in it once the basemap picker and
+               shadow strength moved onto the map itself and timezone moved into
+               tabs.js's _tzChoice (see those removed sections' history if this
+               ever needs restoring). Sits under the list it actually affects
+               now, instead of in an unrelated tab. Same #search-range id, same
+               init.js wiring — nothing but the markup's location changed. -->
+          <div class="instructions-ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
+          <div class="search-settings">
+            <div class="settings-row">
+              <label for="search-range">Search range</label>
+              <select id="search-range" style="max-width:18rem">
+                <option value="modern">Modern era (1500–2500)</option>
+                <option value="past500">±500 years from today</option>
+                <option value="twomill">Extended (−1000 to 3000)</option>
+                <option value="all">All (~11,800 eclipses)</option>
+              </select>
+            </div>
+            <div class="about-text">
+              <p>Smaller ranges search faster. An explicit year in your search always overrides this.</p>
+            </div>
+          </div>
+
         </div><!-- /.panel -->
       </div><!-- #tab-search -->
 
@@ -410,27 +433,29 @@
           anywhere on Earth.</p>
         </div>
 
-        <!-- LOG — its own block, before the map-overlays divider. The icons are
-             inlined from the same paths as SC_ICON in js/userlog.js; if those
-             change, change these. -->
-        <div class="instructions-ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
-        <div class="about-text">
-          <p><strong>Your log.</strong></p>
-          <p>The <svg class="inline-icon" viewBox="1.5 2.2 17 16.4" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M10 2.8l2.35 4.76 5.25.76-3.8 3.7.9 5.23L10 14.78l-4.7 2.47.9-5.23-3.8-3.7 5.25-.76z"/></svg> button beside an eclipse&rsquo;s date in the details panel saves it to your log. If you have a location set at the time, it is saved with the eclipse.</p>
-          <p>Then in the Log panel, you can click the <svg class="inline-icon" viewBox="4.8 2.6 10.4 15" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M5.4 3.2V17"/><path d="M5.4 4.4h9.2l-2.1 3.2 2.1 3.2H5.4z"/></svg>&thinsp;/&thinsp;<svg class="inline-icon" viewBox="4.8 2.6 10.4 15" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="currentColor"><path d="M5.4 3.2V17"/><path d="M5.4 4.4h9.2l-2.1 3.2 2.1 3.2H5.4z"/></svg> to mark which eclipses you have seen — the flag fills in once it is set; the <svg class="inline-icon" viewBox="3.4 3 13.6 14.6" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M13.4 3.6l3 3-8.8 8.8L4 17l1.6-3.6z"/></svg> to change an eclipse&rsquo;s saved location to the currently set map pin location; the <svg class="inline-icon" viewBox="3.9 3.2 12.2 14.5" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4.5 6.2h11"/><path d="M8.2 6.2V4.6a.8.8 0 0 1 .8-.8h2a.8.8 0 0 1 .8.8v1.6"/><path d="M6.4 6.2 7.2 16.2a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9L13.6 6.2"/></svg> to remove the eclipse from the list; or the <svg class="inline-icon" viewBox="3.4 5.6 12.4 8.8" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4 10h11.2"/><path d="M11.4 6.2 15.2 10l-3.8 3.8"/></svg> to jump to that eclipse on the map.</p>
-          <p>The log lives locally only &mdash; there is no account and nothing is uploaded. The export button writes it to a file as a backup if the log matters to you.</p>
-        </div>
-
-        <!-- MAP OVERLAYS — kept last, after a divider, as its own group. The
-             cloud-cover overlay's paragraph joins this block when it lands. -->
+        <!-- MAP OVERLAYS — now shown before User Log (swapped 2026-08-23; map
+             overlays are the more immediately useful of the two, being about
+             the map the user is already looking at). The cloud-cover overlay's
+             paragraph joins this block when it lands. -->
         <div class="instructions-ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
         <div class="about-text">
           <p><strong>Map overlays.</strong></p>
-          <p>The map&rsquo;s <strong>Shadows</strong> button drapes terrain shadows over the globe at the eclipse&rsquo;s greatest moment, with a scrubber to watch them lengthen. It streams elevation data, so it needs a connection &mdash; the button is greyed out when you&rsquo;re offline.</p>
-          <p>The <strong>Cloud</strong> button drapes cloud over the globe, and the strip beneath it chooses which cloud you mean.</p>
-          <p><strong>Average</strong> is climate, not weather. It is the mean cloud cover for that spot at that hour of that day of the year, from forty years of ERA5 reanalysis &mdash; the odds, not a forecast. It works offline, and it is the one to plan a trip around: no forecast reaches years ahead, but the climatology does. Click anywhere to read the value for that spot.</p>
-          <p><strong>Now</strong> is the sky at this moment, from the geostationary satellites, and it comes two ways. <strong>Map</strong> is the cloud as a readable field &mdash; the same colour scale as Average, so the two are directly comparable, and you can click a spot for a number. <strong>Pic</strong> is the satellite photograph itself: no scale and nothing to sample, but you see the actual weather &mdash; the shape of a front, the eye of a storm, the texture of the cloud.</p>
-          <p>Both live modes need a connection, so they grey out offline. The strip shows how old the frame is; the satellites publish on their own schedule and are typically twenty minutes to an hour behind. Coverage has seams &mdash; if a satellite is missing, the strip says which, because a gap otherwise reads as clear sky. <strong>Pic</strong> is greyscale over the western Pacific, where only infrared is published.</p>
+          <p>To help plan positions with a clear view of the sun (and moon), the map&rsquo;s <svg class="inline-icon" viewBox="2 2 20 20" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg> button drapes terrain shadows over the globe at the eclipse&rsquo;s greatest moment, with a time-scrubber below to watch them lengthen. It streams elevation data, so it needs a connection &mdash; the button is greyed out when you&rsquo;re offline.</p>
+          <p>For on-the-day site-planning, the <svg class="inline-icon" viewBox="1 4 22 15" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878"/></svg> button drapes cloud maps over the globe, in two different ways:</p>
+          <p><svg class="inline-icon" viewBox="2 2 20 20" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M3 3v18h18"/><path d="M20 18v3"/><path d="M16 16v5"/><path d="M12 13v8"/><path d="M8 16v5"/><path d="M3 11c6 0 5 -5 9 -5s3 5 9 5"/></svg> graphs the climate, not the weather. It shows you the mean cloud cover for that spot at that hour of that day of the year, taken from forty years of ERA5 data &mdash; the odds, not a forecast. It works offline, and it is the one to plan a trip around: no forecast reaches years ahead, but the climatology does.</p>
+          <p>The <strong>Now buttons</strong> show the sky at this moment, from geostationary satellites, in two different ways. <svg class="inline-icon" viewBox="2 3 21 20" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M12 18.5l-3 -1.5l-6 3v-13l6 -3l6 3l6 -3v7.5"/><path d="M9 4v13"/><path d="M15 7v5.5"/><path d="M21.121 20.121a3 3 0 1 0 -4.242 0c.418 .419 1.125 1.045 2.121 1.879c1.051 -.89 1.759 -1.516 2.121 -1.879"/><path d="M19 18v.01"/></svg> shows cloud cover as a readable field atop your map. <svg class="inline-icon" viewBox="2 3 20 18" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2"/><path d="M9 13a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></svg> shows current satellite images: the actual weather &mdash; the shape of a front, the eye of a storm, the texture of the cloud.</p>
+          <p>Both live modes are online-only. The satellites publish on their own schedule and are typically twenty minutes to an hour behind. If a satellite is missing, the UI says which, because a gap otherwise reads as clear sky. <svg class="inline-icon" viewBox="2 3 20 18" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2"/><path d="M9 13a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></svg> is greyscale over the western Pacific, where only infrared is published.</p>
+        </div>
+
+        <!-- USER LOG — was shown first; now second (see the note on the Map
+             overlays block above). The icons are inlined from the same paths
+             as SC_ICON in js/userlog.js; if those change, change these. -->
+        <div class="instructions-ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
+        <div class="about-text">
+          <p><strong>User Log.</strong></p>
+          <p>The <svg class="inline-icon" viewBox="1.5 2.2 17 16.4" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M10 2.8l2.35 4.76 5.25.76-3.8 3.7.9 5.23L10 14.78l-4.7 2.47.9-5.23-3.8-3.7 5.25-.76z"/></svg> button beside an eclipse&rsquo;s date in the details panel saves it to your log. If you have a location set at the time, it is saved with the eclipse.</p>
+          <p>Then in the Log panel, you can click the <svg class="inline-icon" viewBox="4.8 2.6 10.4 15" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M5.4 3.2V17"/><path d="M5.4 4.4h9.2l-2.1 3.2 2.1 3.2H5.4z"/></svg>&thinsp;/&thinsp;<svg class="inline-icon" viewBox="4.8 2.6 10.4 15" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="currentColor"><path d="M5.4 3.2V17"/><path d="M5.4 4.4h9.2l-2.1 3.2 2.1 3.2H5.4z"/></svg> to mark which eclipses you have seen — the flag fills in once it is set; the <svg class="inline-icon" viewBox="3.4 3 13.6 14.6" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M13.4 3.6l3 3-8.8 8.8L4 17l1.6-3.6z"/></svg> to change an eclipse&rsquo;s saved location to the currently set map pin location; the <svg class="inline-icon" viewBox="3.9 3.2 12.2 14.5" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4.5 6.2h11"/><path d="M8.2 6.2V4.6a.8.8 0 0 1 .8-.8h2a.8.8 0 0 1 .8.8v1.6"/><path d="M6.4 6.2 7.2 16.2a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9L13.6 6.2"/></svg> to remove the eclipse from the list; or the <svg class="inline-icon" viewBox="3.4 5.6 12.4 8.8" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M4 10h11.2"/><path d="M11.4 6.2 15.2 10l-3.8 3.8"/></svg> to jump to that eclipse on the map.</p>
+          <p>The log lives locally only &mdash; there is no account and nothing is uploaded. The export button writes it to a file as a backup if the log matters to you.</p>
         </div>
       </div>
 
@@ -473,37 +498,6 @@
 
       </details>
 
-      <details class="settings-group" id="sg-settings">
-      <summary class="settings-group-header">Settings</summary>
-
-      <div class="settings-section">
-        <!-- The basemap pulldown moved onto the map itself (top right), where
-             it is one tap instead of three and shows a live tile of each style
-             rather than naming it. Shadow strength went the same way — out: one
-             number nobody needed to argue with. It is now a plain constant,
-             SHADOW_TINT in shadow-ui.js. -->
-        <!-- TIME ZONE: dropped from the UI, NOT from the app. The contacts
-             table toggles UT/local inline, one tap from where the times are,
-             which made this row a second way to say the same thing in a place
-             nobody looks. The selection now lives in _tzChoice in tabs.js
-             (getTz/setTz) rather than in a hidden <select>, so a shared link
-             carrying #tz= still restores its zone with no widget to maintain. -->
-        <div class="settings-row" style="margin-top:1rem">
-          <label for="search-range">Search range</label>
-          <select id="search-range" style="max-width:18rem">
-            <option value="modern">Modern era (1500–2500)</option>
-            <option value="past500">±500 years from today</option>
-            <option value="twomill">Extended (−1000 to 3000)</option>
-            <option value="all">All (~11,800 eclipses)</option>
-          </select>
-        </div>
-        <div class="about-text" style="margin-top:0.5rem">
-          <p>Limits which eclipses appear in results. Smaller ranges search faster. An explicit year in your search always overrides this.</p>
-        </div>
-      </div>
-
-      </details>
-
       <details class="settings-group" id="sg-about">
         <summary class="settings-group-header">About</summary>
 
@@ -529,11 +523,11 @@
   </div><!-- .tab-content -->
 
 
-<!-- search_parser.js provides parseSearch(), applyFilter(), filterToString() -->
-<script src="js/search_parser.js?v=2026-08-22d"></script>
+<!-- search-parser.js provides parseSearch(), applyFilter(), filterToString() -->
+<script src="js/search-parser.js?v=2026-08-23a"></script>
 
 <!-- eclipse.js provides computeEclipse(), fundamentalArgs(), sunAltAz(), findMaximum() -->
-<script src="js/eclipse.js?v=2026-08-22d"></script>
+<script src="js/eclipse.js?v=2026-08-23a"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
      Single source of truth for BUILD. The <meta> and build stamp auto-populate from it.
@@ -631,13 +625,13 @@ window.scFlagFreshDetails = function () {
 };
 
 var DATA_BASE = './data';
-var BUILD     = '2026-08-22d';   /* ← THE single source. Everything below follows it. */
+var BUILD     = '2026-08-23a';   /* ← THE single source. Everything below follows it. */
 
 /* Propagate BUILD so it never has to be typed twice. The <meta name="build"> and
    every element with [data-build-stamp] are filled from this one constant, so a
    build bump means editing this line alone. (The ?v= on the external script
    tags still cache-bust independently, but under the service worker the cache
-   name — keyed to BUILD via sw.js?v=2026-08-22d — already busts them on every bump.) */
+   name — keyed to BUILD via sw.js?v=2026-08-23a — already busts them on every bump.) */
 (function () {
   var m = document.querySelector('meta[name="build"]');
   if (m) m.content = BUILD;
@@ -658,25 +652,25 @@ if ('serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD, { updateViaCache: 'none' }));
 }
 </script>
-<script src="js/format.js?v=2026-08-22d"></script>
-<script src="js/state.js?v=2026-08-22d"></script>
-<script src="js/cities.js?v=2026-08-22d"></script>
-<script src="js/tabs.js?v=2026-08-22d"></script>
-<script src="js/search.js?v=2026-08-22d"></script>
-<script src="js/list.js?v=2026-08-22d"></script>
-<script src="js/local.js?v=2026-08-22d"></script>
-<script src="js/details.js?v=2026-08-22d"></script>
-<script src="js/url.js?v=2026-08-22d"></script>
-<script src="js/map.js?v=2026-08-22d"></script>
-<script src="js/shadow-layer.js?v=2026-08-22d"></script>
-<script src="js/shadow-ui.js?v=2026-08-22d"></script>
-<script src="js/cloud-average.js?v=2026-08-22d"></script>
-<script src="js/cloud-now.js?v=2026-08-22d"></script>
-<script src="js/cloud-photo.js?v=2026-08-22d"></script>
-<script src="js/cloud-ui.js?v=2026-08-22d"></script>
-<script src="js/tshirt.js?v=2026-08-22d"></script>
-<script src="js/userlog.js?v=2026-08-22d"></script>
-<script src="js/share.js?v=2026-08-22d"></script>
-<script src="js/init.js?v=2026-08-22d"></script>
+<script src="js/format.js?v=2026-08-23a"></script>
+<script src="js/state.js?v=2026-08-23a"></script>
+<script src="js/cities.js?v=2026-08-23a"></script>
+<script src="js/tabs.js?v=2026-08-23a"></script>
+<script src="js/search-ui.js?v=2026-08-23a"></script>
+<script src="js/search-list.js?v=2026-08-23a"></script>
+<script src="js/local.js?v=2026-08-23a"></script>
+<script src="js/details.js?v=2026-08-23a"></script>
+<script src="js/url.js?v=2026-08-23a"></script>
+<script src="js/map.js?v=2026-08-23a"></script>
+<script src="js/shadow-layer.js?v=2026-08-23a"></script>
+<script src="js/shadow-ui.js?v=2026-08-23a"></script>
+<script src="js/cloud-average.js?v=2026-08-23a"></script>
+<script src="js/cloud-now.js?v=2026-08-23a"></script>
+<script src="js/cloud-photo.js?v=2026-08-23a"></script>
+<script src="js/cloud-ui.js?v=2026-08-23a"></script>
+<script src="js/tshirt.js?v=2026-08-23a"></script>
+<script src="js/userlog.js?v=2026-08-23a"></script>
+<script src="js/share.js?v=2026-08-23a"></script>
+<script src="js/init.js?v=2026-08-23a"></script>
 </body>
 </html>

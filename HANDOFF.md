@@ -326,12 +326,24 @@ prose did not prevent it, because it was a manual instruction.
 node tools/set_build.js 2026-08-09c   # explicit
 node tools/set_build.js               # bump today's trailing letter
 ```
-(21 asset stamps as of 2026-08-13.)
+(25 asset stamps as of 2026-08-23.)
 
 It rewrites the declaration and **every** `?v=` stamp. The stamp pattern is deliberately blind to
 the old value — a file left behind at an older build is exactly the failure it exists to end. A
 build from an earlier day restarts at `a`. `tools/checks/test_hygiene.js` asserts every stamp
 matches BUILD, so drift fails the suite whether or not the tool was used.
+
+**2026-08-23 — this happened again, almost.** A full cosmetic-pass session (§11.8–§11.10, §5, the
+banner mark removal) delivered every changed file WITHOUT running `set_build.js` even once —
+caught only near the end of the session, while writing this changelog entry, not by the test
+suite. **`test_hygiene`'s stamp check did not catch it**, and that's worth understanding, not just
+noting: the check asserts every `?v=` *matches `var BUILD`*, which stayed true all session because
+nothing had touched either — internal consistency, not freshness. A BUILD that's stale but
+self-consistent passes clean. Fixed by running `node tools/set_build.js 2026-08-23a` before final
+delivery; no file content needed changing, since every stamp lives in `index.html` alone. **The
+process gap:** treating "run the test suite" and "bump BUILD" as the same checkpoint. They aren't
+— run `set_build.js` as its own explicit step before any final handoff that touched js/css/sw,
+regardless of what the tests say.
 
 **Rejected: deriving the tags from BUILD at runtime.** `document.write`-ing the script tags is the
 obvious fix. Chrome intervenes against parser-blocking scripts injected by `document.write` on slow
@@ -351,9 +363,21 @@ folders uploaded without world-execute → the server returns **403** for everyt
 `.gz` 403, MapLibre script 403 → `maplibregl is undefined` → black map). Tell-tale: works on
 localhost, fails on the server; 403 not 404.
 **Fix: `chmod 755` on new directories, `644` on files, after every upload.** You only hit this when
-a deploy creates a NEW folder. Diagnostic: open `https://your-url/js/search_parser.js` directly —
+a deploy creates a NEW folder. Diagnostic: open `https://your-url/js/search-parser.js` directly —
 403 = permissions, 200 = fine. (`data/cloud/` is the most recent new folder; it must be 755 or it
 serves 403s that look like a broken layer.)
+
+**2026-08-23 — this exact class of bug recurred, in a new flavor worth naming.** Several freshly
+delivered/renamed JS files came back 403 on the live server. Not a new-folder case this time — the
+cause was the user running `chmod` on their **local machine's copy** (checking permissions with
+`ls -l` locally, which showed the expected `644`) while the **server's copy**, uploaded by a
+separate tool, silently defaulted new/overwritten files to `600` (owner-only). `ls -l` on the wrong
+machine looks like confirmation. **The tell that separates this from the folder-permissions case
+above: 403 on files that are individually NEW or freshly overwritten, while older sibling files in
+the same directory 200 fine** — a whole-folder 755 problem fails everything in the folder alike; a
+per-file upload-tool default fails only the files that were just touched. Fix is the same
+`chmod 644`, just applied on the correct machine (the server, via SFTP/host file manager/SSH — not
+locally).
 
 ### When "it broke again" with no console error
 Application → Service Workers → Unregister / Clear site data → hard reload. With the service worker,
@@ -419,12 +443,12 @@ ShadowChaser/
     │                   getV(t,interior)   — strict-mode UMD
     ├── format.js       fmt*, fmtUTAnchored, fmtLocalAnchored, eclipseIcon, horizonIcon
     ├── init.js         bootstrap; initMap, fetch index.json
-    ├── list.js         renderList, selectEclipse (←/→ arrow-key navigation)
     ├── local.js        computeLocal, computeSunriseSunset, findHorizonCrossing, scanLocation
     ├── map.js          THE RENDERER — MapLibre + deck.gl; isOffline, seamFreeLines,
     │                   registerMarker, updateMarkerOcclusion, updateOvalVisibility, _deckLayers
-    ├── search.js       parseCoords, onSearchChanged
-    ├── search_parser.js pure parser, UMD, strict-mode
+    ├── search-list.js  renderList, selectEclipse (←/→ arrow-key navigation) — was list.js
+    ├── search-parser.js pure parser, UMD, strict-mode — was search_parser.js
+    ├── search-ui.js    parseCoords, onSearchChanged — was search.js
     ├── shadow-layer.js  TERRAIN-SHADOW ENGINE — createShadowLayer() MapLibre custom layer;
     │                    GPU DEM raymarch + supersampling. Mercator-only. Don't rebuild (§8).
     ├── shadow-layer.ORIGINAL.js  pristine v64 engine backup — NOT loaded (§8)
@@ -432,18 +456,19 @@ ShadowChaser/
     │                    projection flip, online gating. setShadowTime owner. SHADOW_TINT.
     ├── share.js        share modal/sheet (tabstop format)
     ├── state.js        chunkCache, AppState get/set/on + window forwarding shims
-    ├── tabs.js         switchTab, switchSidebarTab, TZ_ZONES, getTz/setTz
-    ├── tshirt.js       poster generator (§11.4)
+    ├── tabs.js         switchTab, switchSidebarTab, TZ_ZONES, getTz/setTz, sidebar drag-resize (§11.8)
+    ├── tshirt.js       poster generator, filename unchanged — display name is "Poster" (§11.4)
     ├── tz_lookup.js    3rd-party offline timezone lookup, bundled
-    ├── url.js          pushState, restoreFromHash, event wiring
+    ├── url.js          pushState, restoreFromHash, event wiring (two jobs, one file — §11.10)
     └── userlog.js      the saved/seen log — store, panel, row actions (§11.3)
 ```
 
 **Script load order** (from `index.html`) — vendor CSS, MapLibre CSP JS, `setWorkerUrl`,
 `deck.min.js` + `window.DeckGL = window.deck`, `js/tz_lookup.js`, `css/app.css?v=BUILD`,
-`search_parser` + `eclipse` (in head); then at body end: format, state, cities, tabs, search, list,
-local, details, url, map, **shadow-layer, shadow-ui**, cloud, tshirt, share, init. (Shadow scripts
-load right after `map.js` — they use its globals — and before `share.js`/`init.js`.)
+`search-parser` + `eclipse` (in head); then at body end: format, state, cities, tabs, search-ui,
+search-list, local, details, url, map, **shadow-layer, shadow-ui**, cloud, tshirt, share, init.
+(Shadow scripts load right after `map.js` — they use its globals — and before
+`share.js`/`init.js`.)
 
 **All runtime dependencies are local — no CDN in the shipped app.** That is the prerequisite that
 lets the service worker cache everything. (`data build tools/*.html` still reference unpkg; they are
@@ -1346,6 +1371,18 @@ and **Pic**.
 - `js/cloud-average.js` changed in three places only, all additive: it delegates the button click *if*
   `CloudBar` exists, stops writing `aria-pressed` *if* `CloudBar` exists, and exports
   `enable`/`disable`/`stops`. Delete `cloud-ui.js` and the button reverts to the toggle it was.
+- **2026-08-23: the three cell LABELS became icons — the STRUCTURE above is unchanged.** `Average`
+  is now a bar-chart glyph, `Map` a folded-map glyph, `Pic` a camera glyph — inline SVG (exact
+  Tabler outline paths, `chart-histogram`/`map-2`/`camera`, self-hosted rather than loaded from
+  Tabler's web font, since this is an offline-first PWA and a CDN font is a dependency the app
+  can't guarantee). This is NOT the reversal §11.5 records for the tab bar (emoji beat SVG there,
+  for Search/Map/Info at tab size) — different failure mode: these are symbolic glyphs standing in
+  for a NAME, not a literal preview of the underlying data, so the "two datasets that look alike
+  can't be told apart" objection this section opens with doesn't apply. The cap label ("Now")
+  stayed text — it names the pair, not a single mode, and has no button/icon of its own.
+  `.cloudbar-info` (wrapping the mode-specific caption below the buttons) got a `min-height` at the
+  same time: Average's caption is two lines, Map/Pic's is three, and without a floor the whole box
+  visibly grew/shrank on every mode switch.
 
 ### 10A.2 The model — four steps, every constant traced to a measurement
 
@@ -2014,6 +2051,24 @@ Two controls were deleted outright:
   `pushState`, `restoreFromHash` and `buildShareUrl` all route through `getTz`/`setTz`, so shared links
   still carry the zone.
 
+**A third, 2026-08-23: the Settings `<details id="sg-settings">` section is GONE — the whole thing,
+not just its heading.** The Search range `<select id="search-range">` was its last remaining
+control, and it moved to the bottom of the Search tab, under the eclipse list, as a plain
+(non-collapsible) `.search-settings` row — separated from the list by the same
+`.instructions-ornament` used at the end of Instructions, not a hairline. Same element `id`, same
+`init.js` wiring (`getElementById`-based, so it doesn't care where in the DOM the control lives) —
+**nothing but the markup's location changed**, no JS logic touched. Two things that DID need fixing
+because of the move, both worth remembering as a pattern: (1) `js/url.js`'s accordion-groups array
+(`['sg-about', 'sg-instructions', 'sg-data', 'sg-settings']`) still named the deleted id — harmless
+(`getElementById` returns null, the code already guards for that) but dead weight, removed; (2) the
+control's own `border-bottom: none` had relied on `:last-child`, which relied on being the literal
+last element in its old parent (`.settings-group`) — moved under a sibling `.about-text` paragraph,
+`:last-child` silently stopped matching and the hairline came back. Fixed by cancelling the border
+directly (`.search-settings .settings-row { border-bottom: none; }`) rather than depending on
+sibling order again. **The general lesson: relocating markup that used `:last-child` (or any
+structural pseudo-class) needs the CSS re-checked, not just carried over — it fails silently, not
+loudly.**
+
 ### 11.3 The user log (#F1) — SHIPPED
 `js/userlog.js`. One localStorage key, one object, keyed by catalogue number:
 
@@ -2059,7 +2114,23 @@ short of all → all; all → none. Two buttons could not show state, and one of
 poster the same instruction — only the dash state actually narrows it. The control now *displays* a
 distinction it does not have. **Fix in `tsOpen` if it ever matters, not in the toolbar.**
 
-### 11.4 T-shirt poster (#F1a) — SHIPPED, with a known rough edge
+### 11.4 The poster (#F1a) — SHIPPED, with a known rough edge
+
+**Called "poster" now, not "t-shirt" — display text only, 2026-08-23.** `#F1a`'s actual output was
+never a t-shirt (it's a printable map of the umbral path), and the name had stuck around from an
+early joke. **Nothing internal was renamed**: the file is still `js/tshirt.js`, the function is
+still `tsOpen()`, the dialog is still `#tshirt-sheet`/`#tshirt-canvas`, the theme value is still
+`value="tshirt"` in the `<select>` — only what a user actually reads changed: the dropdown option
+text ("T-Shirt" → "Poster") and the toolbar icon. Same reasoning as §11.2's tab-label rename: a
+full identifier rename touches far more surface for zero user-facing gain, and this exact class of
+mechanical, many-site rename (done properly for `search.js`/`search_parser.js`/`list.js` the same
+session — §5) is not free even when safe.
+
+**The toolbar icon changed from a t-shirt silhouette to a folded-map glyph** — same shape family as
+`cloud-ui.js`'s own Map icon (§10A.1), scaled to this icon set's 20×20/1.7-stroke convention rather
+than reused verbatim, since the two live at different sizes. `js/userlog.js`'s `SC_ICON.tshirt` key
+is unchanged (still `tshirt`, for the same reason above); only the path data inside it changed.
+
 `js/tshirt.js`, opened from the Log panel's "Make map" button; selection is the checkbox column in each
 log row. Seven projections, four palettes, SVG + PNG export, pinch-zoom, in the reusable `.sheet`
 overlay. Land comes from the app's own precached `land.geojson.gz`, not a 1.9 MB embed. Path records come
@@ -2140,33 +2211,134 @@ needle's arrowhead, not as a separator.
 
 ---
 
-### 11.6 The banner mark and favicon — why the icon is redrawn, not resized
+### 11.7 The banner mark — REMOVED 2026-08-23. History kept in case it's rebuilt.
 
-The lockscreen icon (`icons/icon-512-v2.png`) is a corona of **96 radial rays**, measured: 1.74° wide,
-3.75° apart, inner radius ~111 px, outer 122–202 px of 512. It is beautiful at 512 and **illegible
-below about 64**, because at the 30 px the banner renders at, 3.75° is well under one pixel — the rays
-merge into a smudge with no corona visible at all. Resizing cannot fix that; the drawing has to change.
+The banner used to carry a corona-ray mark (via CSS mask, `icons/mark.png`) beside the
+"followtheshadow" wordmark. **It is gone now** — `index.html`'s `.app-header` is text-only, and
+`css/app.css` has no `.app-mark`/`.app-header::before`/`glow` keyframes. Removed after several
+rounds of trying to make it read crisply at the ~30–64px the banner actually renders at; the user
+ended the thread with "forget it, remove the icon" rather than accept another iteration.
 
-`icons/mark.png` is therefore drawn from **each original ray's own start and end radius** — so the
-irregular outline that gives the mark its character is preserved exactly — with rays dropped and the
-survivors thickened.
+**If this is ever rebuilt, the lesson that cost the most time:** a raster **cropped from a
+reference screenshot/contact-sheet** is a dead end — it inherits whatever resolution and
+anti-aliasing the screenshot happened to have, which is almost never enough to survive a phone's
+2–3× device-pixel-ratio without visibly softening. What actually worked was **re-measuring the ray
+geometry from the original source art** (`icons/icon-512-v2.png`, still in the repo, still a
+96-ray corona: 1.74° wide, 3.75° apart, inner radius ~111px, outer 122–202px of 512) and
+re-rendering the wanted variant (e.g. every-2nd-ray, no thickening) at full production resolution
+— `svgpathtools`-style bounding-box detection at a test radius inside every ray's span, `Image.LANCZOS`
+downscale from an 8×-supersampled canvas. That produced a result that matched a hand-picked
+reference exactly *and* held up sharp at any zoom, unlike any raster crop. Ray-thinning variants
+were explored as a contact sheet — `orig-96`, `every-2nd-48`, `every-2nd-thick`, `every-3rd-32`,
+`every-3rd-thick`, `every-4th-24` — each rendered at 96/64/32/16px to judge legibility at real
+sizes before picking one. If reattempted, budget for a live browser render (§13.1) before calling
+any version done — several rounds here were declared crisp on a static preview and then still
+looked wrong on the actual phone.
 
-**THE MARK ART IS SETTLED — DO NOT REDRAW IT.** Two regenerations were tried on 2026-08-22 and both
-were rejected on sight: thinning further and thickening the survivors (every 3rd ray at 2.4x), and
-resampling the identical drawing by max-pooling so the thin rays survive the downscale. Both raised
-peak alpha from 90/255 to 255 and both looked wrong. **The faintness is fixed in CSS, on the paint,
-not in the PNG.** `.app-header::before` takes `--gold2` rather than `--gold`, and the `glow` keyframes
-carry the same brighter value at 0.55/0.85 rather than 0.40/0.70. If it is still too faint, the next
-lever is the colour or the glow again, or the 1.9rem box — never the art.
+**Two secondary, less certain findings from the same round**, if picked back up:
+- The mark's source (whatever replaces `icons/mark.png`) should be a plain `<img>`, not a CSS
+  `mask`+`background-color` pair — simpler, and sidesteps whatever was making the masked version
+  render softer than the same PNG viewed directly (never fully diagnosed — see §14).
+- A `glow` pulsing `drop-shadow` animation existed on the old `::before` and was removed with the
+  rest. If a glow effect is wanted again, keep the filter off whatever element also carries the
+  mask (§14) — build it as a separate blurred layer behind the crisp icon instead.
 
-**`favicon.ico` is a FAMILY, not one image scaled.** Each size is redrawn with the thinning its pixel
-budget allows: 48 px every 2nd ray at 1.7×, 32 px every 3rd at 2.2×, 16 px every 4th at 2.8×. Only the
-16 px drawing has genuinely opaque pixels (3.6% against 0% for a thinned-but-not-thickened version) —
-which is the difference between a mark and a grey smear in a tab strip.
+**`favicon.ico` is unaffected by any of the above — it's a separate asset, still shipped.** It is a
+FAMILY, not one image scaled: each size is redrawn with the thinning its pixel budget allows: 48px
+every 2nd ray at 1.7×, 32px every 3rd at 2.2×, 16px every 4th at 2.8×. Only the 16px drawing has
+genuinely opaque pixels (3.6% against 0% for a thinned-but-not-thickened version) — which is the
+difference between a mark and a grey smear in a tab strip. The generator is not committed; it
+reads `icons/icon-512-v2.png`, detects the rays by angular runs at a radius just outside the inner
+envelope, and re-strokes them. If the source art ever changes, the favicon family must be
+regenerated the same way — do not just scale the new icon down.
 
-The generator is not committed; it reads `icons/icon-512-v2.png`, detects the rays by angular runs at
-a radius just outside the inner envelope, and re-strokes them. If the source art ever changes, the
-mark must be regenerated the same way — **do not just scale the new icon down.**
+### 11.8 Sidebar resize + Details reflow (§F-new) — SHIPPED 2026-08-23
+
+The desktop sidebar can now be dragged wider from its left edge, and the Local/Global
+Circumstances tables reflow from one label/value pair per row to two once there's room — both
+requested together ("so we could add info into the skytracker without crowding" without a fixed
+sidebar width forcing everything narrow).
+
+**Drag handle is a sibling of `.sidebar`, not a child.** `.sidebar` has `overflow: hidden`
+(clips its own scrollbar/content), which silently clips anything positioned to straddle its own
+edge from *inside* it — the handle rendered, but only the inward half. Moved
+`#sidebar-resize-handle` to be a sibling in `.tab-content` (which got `position: relative` to
+anchor it), positioned via `right: calc(var(--sidebar-w) - 4px)` so it tracks the sidebar's actual
+edge as the width var changes, instead of `left: -4px` relative to a box that clips it.
+
+**The width var must be clamped in JS, not left to CSS `min-width`/`max-width` alone.** The handle
+reads `--sidebar-w` directly to position itself (see above). If the drag math writes an unclamped
+value past what `.sidebar`'s own `min-width`/`max-width` will actually render, the sidebar stops
+growing but the handle — tracking the raw var — keeps moving, and drifts away from the edge it's
+supposed to hug. `js/tabs.js`'s `onMove` clamps `w` to `MIN_W`/`MAX_W` (360/720) before writing
+the CSS var, matching the CSS limits exactly; **the two must be kept in sync by hand**, there's no
+single source of truth for them.
+
+**Width is session-only, not persisted** — resets to 360px on reload, by explicit request.
+
+**`.detail-table` (a real `<table>`, label/value in `<td>`s) was replaced by `.circs-grid`/
+`.circ-row`** (a CSS Grid of flex rows) specifically so the reflow could be driven by a **container
+query**, not a media query — the thing that needs to change is the sidebar's own width, which has
+nothing to do with the viewport once it's user-resizable. `#data-panel` carries
+`container-type: inline-size; container-name: circs-panel;`, and `@container circs-panel
+(min-width: 460px)` is what switches `.circs-grid` from `grid-template-columns: 1fr` to `1fr 1fr`.
+Only Local Summary and Global Circumstances use this — the Contact table was explicitly left
+alone. `row()` in `js/details.js` now emits a `<div class="circ-row">` instead of a `<tr>`; it's
+only called from those two builders, confirmed via grep before changing its output shape.
+**`test_details.js` had two assertions hardcoded to the old `.detail-table td { ... }` selector**
+(`table rows roomier`, `one separator treatment`) — a legitimate refactor tripping a test that
+encoded an implementation detail. Updated to `.circ-row { ... }`, not deleted.
+
+### 11.9 Instructions panel — icons, reordering, ornament colour (2026-08-23)
+
+The `.instructions-ornament` (☾ ☀ ☽, the moon-star-moon divider) is now `var(--gold)` instead of
+`var(--border2)` — the only change of substance; everything else here is about staying consistent
+with that once it started separating more things.
+
+**Average/Map/Pic and Shadows/Cloud are now introduced by their actual icon, inline, matched to the
+real button glyph — not described in prose alone.** `Average`/`Map`/`Pic` reuse the exact
+`cloud-ui.js` path data (§10A.1); Shadows/Cloud got NEW SVG icons (Tabler `circle-half` and
+`cloud`) replacing the plain Unicode `&#9680;`/`&#9729;` characters the map buttons themselves
+still use, because — see §14 — those two specific glyphs render at visibly different natural sizes
+from each other and from the SVG icons already in the paragraph, even at an identical CSS
+`font-size`. **The bold NAME stays next to its icon.** An earlier pass tried dropping the word
+entirely once an icon was established (matching how the User Log paragraph uses bare icons after
+introducing them via verb phrases — "click the ⚑ to mark…"), but that convention doesn't transfer
+to a paragraph whose whole job is DEFINING what a mode is called: a bare icon can't be looked up
+against the actual on-screen button's tooltip/aria-label the way a name can, and one paragraph
+referenced `Average` by name after `Average`'s own defining sentence had already dropped the word
+— an orphaned reference to a name that appeared nowhere in the text. Resolution: keep the name at
+every occurrence, including cross-references (use the SAME icon again for those, not the bare
+word).
+
+**Section order swapped**: Map overlays now precedes User Log (was the reverse) — the map is what
+the user is already looking at, so it's the more immediately useful of the two. The heading also
+changed, "Your log." → "User Log." (§11.4 covers why "poster" changed the same session; this is
+the unrelated user-log heading, not the poster).
+
+The `<span class="inline-icon">` variant (for the Unicode-glyph phase this section went through
+before being replaced by the SVG Shadows/Cloud icons above) is gone from `app.css` — nothing uses
+it anymore; removed rather than left orphaned.
+
+### 11.10 `js/url.js` is two files sharing one name
+
+Its own top comment says "Event wiring," and that's accurate for roughly its first 128 lines —
+every click/input listener in the app, including the GPS-locate button. A second, genuinely
+separate job — hash read/write, `pushState`, permalinks — starts at its "URL sharing" section and
+is what the filename is actually about. Not fixed this session (flagged, not scoped), but worth
+knowing before adding to either half: a change that belongs conceptually in "URL state" and one
+that belongs in "DOM event wiring" currently land in the same file for no reason but history.
+
+**The GPS-locate button and a map click used to behave differently after setting a location, and
+this file is why.** `onMapClick` (`map.js`) and the locate button's `getCurrentPosition` callback
+(`url.js`) independently duplicate most of the same post-location logic (search field, elevation/tz
+lookup, `computeLocal`, observer marker) — but only `onMapClick` also switched the desktop sidebar
+to the Details tab / called `window.scFlagFreshDetails()` (the mobile "Details tab throbs" signal).
+The locate handler never had that block, so GPS-set locations never throbbed the tab on mobile even
+though both paths land on identical Details content. Fixed by adding the same block to the locate
+callback — **duplicated, not shared**, matching how the two handlers already relate to each other;
+factoring them into one shared function is the more correct fix but wasn't in scope for a one-line
+parity bug.
 
 ## 12. SERVICE WORKER / PWA
 
@@ -2220,6 +2392,14 @@ is there** — that is the whole lesson.
 New data goes in the **best-effort DATA loop, never CORE `addAll`** — a CORE failure fails the whole
 install. This is the open cloud-layer item (§3).
 
+**Renaming a script is a CORE-list edit too, not just an `index.html` edit.** `sw.js`'s CORE array
+uses bare names (`'search'`, mapped to `js/${n}.js`), same pattern as the cloud-module renames this
+comment already warned about. The 2026-08-23 `search_parser`/`search`/`list` →
+`search-parser`/`search-ui`/`search-list` rename (§5) needed the array entries updated alongside
+the three files and their `<script>` tags — six sites total, and missing the `sw.js` one is the
+kind of failure that only shows up offline, not on a normal reload with network access, which is
+exactly why it's worth restating here.
+
 ### 12.4 Known, measured, NOT fixed: duplicate downloads
 Every asset downloads **twice** on a build change (~317 requests, 22 MB). Cause: the page requests
 `js/map.js?v=BUILD` while `sw.js`'s precache lists say bare `js/map.js` — two URLs, two downloads.
@@ -2249,8 +2429,11 @@ decisions in this document were made, silently undone, and re-litigated.
 - `test_hygiene.js` — orphaned comments, duplicate selectors, unused classes, rules filed under the wrong
   banner, **the visual-language rules** (§11.5), the **DOM contract** (every `getElementById` must resolve
   to an id in index.html or one the JS creates), and the **build stamp** (every js/css asset must carry
-  the current BUILD).
-- `test_details.js` — heading tiers, title actions, no wrapping.
+  the current BUILD). Its `FN_DUP_SCAN` file list uses the current names — `search-list.js`,
+  `search-ui.js`, not the pre-2026-08-23 `list.js`/`search.js` (§5).
+- `test_details.js` — heading tiers, title actions, no wrapping. Two assertions moved from
+  `.detail-table td {...}` to `.circ-row {...}` on 2026-08-23 (§11.8) when the table markup
+  changed — same rule, new selector, not a relaxed check.
 - `test_userlog.js` — store semantics, `[lon,lat]` order, the explicit-commit gate, row vs goto
   separation, escaping, corrupt-storage resilience.
 - `test_picker.js` — the collapsible basemap picker's two-tap behaviour, offline, desktop.
@@ -2320,7 +2503,7 @@ evidence — do not keep investigating the part they share.**
 - Obscuration is a two-circle **lens**, never a circular segment (§9.4).
 - Jubier's printed **V** is a clock position (0–12); degrees = clock × 30 (§9.3).
 - `isOffline()` in `map.js` is the single connectivity owner (§7.3).
-- Strict-mode pure modules: `tz_lookup.js`, `search_parser.js`, `eclipse.js`.
+- Strict-mode pure modules: `tz_lookup.js`, `search-parser.js`, `eclipse.js`.
 - MapLibre globe ≠ Mercator; antimeridian/polar bugs differ. GeoJSON symbol layers were abandoned
   (geojson-vt antimeridian/polar issues). deck.gl has its own polar triangulator bug.
 - deck.gl accessors don't react to zoom without `setProps`/`updateTrigger` (§7.7).
@@ -2366,8 +2549,27 @@ evidence — do not keep investigating the part they share.**
   USNO rows (§9.6).
 - `sw.js` matches same-origin with `ignoreSearch`, so any URL whose QUERY is its identity collapses to
   one cache entry. `/sat.php` is bailed out ahead of it; a new dynamic endpoint needs the same (§12.1).
-- The banner mark is a CSS mask, so its ALPHA is its brightness. Gate a redraw on peak alpha at the
-  render size, never on ink coverage (§11.6).
+- The banner mark was removed entirely (2026-08-23) after the redraw work in the old §11.7 never
+  read as crisp enough at 64px display — see §11.7 for the full history and why a from-scratch
+  reattempt should start from the measured-ray-geometry method, not a screenshot crop.
+- iOS Safari silently inflates the font-size of a paragraph it judges to be "the main readable
+  text" of a narrow column — a per-paragraph heuristic, not a stylesheet override, so two sibling
+  `<p>`s with the identical declared `font-size` can render at visibly different sizes. Disabled
+  globally: `text-size-adjust: 100%` on `body` (§11.8).
+- A Unicode symbol character (★, ◐, ☁, …) has no guaranteed size relative to another Unicode
+  symbol character, even at the same declared `font-size` — each glyph's natural coverage of its
+  own em-box is a font/platform decision, not something CSS controls. Any two symbols meant to
+  read as the same visual weight need to be actual SVG icons sized via a fixed box, not text
+  glyphs (§11.8).
+- `test_hygiene`'s BUILD-stamp check asserts internal consistency (every `?v=` matches `var
+  BUILD`), not freshness — a stale-but-self-consistent BUILD passes it clean. Bumping BUILD is its
+  own explicit step (`node tools/set_build.js`) before any handoff touching js/css/sw, never
+  inferred from tests passing (§4).
+- **Unconfirmed hypothesis, not a settled fact:** an animated `filter` (the banner mark's pulsing
+  `drop-shadow`) applied to the same element as a CSS `mask` is a documented cross-browser
+  render-quality trap in some engines. This was suspected as part of why the masked mark looked
+  softer than its source PNG, but the icon was removed before the theory was actually tested —
+  don't cite it as confirmed if the mark is ever rebuilt (§11.7).
 - The generator's in-run AUDIT checks gaps and turns only — a missing or 2-point-stub limb passes it
   silently. Structural limb checks live in `audit_paths.py` (§9.7).
 
@@ -2377,6 +2579,22 @@ evidence — do not keep investigating the part they share.**
 
 One line per session. **The knowledge lives in the topical sections above; this is only a trail.**
 
+- **2026-08-23** — Cosmetic/UI pass, no data or math touched. **Sidebar is now drag-resizable**
+  (360–720px, session-only) and Local/Global Circumstances reflow to two columns via a container
+  query once there's room (§11.8) — `.detail-table` retired in favour of `.circs-grid`.
+  **`search_parser.js`/`search.js`/`list.js` renamed** to `search-parser.js`/`search-ui.js`/
+  `search-list.js` (§5, §12.3) — six sites, all updated, `test_hygiene`'s file list included.
+  **The banner mark is REMOVED** after several rounds failed to read crisply at real size (§11.7) —
+  history and the measurement method kept for a future attempt. Cloudbar's `Average`/`Map`/`Pic`
+  text labels became icons (§10A.1); the userlog "poster" toolbar icon changed from a t-shirt
+  silhouette to a folded map, and its user-facing name changed from "T-Shirt" to "Poster" —
+  internal identifiers (`tshirt.js`, `tsOpen`, `value="tshirt"`) deliberately untouched (§11.4). The
+  Info tab's Settings section is gone; its last control (search range) moved to the bottom of the
+  Search tab (§11.2). Instructions panel reordered (Map overlays before User Log), reworded, and
+  every named mode now carries its actual icon inline (§11.9). Two real (not cosmetic) bugs found
+  and fixed along the way: GPS-set locations never throbbed the Details tab on mobile, only map taps
+  did (§11.10); iOS Safari's automatic paragraph font-boosting was silently inflating one sentence
+  in the empty-log message, previously misdiagnosed as a stray `<strong>` glyph issue (§14).
 - **2026-08-22d** — Info tab icon is drawn SVG, not the `ⓘ` glyph (U+24D8). The glyph read as a
   capital I because its tittle merges into the stem in several system fonts, and a font glyph is not
   ours to control. Now a serifed lowercase i in a ring, `viewBox="0 0 20 20"` with `.tab-icon-svg`
@@ -2387,7 +2605,7 @@ One line per session. **The knowledge lives in the topical sections above; this 
 - **2026-08-22d** — Mode strip is two-level: `Average` beside a capped `Now` group holding **Map** and
   **Pic** (§10A.1). Labels now state what the code already enforced — Map is samplable, Pic is not.
   Offline greys the group as one. Instructions panel gained the cloud paragraphs, in the slot its own
-  comment had been reserving. Mark art unchanged; the banner was brightened in CSS only (§11.6).
+  comment had been reserving. Mark art unchanged; the banner was brightened in CSS only (§11.7).
 - **2026-08-22c** — **PHOTO'S REPEATING TILES: IT WAS `sw.js`, NOT THE MAP.** `caches.match(req,
   {ignoreSearch:true})` on same-origin GETs collapsed every `/sat.php?…&b=<bbox>…` tile onto one cache
   entry, so the first EUMETSAT tile was served for all of them (§10A.8d). One-line bail; `ignoreSearch`
@@ -2395,7 +2613,7 @@ One line per session. **The knowledge lives in the topical sections above; this 
   directions. Verified closed by absence of mechanism: zero `sat` entries in Cache Storage. **§10A.8d
   moves from OPEN to CLOSED and the cloud feature is done** — what remains in §3 is source limits.
   Also: the banner mark was regenerated because peak alpha, not ink coverage, is the gate — it had no
-  pixel above alpha 128 at its own render size (§11.6). BUILD `2026-08-22c`.
+  pixel above alpha 128 at its own render size (§11.7). BUILD `2026-08-22c`.
 - **2026-08-22 (later)** — **PHOTO IS NOT FIXED.** The blue slabs were real and are fixed, but a
   SEPARATE bug remains: a grid of identical magnified tiles on the globe at low zoom (§10A.8d). Ruled
   out by measurement: GIBS duplicates, tile selection, the protocol handler, off-disc opacity. The
@@ -2426,8 +2644,9 @@ One line per session. **The knowledge lives in the topical sections above; this 
   disabled the Average layer outright (§10.5); `test_hygiene` now rejects any function declared twice
   in a file. BUILD `2026-08-21d`.
 - **2026-08-21** — Banner mark and favicon rebuilt from the lockscreen icon's MEASURED geometry with
-  every second ray dropped (§11.6). Banner mark is now the lockscreen icon itself, applied as a CSS mask so it keeps
-  `--gold` and the glow (§11). Favicon options generated. **`sw.js` was precaching
+  every second ray dropped (§11.7 — the mark itself was removed 2026-08-23, but the measurement
+  method documented there is what to reuse if it comes back). Banner mark was, at the time, the
+  lockscreen icon itself, applied as a CSS mask so it kept `--gold` and the glow (§11). Favicon options generated. **`sw.js` was precaching
   `icons/icon-192.png` and `icons/icon-512.png`, NEITHER OF WHICH HAS EVER EXISTED** — the real files
   carry `-v1`/`-v2` — so every install fetched two 404s inside an atomic `addAll` (§12). Fixed, and
   `icons/mark.png` added. **Average overlay went stale when jumping from the log** (§10.5). BUILD

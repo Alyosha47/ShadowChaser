@@ -236,7 +236,7 @@ ok('_drawnKey is set whenever the detail canvas is drawn',
    cloud-average.js, every _loadSlice lookup returned garbage, and the Average layer
    disabled itself outright. No syntax error, no runtime error, no test. */
 const FN_DUP_SCAN = ['js/cloud-average.js','js/cloud-now.js','js/cloud-photo.js','js/map.js',
-                  'js/list.js','js/details.js','js/userlog.js','js/search.js'];
+                  'js/search-list.js','js/details.js','js/userlog.js','js/search-ui.js'];
 const fnDupes = [];
 for (const f of FN_DUP_SCAN) {
   const src = fs.readFileSync(ROOT + '/' + f, 'utf8');

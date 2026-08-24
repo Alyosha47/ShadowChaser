@@ -25,7 +25,7 @@ w.matchMedia = q => ({ matches: /max-width: 899px/.test(q) ? NARROW : !NARROW })
 function run(file) { w.eval(fs.readFileSync(R + file, 'utf8')); }
 
 // Real modules the log leans on.
-run('js/search_parser.js');
+run('js/search-parser.js');
 run('js/format.js');
 run('js/state.js');
 

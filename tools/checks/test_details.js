@@ -77,8 +77,12 @@ ok('no button carries visible text words',
 
 console.log('\n5. spacing hygiene');
 ok('subloc negative margin gone', !/\.detail-subloc \{[^}]*margin:\s*-/.test(css));
-ok('table rows roomier', /\.detail-table td \{[^}]*padding:\s*0\.3rem/.test(css));
-ok('one separator treatment: --border', /\.detail-table td \{[^}]*border-bottom:\s*1px solid var\(--border\)/.test(css));
+/* .detail-table was replaced by .circs-grid/.circ-row (flex rows instead of
+   a <table>) on 2026-08-23 so Local/Global Circumstances could reflow to two
+   columns in a wide sidebar — see HANDOFF §11. Same padding/border rule,
+   new selector. */
+ok('table rows roomier', /\.circ-row \{[^}]*padding:\s*0\.3rem/.test(css));
+ok('one separator treatment: --border', /\.circ-row \{[^}]*border-bottom:\s*1px solid var\(--border\)/.test(css));
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nALL PASS');
 process.exit(fails ? 1 : 0);

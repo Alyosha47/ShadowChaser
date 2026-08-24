@@ -82,6 +82,15 @@ document.getElementById('btn-locate').addEventListener('click', function () {
       if (!out) return;
       clearMapMarkers();
       addObserverMarker(lat, lon, out.result.visible ? out.result.sun.az : null);
+      /* Same "fresh circumstances are waiting in Details" signal onMapClick
+         gives after a pin placement — missing here meant GPS-set locations
+         never throbbed the tab on mobile, only map taps did, even though
+         both land the user on the identical Details content. */
+      if (window.matchMedia('(min-width: 900px)').matches) {
+        if (sidebarTab === 'search') sidebarTab = 'eclipse';
+      } else if (typeof window.scFlagFreshDetails === 'function') {
+        window.scFlagFreshDetails();
+      }
     });
   }, function (err) {
     /* Surface WHY it failed — on Safari it's usually a permission denial
@@ -101,7 +110,7 @@ document.getElementById('btn-locate').addEventListener('click', function () {
 (function () {
   var ready = false;
   setTimeout(function () { ready = true; }, 0);
-  var groups = ['sg-about', 'sg-instructions', 'sg-data', 'sg-settings'];
+  var groups = ['sg-about', 'sg-instructions', 'sg-data'];
   groups.forEach(function (id) {
     var el = document.getElementById(id);
     if (!el) return;
