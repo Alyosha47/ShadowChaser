@@ -156,5 +156,24 @@ ok('shownTime reports the frame over the map centre, not the global oldest',
 ok('and falls back to the oldest when there is no map to ask',
    /_stamps\[i\]\.at < t\.at/.test(code));
 
+console.log('\n11. the caption credits fit on ONE line');
+/* Both live modes print CREDIT as the last caption line. #cloudbar is
+   max-width 12rem with 0.4rem padding and a 1px border, so the text column is
+   12*16 - 2*6.4 - 2 = 177px. JetBrains Mono Regular is 600/1000 em advance for
+   every glyph, at .cloudbar-note's 0.65rem = 10.4px, so 6.24px per character
+   and 28 characters fit. `Now`'s credit began 'Imagery NASA EOSDIS GIBS ·
+   EUMETSAT' — 35 chars, 218px — and wrapped, which made `Now` a line taller
+   than `Pic`. The strip changing height on mode switch was reported twice.
+   Character count is the whole test because the face is MONOSPACED. */
+var BUDGET = 28;
+[['cloud-now.js (Now)',   src],
+ ['cloud-photo.js (Pic)', fs.readFileSync(path.join(__dirname, '../../js/cloud-photo.js'), 'utf8')]].forEach(function (pair) {
+  var m = pair[1].match(/var CREDIT\s*=\s*'((?:[^'\\]|\\.)*)'/);
+  if (!m) { ok(pair[0] + ' declares a CREDIT', false); return; }
+  var text = m[1].replace(/\\u00b7/g, '\u00b7');
+  ok(pair[0] + ' credit fits one line', text.length <= BUDGET,
+     text.length + ' chars (budget ' + BUDGET + '): ' + text);
+});
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

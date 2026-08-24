@@ -201,10 +201,17 @@
       _shown = t ? Date.parse(t) : NaN;
       /* The age is its OWN line. On a phone it sat on the end of the satellite
          name and the missing-satellite list, and the three together wrapped. */
-      parts.push('<div class="cloudbar-note">' +
-        (_mode === 'photo' ? 'Satellite imagery' : 'Geostationary satellites') +
-        /* A satellite that failed leaves a hole, and a hole reads as clear sky. */
-        (gone.length ? ' · no ' + gone.join(', ') : '') + '</div>');
+      /* NO source label here. It used to read "Geostationary satellites" /
+         "Satellite imagery", which the CREDIT line below already says, and
+         says more precisely. Worse, the longer of the two wrapped on a phone
+         and made `Now` a line taller than `Pic` — the strip changed height on
+         mode switch, which is what .cloudbar-info's min-height exists to stop.
+         The line still appears when a satellite is DOWN, because that is the
+         one thing here the credit can't tell you: a failed satellite leaves a
+         hole, and a hole reads as clear sky. */
+      if (gone.length) {
+        parts.push('<div class="cloudbar-note">no ' + gone.join(', ') + '</div>');
+      }
       parts.push('<div class="cloudbar-note" id="cloudbar-age">' +
         (t ? ageText(_shown) : '<span class="cloudbar-spinner"></span>loading…') + '</div>');
       parts.push('<div class="cloudbar-note cloudbar-credit">' +
@@ -243,9 +250,11 @@
           '</div>' +
         '</div>' +
       '</div>' +
-      /* Fixed min-height (see .cloudbar-info in app.css): Average's caption is
-         two lines, Map/Pic's is three, so without this the whole box grew and
-         shrank by a line every time the mode switched. */
+      /* Fixed min-height (see .cloudbar-info in app.css): every mode is now two
+         lines — Average's legend + caption, and the live modes' age + credit —
+         so this holds the floor rather than absorbing a difference. A DOWN
+         satellite adds a third line and the box grows, which is wanted: that
+         state should be conspicuous. */
       '<div class="cloudbar-info">' + parts.join('') + '</div>';
   }
 

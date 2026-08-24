@@ -16,18 +16,13 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-08-20 — **`Photo` rebuilt on MapLibre raster tiles and all three cloud modes
+Last touched: 2026-08-24 — Photo's repeating tiles deleted from the priority list (closed 2026-08-22c, HANDOFF §10A.8d); this list had said OPEN for two days. Previously: 2026-08-20 — **`Photo` rebuilt on MapLibre raster tiles and all three cloud modes
 working** (HANDOFF §10A.8c). Also this session: `START-HERE.md` was folded into HANDOFF and deleted —
 it had become a third home for facts that already had two, and within a day it and HANDOFF §6
 disagreed about which branch was live. **There are two documents: `HANDOFF.md` and this one.**
 HANDOFF §3 no longer carries a task list; everything open is here.
 
 ## PRIORITY ORDER (suggested re-entry)
-
-0. **PHOTO'S REPEATING TILES — HANDOFF §10A.8d.** Open, reproducible on the user's device, not
-   reproduced in the rig yet. Read the ruled-out list before touching anything; six threads have gone
-   into this feature. The method is mechanical: run the REAL index.html in the rig, reproduce the
-   grid, then remove one variable at a time.
 
 *(Priorities are the USER's to set — this is a suggestion. The map is stable and cosmetically
 finished; offline works; terrain shadows are done and wired in.)*

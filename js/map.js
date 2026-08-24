@@ -926,17 +926,41 @@ function createMap(style) {
     /* In globe mode a click in empty space still returns a lngLat clamped to the
        globe's edge (the "nearest spot on land" snap). Detect that by re-projecting
        the returned lngLat back to screen: an ON-globe click round-trips to the
-       cursor; an OFF-globe click lands on the limb, far from where you clicked.
-       Off-globe → clear any set location instead of selecting a point. */
+       cursor; an OFF-globe click lands on the limb, far from where you clicked. */
     var back = map.project(e.lngLat);
     var offGlobe = Math.hypot(back.x - e.point.x, back.y - e.point.y) > 8;
-    if (offGlobe) { clearLocationFilter(); return; }
+    if (offGlobe) { clearSpaceClick(); return; }
     onMapClick(e.lngLat.lat, e.lngLat.lng);
   });
   map.on('mousemove', function () { map.getCanvas().style.cursor = 'crosshair'; });
   document.getElementById('map-popup-close').addEventListener('click', function () {
     document.getElementById('map-popup').style.display = 'none';
   });
+}
+
+/* Clicking the black outside the globe means "clear what's on top".
+
+   ONE click turns off cloud AND shadows together — not a ladder, one rung per
+   click. If neither is on, the same click unsets the location instead. So the
+   gesture has exactly two outcomes: clear the overlays, or clear the location.
+
+   Both off-switches redraw their own buttons (CloudBar.render via setMode,
+   _syncShadowButton via disableShadows), so nothing here touches aria-pressed.
+
+   NOTE the reach of this is smaller than it looks for shadows: once they are
+   actually DRAWING the projection is Mercator, which has no off-globe space to
+   click. So this catches shadows only while armed-but-zoomed-out, which is the
+   state where the hint is showing and there IS a globe. Deliberate, not a gap. */
+function clearSpaceClick() {
+  var cloudOn  = !!(window.CloudBar && CloudBar.mode());
+  var shadowOn = (typeof _shadowArmed !== 'undefined') && _shadowArmed;
+
+  if (cloudOn || shadowOn) {
+    if (cloudOn) CloudBar.setMode(null);
+    if (shadowOn && typeof disableShadows === 'function') disableShadows();
+    return;
+  }
+  clearLocationFilter();
 }
 
 function onMapTabActivated() {

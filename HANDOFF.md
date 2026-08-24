@@ -2164,7 +2164,7 @@ matching `@font-face`.**
 **Gold — one meaning per token.**
 - `--gold` = the SELECTED / current thing. Exceptions: `.app-title`, `.app-header::before` (branding),
   and the heading tiers.
-- `--gold2` = DATA VALUES (`.detail-table .v`, type colours, readouts).
+- `--gold2` = DATA VALUES (`.circ-row .v`, type colours, readouts).
 - `--gold-dim` = never text. Non-interactive only: disabled fill, progress fill, `.badge-total`'s type
   colour, the sun-track frame.
 - `--edge` (#9a8a63) = interactive edges: hover, focus, active outline. `--gold-dim` managed only 2.93:1
@@ -2173,7 +2173,7 @@ matching `@font-face`.**
 
 **Headings — REVERSED once.** First attempt made them grey and separated the tiers by weight. On screen
 that was worse. **Both tiers are GOLD; SIZE carries the hierarchy** — `.detail-section-h` 0.92rem/700,
-`.detail-sub-h` 0.72rem/700, against `.detail-table .l` at 0.66rem/400 grey. Serif italic was also tried
+`.detail-sub-h` 0.72rem/700, against `.circ-row .l` at 0.66rem/400 grey. Serif italic was also tried
 for the sub tier and looked wrong against the mono stack. Do not re-attempt either.
 
 **Rules.** Headings carry none. One separator treatment (`1px var(--border)`), replacing three. Left bar
@@ -2183,9 +2183,11 @@ for the sub tier and looked wrong against the mono stack. Do not re-attempt eith
 the colour emoji read better at tab size and were restored. `.tab-icon-svg` still uses `currentColor`, so
 the SVG tabs (Details, Log) follow the active state.
 
-All of the above is asserted in `test_hygiene.js` §7. Two documented exceptions: `.pill-loc` is a
-selected state whose class name doesn't say so, and `.shadow-center::after` uses borders to draw the
-needle's arrowhead, not as a separator.
+All of the above is asserted in `test_hygiene.js` §7. Three documented exceptions: `.pill-loc` is a
+selected state whose class name doesn't say so, `.shadow-center::after` uses borders to draw the
+needle's arrowhead, not as a separator, and `.instructions-ornament` is a MARK rather than prose
+(§11.9). The `☆` in the empty-log hint was gold and is no longer — gold is the star's *saved*
+state, and that sentence asks you to press the unsaved one; weight alone lifts it off the prose.
 
 **CSS generally** — all in `css/app.css`. Inherit, don't re-declare; one token source
 (`--bg/bg2/bg3/gold/--pin-red`), no raw hex, no ID selectors for styling. CSS keyframe filter lists
@@ -2431,6 +2433,21 @@ decisions in this document were made, silently undone, and re-litigated.
   to an id in index.html or one the JS creates), and the **build stamp** (every js/css asset must carry
   the current BUILD). Its `FN_DUP_SCAN` file list uses the current names — `search-list.js`,
   `search-ui.js`, not the pre-2026-08-23 `list.js`/`search.js` (§5).
+  **It carried a SECOND, separate file list that nobody updated, and that is what broke it
+  (2026-08-24).** The unused-class check read its own hand-kept list of module names through a
+  `try/catch` that returned `''` on ENOENT, so after the rename it was silently scanning two empty
+  strings and every class those files use began reading as orphaned. It now reads `js/` **from
+  disk** — a list of filenames is a second place a rename has to land, and it will always be
+  forgotten. Two more repairs the same day: its `@media` stripper learned `@container` and
+  `@supports` (a `@container` override of `.circs-grid`, new with the resizable sidebar in §11.8,
+  read as a duplicate definition), and §4's label check was still asking for `.detail-table .l`,
+  which §11.8 had retired — a `null` deref that took the whole suite down before it asserted
+  anything, i.e. exactly the CANNOT RUN case below.
+- `test_imagery.js` — `Photo`'s tiers, parts, full-longitude coverage, and the `CLEAR_PNG` alpha
+  (it decodes the blob and asserts alpha 0 — verified to fail on the old half-opaque blue).
+- `test_sw.js` — the `sat.php` bail that closed §10A.8d. **Written 2026-08-22c and never added to
+  `run.js`'s SUITES**, so the fix that ended a six-thread bug had no guard in the runner for two
+  days. Wired in 2026-08-24; 6/6.
 - `test_details.js` — heading tiers, title actions, no wrapping. Two assertions moved from
   `.detail-table td {...}` to `.circ-row {...}` on 2026-08-23 (§11.8) when the table markup
   changed — same rule, new selector, not a relaxed check.
@@ -2576,6 +2593,62 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-08-24e** — **Clicking the black outside the globe now clears overlays**, via the off-globe
+  branch that was already in `map.js`'s click handler (it round-trips `e.lngLat` back through
+  `map.project` — an on-globe click lands under the cursor, an off-globe one snaps to the limb).
+  New `clearSpaceClick()` has exactly two outcomes: if cloud or shadows are on, ONE click turns
+  off BOTH; if neither is on, the same click unsets the location (the old sole behaviour). Written
+  first as a one-thing-per-click ladder and corrected — the ladder made the gesture's result depend
+  on hidden state, so the same click did different things on consecutive presses.
+  Nothing here touches `aria-pressed`: `CloudBar.setMode(null)` re-renders the bar and
+  `disableShadows()` calls `_syncShadowButton()`, both verified before this was written.
+  **Reach is narrower than it looks for shadows**: once they DRAW the projection is Mercator,
+  which has no off-globe space, so this catches only armed-but-zoomed-out. Deliberate.
+- **2026-08-24d** — **`#cloudbar` was `max-width`, so the box was a different WIDTH per mode.**
+  It is absolutely positioned and therefore shrink-to-fit; once the two credit strings differed in
+  length (168px vs 125px) the box tracked them. Now `width: min(12rem, calc(100vw - 1.6rem))`.
+  Third report of "the cloudbar changes size" and the second distinct cause — the height fix in
+  `c` was real but incomplete, because only the vertical axis had been looked at.
+- **2026-08-24c** — **The cloudbar changed height between `Now` and `Pic`. TWICE reported, because
+  the first fix only removed one of the two things that wrapped.** `Now`'s credit string was
+  `Imagery NASA EOSDIS GIBS · EUMETSAT`; `Pic`'s was `NASA GIBS · EUMETSAT`. The caption column
+  is 177px (`#cloudbar` 12rem, less 0.4rem padding each side and a 1px border) and JetBrains Mono
+  Regular advances 600/1000 em for every glyph, so at `.cloudbar-note`'s 0.65rem a character is
+  6.24px and **28 fit**. The `Now` credit was 35 characters, 218px, so it took two lines. Dropping
+  the leading word `Imagery` brings it to 27 / 168px. **`test_satellite` §11 now asserts the
+  28-character budget for both modules** and was confirmed to FAIL on the old string before being
+  accepted. The face is monospaced, which is why a character count is a real width test.
+  **Process note: `min-height` cannot stop this.** It is a floor; wrapping is growth. Two separate
+  fix attempts leaned on it. If a caption line must not move the box, the constraint has to be on
+  the TEXT, and it needs a test with a number in it, not a comment asking for restraint.
+- **2026-08-24b** — **Cloudbar caption: the source label is gone from both live modes.** It read
+  "Geostationary satellites" (`Now`) / "Satellite imagery" (`Pic`), directly above a CREDIT line
+  already naming the source more precisely — `Imagery NASA EOSDIS GIBS · EUMETSAT`. Redundant, and
+  the longer of the two wrapped on a phone, so `Now` stood a line taller than `Pic` and the strip
+  changed height on mode switch — the exact jitter `.cloudbar-info`'s `min-height` was added to
+  stop, which it couldn't, because a min-height is a floor and wrapping is growth. Every mode is
+  now two lines. **The line still renders when a satellite is DOWN** (`no GOES-East`) — that is
+  the one fact in it the credit cannot carry, and §10A's rule stands: a failed satellite leaves a
+  hole and a hole reads as clear sky. In that state the box grows to three lines deliberately.
+- **2026-08-24** — **`test_hygiene` was CRASHING, not failing, and the crash hid four findings.**
+  §4's label check still asked for `.detail-table .l`, retired by §11.8 the day before; the `null`
+  deref killed the suite before it asserted anything, so `run.js` reported CANNOT RUN and §0's
+  stated baseline (one failing suite, `test_tshirt`, 3 assertions) had quietly stopped being true.
+  Behind it: (a) the unused-class check kept its **own second file list** of module names, read
+  through a `try/catch` returning `''`, so after the 2026-08-23 rename it was scanning two empty
+  strings — it now reads `js/` from disk, because a filename list is a second place a rename has to
+  land and it will be forgotten again; (b) the `@media` stripper did not know `@container`, so the
+  `.circs-grid` container override from the resizable sidebar read as a duplicate definition —
+  it now strips `@media`/`@container`/`@supports`, **verified in both directions by injecting a
+  real duplicate and confirming it still fails**; (c) `.cloudbar-modes` was genuinely declared
+  twice outside any at-rule, the stray `align-items: stretch` folded back into its base block;
+  (d) `font-weight: 600` on the empty-log hint's `☆` — no such face, rounds to 700 (§11.5), now
+  written as 700, zero visual change. **The `☆` was also `--gold`, which is the star's SAVED
+  colour, in a sentence telling you to press the UNSAVED one** — now inherits the hint's own
+  colour, which is what its comment had claimed all along. Also: **`test_sw.js` passed 6/6 but was
+  never in `run.js`'s SUITES** — the guard on the fix that ended the six-thread §10A.8d bug had not
+  run since the day it was written. Wired in. Suite is back to the documented baseline.
+  BUILD `2026-08-24a`.
 
 One line per session. **The knowledge lives in the topical sections above; this is only a trail.**
 

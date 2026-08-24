@@ -32,7 +32,7 @@
        512 PNG covers tab-strip HiDPI and bookmark tiles. Version-stamped like
        every other asset, because sw.js is cache-first with ignoreSearch. -->
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" href="icons/mark-dark-512.png?v=2026-08-23a" sizes="512x512">
+  <link rel="icon" type="image/png" href="icons/mark-dark-512.png?v=2026-08-24f" sizes="512x512">
   <!-- Launch images. iOS ignores any apple-touch-startup-image whose pixel
        size does not match the device exactly, hence one tag per device per
        orientation. Files are in icons/splash/ — see the README there.
@@ -114,7 +114,7 @@
   </script>
     <script src="./js/tz_lookup.js"></script>
 
-  <link rel="stylesheet" href="css/app.css?v=2026-08-23a">
+  <link rel="stylesheet" href="css/app.css?v=2026-08-24f">
 </head>
 <body>
 
@@ -524,10 +524,10 @@
 
 
 <!-- search-parser.js provides parseSearch(), applyFilter(), filterToString() -->
-<script src="js/search-parser.js?v=2026-08-23a"></script>
+<script src="js/search-parser.js?v=2026-08-24f"></script>
 
 <!-- eclipse.js provides computeEclipse(), fundamentalArgs(), sunAltAz(), findMaximum() -->
-<script src="js/eclipse.js?v=2026-08-23a"></script>
+<script src="js/eclipse.js?v=2026-08-24f"></script>
 
 <!-- ── App configuration ──────────────────────────────────────────────────
      Single source of truth for BUILD. The <meta> and build stamp auto-populate from it.
@@ -625,13 +625,13 @@ window.scFlagFreshDetails = function () {
 };
 
 var DATA_BASE = './data';
-var BUILD     = '2026-08-23a';   /* ← THE single source. Everything below follows it. */
+var BUILD     = '2026-08-24f';   /* ← THE single source. Everything below follows it. */
 
 /* Propagate BUILD so it never has to be typed twice. The <meta name="build"> and
    every element with [data-build-stamp] are filled from this one constant, so a
    build bump means editing this line alone. (The ?v= on the external script
    tags still cache-bust independently, but under the service worker the cache
-   name — keyed to BUILD via sw.js?v=2026-08-23a — already busts them on every bump.) */
+   name — keyed to BUILD via sw.js?v=2026-08-24f — already busts them on every bump.) */
 (function () {
   var m = document.querySelector('meta[name="build"]');
   if (m) m.content = BUILD;
@@ -652,25 +652,25 @@ if ('serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=' + BUILD, { updateViaCache: 'none' }));
 }
 </script>
-<script src="js/format.js?v=2026-08-23a"></script>
-<script src="js/state.js?v=2026-08-23a"></script>
-<script src="js/cities.js?v=2026-08-23a"></script>
-<script src="js/tabs.js?v=2026-08-23a"></script>
-<script src="js/search-ui.js?v=2026-08-23a"></script>
-<script src="js/search-list.js?v=2026-08-23a"></script>
-<script src="js/local.js?v=2026-08-23a"></script>
-<script src="js/details.js?v=2026-08-23a"></script>
-<script src="js/url.js?v=2026-08-23a"></script>
-<script src="js/map.js?v=2026-08-23a"></script>
-<script src="js/shadow-layer.js?v=2026-08-23a"></script>
-<script src="js/shadow-ui.js?v=2026-08-23a"></script>
-<script src="js/cloud-average.js?v=2026-08-23a"></script>
-<script src="js/cloud-now.js?v=2026-08-23a"></script>
-<script src="js/cloud-photo.js?v=2026-08-23a"></script>
-<script src="js/cloud-ui.js?v=2026-08-23a"></script>
-<script src="js/tshirt.js?v=2026-08-23a"></script>
-<script src="js/userlog.js?v=2026-08-23a"></script>
-<script src="js/share.js?v=2026-08-23a"></script>
-<script src="js/init.js?v=2026-08-23a"></script>
+<script src="js/format.js?v=2026-08-24f"></script>
+<script src="js/state.js?v=2026-08-24f"></script>
+<script src="js/cities.js?v=2026-08-24f"></script>
+<script src="js/tabs.js?v=2026-08-24f"></script>
+<script src="js/search-ui.js?v=2026-08-24f"></script>
+<script src="js/search-list.js?v=2026-08-24f"></script>
+<script src="js/local.js?v=2026-08-24f"></script>
+<script src="js/details.js?v=2026-08-24f"></script>
+<script src="js/url.js?v=2026-08-24f"></script>
+<script src="js/map.js?v=2026-08-24f"></script>
+<script src="js/shadow-layer.js?v=2026-08-24f"></script>
+<script src="js/shadow-ui.js?v=2026-08-24f"></script>
+<script src="js/cloud-average.js?v=2026-08-24f"></script>
+<script src="js/cloud-now.js?v=2026-08-24f"></script>
+<script src="js/cloud-photo.js?v=2026-08-24f"></script>
+<script src="js/cloud-ui.js?v=2026-08-24f"></script>
+<script src="js/tshirt.js?v=2026-08-24f"></script>
+<script src="js/userlog.js?v=2026-08-24f"></script>
+<script src="js/share.js?v=2026-08-24f"></script>
+<script src="js/init.js?v=2026-08-24f"></script>
 </body>
 </html>

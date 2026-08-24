@@ -26,27 +26,35 @@ ok('no NEW orphaned comments',
    stacked.length ? `${stacked.length} found (expected <= ${PRE_EXISTING} pre-existing), lines ` + stacked.join(', ') : '');
 
 console.log('\n2. duplicate selectors');
-// Strip @media blocks first: a responsive override of the same selector is
-// intentional, not a duplicate definition.
-let base = css, out = '', i = 0;
-while (true) {
-  const at = base.indexOf('@media', i);
-  if (at < 0) { out += base.slice(i); break; }
-  out += base.slice(i, at);
-  let depth = 0, j = base.indexOf('{', at);
-  for (let k = j; k < base.length; k++) {
-    if (base[k] === '{') depth++;
-    else if (base[k] === '}') { depth--; if (!depth) { i = k + 1; break; } }
+// Strip CONDITIONAL at-rules first: re-stating a selector inside one is a
+// responsive/contextual override, which is intentional, not a duplicate.
+// @container joined @media when the sidebar became drag-resizable (§11.8);
+// matching only '@media' made every container override read as a duplicate.
+const AT_RULE = /@(?:media|container|supports)\b/g;
+let out = '', i = 0;
+for (const m of css.matchAll(AT_RULE)) {
+  if (m.index < i) continue;                     // already inside a stripped block
+  out += css.slice(i, m.index);
+  let depth = 0;
+  i = css.length;
+  for (let k = css.indexOf('{', m.index); k < css.length; k++) {
+    if (css[k] === '{') depth++;
+    else if (css[k] === '}' && !--depth) { i = k + 1; break; }
   }
 }
+out += css.slice(i);
 const sels = [...out.matchAll(/^\s{0,6}(\.[a-z][\w-]*(?:\.[\w-]+)?)\s*\{/gm)].map(m => m[1]);
 const dupes = sels.filter((s, i2) => sels.indexOf(s) !== i2);
 ok('no selector block defined twice outside media queries',
    dupes.length === 0, [...new Set(dupes)].join(', '));
 
 console.log('\n3. every class in the CSS is used somewhere');
-const js = ['details','userlog','map','list','share','shadow-ui','tabs','search','local','url','init']
-  .map(n => { try { return fs.readFileSync(`${ROOT}/js/${n}.js`, 'utf8'); } catch { return ''; } })
+// Read the WHOLE js/ directory, not a hand-kept list. The old list named
+// list.js and search.js; when those were renamed the reader fell into its own
+// catch, returned '', and every class they use started reading as orphaned.
+// A list of filenames is a second place for a rename to have to land.
+const js = fs.readdirSync(ROOT + '/js').filter(f => f.endsWith('.js'))
+  .map(f => fs.readFileSync(`${ROOT}/js/${f}`, 'utf8'))
   .join('\n') + fs.readFileSync(ROOT + '/index.html', 'utf8');
 const declared = [...new Set([...css.matchAll(/\.((?:detail|log|icon)[\w-]*)/g)].map(m => m[1]))];
 const unused = declared.filter(c => !new RegExp('\\b' + c + '\\b').test(js));
@@ -54,7 +62,8 @@ ok('no orphaned detail-/log-/icon- classes', unused.length === 0, unused.join(',
 
 console.log('\n4. sub-heading vs the table label column');
 const sub = css.match(/\.detail-sub-h \{[^}]*\}/)[0];
-const lbl = css.match(/\.detail-table \.l \{[^}]*\}/)[0];
+// The circumstances table became a flex grid of .circ-row; .detail-table is gone.
+const lbl = css.match(/\.circ-row \.l \{[^}]*\}/)[0];
 const secBlk = css.match(/\.detail-section-h \{[^}]*\}/)[0];
 const grab = (b, p) => { const m = b.match(new RegExp(p + ':\\s*([^;]+);')); return m ? m[1].trim() : null; };
 console.log(`     section-h : ${grab(secBlk,'color')} / ${grab(secBlk,'font-size')} / ${grab(secBlk,'font-weight')}`);
@@ -115,13 +124,17 @@ ok('no font-weight that silently rounds to another face',
 // ── Decision 1: one meaning per gold token.
 const goldText = sel => blocks.filter(b => decl(b,'color') === `var(${sel})`).map(b => b.sel);
 const BRANDING = ['.app-header::before', '.app-title'];   // deliberate exceptions
+// GLYPHS, not prose. The rule governs words; this is a mark: the ☾ ☀ ☽
+// divider, made gold deliberately (§11.9).
+const GLYPHS = ['.instructions-ornament'];
 // .pill-loc marks the pill for the CURRENT location — a selected state whose
 // class name doesn't say so.
 const SELECTED = /(\.active|\.selected|\.saved|\.on|\.pill-loc|aria-pressed="true")/;
 const HEADINGS = ['.detail-section-h', '.detail-sub-h', '.top-section-header',
                   '.sheet-title'];
 const strays = goldText('--gold').filter(s =>
-  !BRANDING.includes(s) && !HEADINGS.includes(s) && !SELECTED.test(s));
+  !BRANDING.includes(s) && !HEADINGS.includes(s) && !GLYPHS.includes(s)
+  && !SELECTED.test(s));
 ok('--gold as text means SELECTED (or branding)', strays.length === 0, strays.join(', '));
 
 ok('--gold-dim is never text', goldText('--gold-dim').length === 0,

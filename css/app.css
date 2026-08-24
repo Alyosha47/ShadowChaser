@@ -565,7 +565,7 @@
     .detail-section-h:first-child { margin-top: 0; }
 
     /* SUB level (Contact Times, Sun Track): gold too, at the original small
-       size. Against .detail-table .l — same size bracket, but grey and not
+       size. Against .circ-row .l — same size bracket, but grey and not
        bold — the gold is what says "heading". */
     .detail-sub-h {
       font-family:    var(--mono);
@@ -1031,13 +1031,15 @@
     /* The star glyph (\u2606) has no font stack of its own, so unstyled it falls
        back to the platform's symbol/emoji font — visibly bigger than the body
        text around it, which is what actually looked like "two fonts" on
-       mobile. Pin it to the surrounding text's own size and color instead of
-       leaving it to whatever the fallback font's metrics happen to be. */
+       mobile. Pin it to the surrounding text's own size and colour instead of
+       leaving it to whatever the fallback font's metrics happen to be.
+       NOT gold: gold is the star's SAVED state, and this sentence is telling
+       you to press the UNSAVED one. Weight alone lifts it off the prose. */
     .log-empty-hint strong {
       font-family: inherit;
       font-size:   1em;
-      font-weight: 600;
-      color:       var(--gold);
+      font-weight: 700;   /* 600 has no face and rounded here anyway (§11.5) */
+      color:       inherit;
     }
 
     .log-item { border-bottom: 1px solid var(--border); }
@@ -1484,7 +1486,10 @@
       /* Was 17rem — sized for the widest text label ('Average'). Icon-only
          buttons need much less, and a narrower box is directly the "less
          space on mobile" ask. */
-      max-width:       min(12rem, calc(100vw - 1.6rem));
+      /* width, NOT max-width. Absolutely positioned, so max-width let the box
+         shrink-to-fit and it came out a different WIDTH in each mode once the
+         credit strings differed in length. Pinned, it cannot. */
+      width:           min(12rem, calc(100vw - 1.6rem));
       padding:         0.4rem;
       display:         flex;
       flex-direction:  column;
@@ -1500,9 +1505,13 @@
     /* The mode switch. A segmented control, deliberately the same idiom as the
        basemap picker: one of N, mutually exclusive, current state shown by the
        active cell rather than by a separate indicator. */
+    /* Two-level strip: `Average` beside a capped `Now` group holding Map and Pic.
+       `align-items: stretch` is what makes Average full height without a
+       hardcoded height that would drift from the cells' padding. */
     .cloudbar-modes {
-      display:       flex;
-      gap:           0.25rem;
+      display:     flex;
+      gap:         0.25rem;
+      align-items: stretch;
     }
     .cloudbar-cell {
       flex:            1;
@@ -1532,10 +1541,6 @@
        line still gets to wrap without clipping. */
     .cloudbar-info { min-height: 2.7rem; }
 
-    /* Two-level strip: `Average` beside a capped `Now` group holding Map and Pic.
-       `align-items: stretch` on the row is what makes Average full height without
-       a hardcoded height that would drift from the cells' padding. */
-    .cloudbar-modes { align-items: stretch; }
     .cloudbar-group {
       flex:           2;      /* two sub-cells, so twice Average's share */
       display:        flex;

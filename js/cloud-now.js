@@ -92,7 +92,11 @@
   var GIBS   = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/';
   var GIBS_EP = ['best', 'all'];
   var EUM    = 'https://view.eumetsat.int/geoserver/wms';
-  var CREDIT = 'Imagery NASA EOSDIS GIBS \u00b7 EUMETSAT';
+  /* No leading "Imagery": at .cloudbar-note's 0.65rem that string measured
+     218px against the 177px the caption actually has, so it wrapped and made
+     `Now` a line taller than `Pic`. Without the word it measures 168px.
+     test_satellite asserts the budget so the next edit can't undo it. */
+  var CREDIT = 'NASA EOSDIS GIBS \u00b7 EUMETSAT';
 
   /* Both services speak WMS 1.3.0 with CRS=EPSG:3857 and bbox in metres. The
      1.3.0 axis flip applies to EPSG:4326 (lat,lon); using 4326 without swapping
