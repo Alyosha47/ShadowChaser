@@ -314,6 +314,10 @@ function loadBasemapData() {
        input couldn't resolve at first parse. Re-run the search now so
        those tokens light up. */
     if (typeof onSearchChanged === 'function') onSearchChanged(true);
+    /* Country aliases live in the outlines just parsed above, so this is the
+       moment the country index becomes useful. It re-runs the search itself
+       when it lands (js/search-countries.js), for the same reason. */
+    if (typeof Countries !== 'undefined') Countries.load();
     return basemapData;
   });
   return basemapLoading;
@@ -1347,11 +1351,19 @@ function onMapClick(lat, lon) {
   map.easeTo({ center: [lon, lat], duration: 800 });
   var search = document.getElementById('search');
   var f      = parseSearch(search.value);
-  /* An explicit map click is an explicit location — drop any city name so it
-     can't re-resolve and override the clicked point on the next parse. */
+  /* An explicit map click is an explicit location — drop EVERY named location
+     so none of them can re-resolve and override the clicked point on the next
+     parse. `city` was cleared here from the start; `country` and the
+     `paris FRANCE` qualifier were added later and this was not updated, so
+     clicking the map with "chile total" in the box left the country in place,
+     the country then filtered the list, and the clicked coordinates did
+     nothing. Reported 2026-08-25. */
   search.value = filterToString(Object.assign({}, f, {
-    coords: { lat: lat, lon: lon },
-    city:   null
+    coords:         { lat: lat, lon: lon },
+    city:           null,
+    country:        null,
+    countryIdx:     null,
+    cityQualifier:  null
   }));
   onSearchChanged(true);
   lookupElevationAndTz(lat, lon);

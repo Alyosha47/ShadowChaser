@@ -562,9 +562,11 @@
 
   /* ---------------------------------------------------------------- public */
 
-  /* Cloud fraction 0..1 at a point, or null. Same blend as the map, so the
-     number in a readout can never disagree with the colour under the cursor. */
-  function sampleAt(lon, lat) {
+  /* WHICH month pair and WHICH pair of local-solar-time slices a point needs.
+     Extracted so that sampleAt() and ensureAt() cannot drift: if the loader
+     fetched a different slice than the sampler reads, the readout would sit at
+     "—" forever with nothing to show why. */
+  function _slotFor(lon, lat) {
     if (!selectedEntry) return null;
     var utGE = _hmsToHours(selectedEntry.td_ge);
     if (utGE === null) return null;
@@ -583,7 +585,16 @@
       } catch (e) {}
     }
     var lst = ((ut + lon / 15) % 24 + 24) % 24;
-    var si = lst / LST_STEP, fs = Math.floor(si), ws = si - fs;
+    var si = lst / LST_STEP, fs = Math.floor(si);
+    return { mb: mb, fs: fs, ws: si - fs };
+  }
+
+  /* Cloud fraction 0..1 at a point, or null. Same blend as the map, so the
+     number in a readout can never disagree with the colour under the cursor. */
+  function sampleAt(lon, lat) {
+    var slot = _slotFor(lon, lat);
+    if (!slot) return null;
+    var mb = slot.mb, fs = slot.fs, ws = slot.ws;
     var sc = (((lon + 180) % 360 + 360) % 360) / DEG - 0.5;
     var fc = Math.floor(sc), wc = sc - fc;
     var a = ((fc % NLON) + NLON) % NLON, b = (a + 1) % NLON;
@@ -606,6 +617,24 @@
     if (v0 === null) return v1 / SCALE;
     if (v1 === null) return v0 / SCALE;
     return (v0 * (1 - mb.w) + v1 * mb.w) / SCALE;
+  }
+
+  /* Load exactly the slices ONE POINT needs, then sample it.
+     The details panel wants a cloud figure without the overlay being on, and
+     the overlay is what normally populates _slices — so without this,
+     sampleAt() returns null for anyone who has not toggled the map layer.
+     Four slices at most (two months x two time slices), each ~35 KB and all 96
+     precached by sw.js, so this is a cache read rather than a download and it
+     works offline. */
+  function ensureAt(lon, lat) {
+    var slot = _slotFor(lon, lat);
+    if (!slot) return Promise.resolve(null);
+    var a = slot.fs % NSLICE, b = (slot.fs + 1) % NSLICE;
+    var want = [[slot.mb.m0, a], [slot.mb.m0, b],
+                [slot.mb.m1, a], [slot.mb.m1, b]];
+    return Promise.all(want.map(function (p) { return _loadSlice(p[0], p[1]); }))
+      .then(function () { return sampleAt(lon, lat); })
+      .catch(function () { return null; });
   }
 
   function _enable() {
@@ -701,8 +730,8 @@
   /* Bump on every change. The script tags carry a hardcoded ?v= and the service
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. Check Cloud.version. */
-  window.Cloud = { version: '2026-08-21a',
-                   toggle: toggle, sampleAt: sampleAt,
+  window.Cloud = { version: '2026-08-25a',
+                   toggle: toggle, sampleAt: sampleAt, ensureAt: ensureAt,
                    enable: _enable, disable: _disable,
                    /* The legend must be built from the same numbers the pixels
                       are, or the bar and the map drift apart silently. */

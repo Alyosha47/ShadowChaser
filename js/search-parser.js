@@ -397,27 +397,100 @@
     /* 11. City lookup — if no explicit coords, walk the freetext tokens
        and try resolving them as a city name. Tries longest combinations
        first (up to 3 words) so "new york" beats "york". Explicit coords
-       always win. */
-    if (!filter.coords && filter.text && typeof lookupCity === 'function') {
+       always win.
+
+       COUNTRIES are tried at the same time, in the same longest-first pass,
+       but a CITY WINS A TIE. That keeps every existing search meaning what it
+       already meant — "mexico" has always found Mexico City and still does.
+       Type "mexico country" if you want the country; see step 11b. */
+    if (!filter.coords && filter.text
+        && (typeof lookupCity === 'function' || typeof lookupCountry === 'function')) {
       var words = filter.text.split(/\s+/);
       var kept  = [];
       var i = 0;
       while (i < words.length) {
         var hit = null;
-        if (!filter.city) {
-          /* Try 3-word, then 2-word, then 1-word match at this position. */
+        if (!filter.city && !filter.country) {
+          /* Try 3-word, then 2-word, then 1-word match at this position.
+             At each WIDTH, city is tried before country — so a 2-word country
+             still beats a 1-word city, and "united states" is not shredded by
+             a city called "united". */
           for (var n = Math.min(3, words.length - i); n >= 1 && !hit; n--) {
-            hit = lookupCity(words.slice(i, i + n).join(' '));
-            if (hit) {
-              filter.city   = hit.name;
-              filter.coords = { lat: hit.lat, lon: hit.lon };
-              i += n;
+            var phrase = words.slice(i, i + n).join(' ');
+            var c = (typeof lookupCity === 'function') ? lookupCity(phrase) : null;
+            if (c) {
+              filter.city   = c.name;
+              filter.coords = { lat: c.lat, lon: c.lon };
+              hit = c; i += n; break;
+            }
+            var k = (typeof lookupCountry === 'function') ? lookupCountry(phrase) : null;
+            if (k) {
+              filter.country     = k.name;
+              filter.countryIdx  = k.idx;
+              hit = k; i += n; break;
+            }
+          }
+          /* SECOND PASS — start-of-name matches, only once every exact name and
+             every country has been tried at every width. The dataset holds full
+             official names, so `new york` matches nothing exactly; without this
+             the walk fell through to `york`, in England.
+             It must be a separate pass, not folded into the loop above, for two
+             reasons that pull in opposite directions:
+               - `mexico` would prefix-match "Mexico City", but the COUNTRY is
+                 what people mean, so every country must be tried first.
+               - `new` would prefix-match "New Delhi", so the wider phrase
+                 `new york` must be tried first — hence longest-first again. */
+          for (var np = Math.min(3, words.length - i); np >= 1 && !hit; np--) {
+            var pp = (typeof lookupCityPrefix === 'function')
+                   ? lookupCityPrefix(words.slice(i, i + np).join(' ')) : null;
+            if (pp) {
+              filter.city   = pp.name;
+              filter.coords = { lat: pp.lat, lon: pp.lon };
+              hit = pp; i += np; break;
             }
           }
         }
-        if (!hit) { kept.push(words[i]); i++; }
+        if (!hit) {
+          /* "paris france" — the country is a QUALIFIER on the city, the way
+             anyone writes a place. Consume and discard it: the city already
+             fixes the point, so the country adds nothing to filter by.
+             Without this the word fell through to freetext, where it was
+             matched as a substring against the date, year and saros, and
+             `paris france total` returned ZERO results. Reported 2026-08-25.
+             Only applies AFTER a city is set. A country reached first still
+             becomes the search (`france total` is a country search), and a
+             second CITY is still left alone rather than silently dropped. */
+          if (filter.city && !filter.country && typeof lookupCountry === 'function') {
+            var qn = 0;
+            for (var qw = Math.min(3, words.length - i); qw >= 1 && !qn; qw--)
+              if (lookupCountry(words.slice(i, i + qw).join(' '))) qn = qw;
+            if (qn) {
+              filter.cityQualifier = words.slice(i, i + qn).join(' ');
+              i += qn;
+              continue;
+            }
+          }
+          kept.push(words[i]); i++;
+        }
       }
       filter.text = kept.join(' ');
+
+      /* 11b. The tie-break escape hatch. "mexico country" forces the country
+         reading; the word is consumed either way so it never reaches
+         freetext. Without this there is NO way to search a country whose name
+         a city shares, and several of the most obvious ones collide. */
+      if (/(^|\s)country(\s|$)/.test(filter.text) && filter.city
+          && typeof lookupCountry === 'function') {
+        var forced = lookupCountry(filter.city);
+        if (forced) {
+          filter.country    = forced.name;
+          filter.countryIdx = forced.idx;
+          filter.city       = null;
+          filter.coords     = null;
+        }
+      }
+      filter.text = filter.text.replace(/(^|\s)country(\s|$)/g, ' ')
+                               .replace(/\s+/g, ' ').trim();
     }
 
     return filter;
@@ -463,15 +536,44 @@
         if (e.saros !== filter.saros) return false;
       }
 
+      /* Country — the same rules as a scanned location, but read from the
+         precomputed index instead of calculated per eclipse (see js/search-countries.js
+         for why a live scan was not viable: 354x a city scan for Russia).
+
+         ABSENT MEANS UNDER 20%, NOT INVISIBLE. The generator drops entries
+         below a 20% floor to keep the file at ~650 KB instead of ~1359 KB. A
+         country that saw a 12% nibble is not in the table and will not match,
+         which is the intended trade and not a bug to "fix" by removing this. */
+      var cRow = null;
+      if (filter.countryIdx != null) {
+        if (typeof Countries === 'undefined' || !Countries.ready()) return false;
+        cRow = Countries.countryOsc(e.cat_no, filter.countryIdx);
+        if (!cRow) return false;
+      }
+
       /* Type — eclipse_type can be a single letter (T/A/H/P) or a subtype
          like Tm, As, H3, Pb. Classify by the first character.
          With an obscuration filter present, "total/annular" means the eclipse's
          GLOBAL classification (total/annular SOMEWHERE) and obscuration governs
          what's visible at the location — so a spot in the partial zone of a total
          eclipse still qualifies. Without an obscuration filter, a scanned location
-         uses the LOCAL type, so "total" means "total as seen from here". */
+         uses the LOCAL type, so "total" means "total as seen from here".
+
+         A COUNTRY behaves identically, and this is what makes "chile total"
+         and "chile total >50" mean the two different things they should:
+         without a range, the country's own type — total only if the central
+         path actually crossed it; with a range, the global type, and the
+         range says what the country got. The central-path bit comes from
+         exact path-vs-border geometry, NOT from the sampled grid, because a
+         totality corridor under 150 km wide falls straight through a 3 deg
+         sample spacing (1999-08-11 clipped Cornwall and sampling missed it). */
       if (filter.types && filter.types.length) {
-        var raw  = (filter.obscRange ? e.eclipse_type : (e.local_type || e.eclipse_type)) || '';
+        var raw;
+        if (cRow && !filter.obscRange) {
+          raw = cRow.central ? (e.eclipse_type || '') : 'P';
+        } else {
+          raw = (filter.obscRange ? e.eclipse_type : (e.local_type || e.eclipse_type)) || '';
+        }
         var full = TYPE_MAP[raw.charAt(0).toUpperCase()] || raw.toLowerCase();
         if (filter.types.indexOf(full) < 0) return false;
       }
@@ -490,7 +592,12 @@
       /* Obscuration */
       if (filter.obscRange) {
         var osc = null;
-        if (e.local_osc != null) {
+        if (cRow) {
+          /* The country's best-placed spot, in 5% steps. Coarser than a point
+             scan on purpose: 1% resolution cost ~500 KB more for a precision
+             nobody searches at. */
+          osc = cRow.osc;
+        } else if (e.local_osc != null) {
           /* Scanned rows carry the real thing: computeEclipse's lens area for the
              Moon and Sun as the two DIFFERENT-sized circles they are. */
           osc = e.local_osc;
@@ -584,6 +691,23 @@
     }
     if (filter.city) {
       parts.push(filter.city.toLowerCase());
+      /* Re-emit "paris FRANCE". It filters nothing, but it is the user's own
+         wording, and a pill click rebuilds this string — silently deleting a
+         word they typed is its own small betrayal. */
+      if (filter.cityQualifier) parts.push(filter.cityQualifier);
+    } else if (filter.country) {
+      /* Without this the country was silently DROPPED whenever the string was
+         rebuilt from the filter — which is what every pill does. Clicking
+         "annular" on "france total" rewrote the box as bare "annular" and
+         quietly widened the search to the whole world.
+         `country` is emitted where `city` would be because they are the same
+         slot: the parser accepts only one location and city wins ties. */
+      parts.push(filter.country);
+      /* Re-parsing must land back on the country, not on a city that shares
+         the name. Without the marker, "singapore" round-trips to the CITY and
+         the pill silently changes what you were searching. */
+      if (typeof lookupCity === 'function' && lookupCity(filter.country))
+        parts.push('country');
     } else if (filter.coords) {
       parts.push('(' + filter.coords.lat.toFixed(5) + ', ' + filter.coords.lon.toFixed(5) + ')');
     }

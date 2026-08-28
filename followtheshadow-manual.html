@@ -114,16 +114,31 @@
       <tr><td>Saros</td><td><span class="pill">saros 126</span><span class="pill">s126</span></td></tr>
       <tr><td>Type</td><td><span class="pill">total</span><span class="pill">annular</span><span class="pill">hybrid</span><span class="pill">partial</span></td></tr>
       <tr><td>Obscuration</td><td><span class="pill">&gt;80</span><span class="pill">50+</span><span class="pill">&lt;30</span><span class="pill">95-</span></td></tr>
-      <tr><td>Location</td><td><span class="pill">paris</span><span class="pill">new york</span><span class="pill">(44.858, 0.082)</span><span class="pill">(51°30'26"N, 0°07'40"W)</span></td></tr>
+      <tr><td>Location</td><td><span class="pill">paris</span><span class="pill">japan</span><span class="pill">(44.858, 0.082)</span><span class="pill">(51°30'26"N, 0°07'40"W)</span></td></tr>
     </table>
     <p><strong>Example:</strong> <code>total 1900-2026 Burgos</code> — shows both total eclipses in Burgos, 121 years apart.</p>
 
-    <h3>How location changes "type"</h3>
+    <h3>Countries</h3>
+    <p>A country stands for <em>all</em> of itself: <code>chile total</code> asks whether the eclipse reached anywhere in Chile. Names take several forms — <code>usa</code>, <code>us</code>, <code>United States</code>, <code>United States of America</code>, and the two- and three-letter codes.</p>
+    <p>Four things differ from a city:</p>
     <ul>
-      <li><strong>Type alone</strong> (<code>total</code>): eclipses that are total <em>somewhere on Earth</em>.</li>
-      <li><strong>Type + location</strong> (<code>total paris</code>): eclipses that are total <em>as seen from that spot</em> — you'd be standing in the path of totality.</li>
-      <li><strong>Type + location + obscuration</strong> (<code>total &gt;30 paris</code>): switches to total-<em>anywhere</em>, kept only where Paris would see at least 30% obscuration. This deliberately widens the list to catch eclipses that are total elsewhere but only partial from your chosen spot.</li>
-      <li><strong>Obscuration</strong> is always the Sun's covered area <em>at your location</em> if one is set, or the maximum anywhere on Earth if not.</li>
+      <li>Where a city and a country share a name the <strong>city wins</strong> — <code>singapore</code> means the city. Add &ldquo;<code>country</code>&rdquo; to force the other reading.</li>
+      <li>A country means its <strong>own land</strong>. France is France and Corsica, not French Guiana, so an eclipse crossing South America won't answer to <code>france</code>. The far-flung parts are searchable separately: <code>french guiana</code>, <code>réunion</code>, <code>martinique</code>, <code>caribbean netherlands</code>. Accents optional.</li>
+      <li>Obscuration is the <strong>best figure anywhere inside the borders</strong>, to the nearest 5% — it tells you the eclipse was worth travelling for, not where to stand.</li>
+      <li>Eclipses covering less than a fifth of the Sun at their best are <strong>left out entirely</strong>.</li>
+    </ul>
+
+    <h3>Writing place names</h3>
+    <p>Multi-word names work as you'd write them: <code>new york</code>, <code>ho chi minh</code>, <code>cape town</code>. You don't need quotes.</p>
+    <p><code>paris france total</code> works too — the country just says which Paris, and filters nothing.</p>
+    <p><strong>Clicking the map replaces whatever place you'd typed</strong>, keeping the eclipse type.</p>
+
+    <h3>How a place changes "type"</h3>
+    <ul>
+      <li><code>total</code> — eclipses which are total anywhere.</li>
+      <li><code>total paris</code>, <code>chile total</code> — only eclipses which appear total from that place.</li>
+      <li><code>italy total &gt;90</code> — adding an obscuration widens it back to total anywhere, kept only where your place sees at least that partial percentage. In August 1999 the path passed just north of Italy, so <code>italy total</code> finds nothing while <code>italy total &gt;90</code> finds it.</li>
+      <li>Obscuration is the Sun's covered area at a selected location, or the maximum anywhere on Earth if you haven't set one.</li>
     </ul>
 
     <h3>Search range</h3>
@@ -164,6 +179,7 @@
 
     <h3>Local Circumstances</h3>
     <p>Shown once you've set a location (search by coordinates, or click the map). A summary — duration, magnitude, obscuration, sun position at maximum — leads, because that's the question you opened the panel to answer.</p>
+    <p>The last row, <strong>Clear sky</strong>, is the odd one out: it says nothing about the eclipse, only about your chances of seeing it. It's the share of the time this spot is historically cloud-free at that time of day and that time of year, from the satellite record. Higher is better, like everything else in the block. <strong>It is not a forecast</strong> — for an eclipse in 2085 no such thing exists, and even for next month this is a long-run average rather than a prediction.</p>
 
     <h4>Contact Times</h4>
     <p>C1 (partial begins) → C2 (totality/annularity begins, umbral events only) → <strong>MAX</strong> (greatest eclipse) → C3 → C4, each with sun altitude and azimuth. Click any row to jump the terrain-shadow scrubber to that instant.</p>
@@ -270,7 +286,7 @@
     <ul>
       <li><strong>Street</strong> &amp; <strong>Sat</strong>: Esri World Street Map and World Imagery (esri.com).</li>
       <li><strong>Topo</strong>: Esri World Topographic zoomed out, handing over to OpenTopoMap (CC-BY-SA, opentopomap.org) close in.</li>
-      <li><strong>Offline fallback</strong>: NASA/NGDC Natural Earth II shaded relief, with coastlines, borders, rivers, lakes and cities from Natural Earth public-domain geodata (naturalearthdata.com).</li>
+      <li><strong>Offline fallback</strong>: NASA/NGDC Natural Earth II shaded relief, with coastlines, borders, rivers, lakes and cities from Natural Earth public-domain geodata (naturalearthdata.com). Country names and their alternative spellings, used by country search, come from the same source.</li>
       <li>Rendered with MapLibre GL JS (BSD-3-Clause, maplibre.org).</li>
     </ul>
 

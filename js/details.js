@@ -192,6 +192,14 @@ function renderData(rec, _tz, _lat, _lon) {
     +   row('Magnitude',           res.mag.toFixed(4))
     +   row('Obscuration',         res.osc.toFixed(1) + '%')
     +   row('Sun alt / az at max', fmtAng(res.sun.alt) + ' / ' + fmtAng(res.sun.az))
+    /* CLEAR SKY, not cloud cover — the inverse of what the climatology stores.
+       Every other number in this block is one you want to be HIGH (duration,
+       magnitude, obscuration, altitude); a cloud figure would be the only one
+       you want low, and mixing the two directions in a column of percentages
+       is how a 90% gets read as good news when it means the opposite.
+       Filled asynchronously, and last in the block because it is the one row
+       that says nothing about the eclipse itself. */
+    +   row('Clear sky', '<span id="cloud-odds">\u2026</span>')
     + '</div>';
 
     html +=
@@ -241,7 +249,49 @@ function renderData(rec, _tz, _lat, _lon) {
 
   if (coords && localResult && localResult.visible && rec) {
     buildSunTrack(rec, coords.lat, coords.lon, alt, localResult, tz);
+    fillCloudOdds(coords.lat, coords.lon);
   }
+}
+
+
+/* Fill the "Typical cloud" row once the climatology slices are in.
+ *
+ * ASYNC because the cloud data is only loaded when something asks for it, and
+ * the details panel must render immediately rather than wait on four image
+ * decodes. The row shows "…" until this lands, then the figure or an em dash.
+ *
+ * The number is HISTORICAL AVERAGE CLOUD COVER, not a forecast: this spot, this
+ * time of day, this time of year, averaged over the satellite record. For an
+ * eclipse in 2085 that is the only kind of answer there is, and for one next
+ * month it is still not a forecast — so the label says "typical" and the note
+ * says what it is. Overstating this would be the worst thing the row could do:
+ * someone books a trip on it.
+ *
+ * Guarded against a stale fill: the panel can re-render while the slices are
+ * loading (tap a different eclipse, move the pin), so the element is looked up
+ * AFTER the await and the coordinates are re-checked. Without that, an old
+ * request lands on the new panel and quietly shows the wrong place's weather.
+ */
+function fillCloudOdds(lat, lon) {
+  var el = document.getElementById('cloud-odds');
+  if (!el) return;
+  if (typeof Cloud === 'undefined' || !Cloud.ensureAt) { el.textContent = '\u2013'; return; }
+
+  var want = lat.toFixed(4) + ',' + lon.toFixed(4);
+  el.setAttribute('data-for', want);
+
+  Cloud.ensureAt(lon, lat).then(function (v) {
+    var now = document.getElementById('cloud-odds');
+    if (!now || now.getAttribute('data-for') !== want) return;   /* superseded */
+    if (v == null || !isFinite(v)) { now.textContent = '\u2013'; return; }
+    /* The climatology stores CLOUD fraction; the row shows its inverse. */
+    now.textContent = Math.round((1 - v) * 100) + '%';
+    now.title = 'Historically clear sky here at this time of day and year, from '
+              + 'the satellite record \u2014 a long-run average, NOT a forecast.';
+  }).catch(function () {
+    var now = document.getElementById('cloud-odds');
+    if (now && now.getAttribute('data-for') === want) now.textContent = '\u2013';
+  });
 }
 
 

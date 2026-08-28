@@ -433,7 +433,7 @@ ShadowChaser/
 │                       matters, they resolve paths two levels up
 ├── GREATEST-DURATION.md   handoff for the all-eclipse version (repo ROOT, not docs/)
 └── js/
-    ├── cities.js       lookupCity, lazy index from basemapData.cities
+    ├── search-cities.js       lookupCity, lazy index from basemapData.cities
     ├── cloud-average.js        CLOUD OVERLAY — climatology layer, palette, sampleAt (§10)
     ├── cloud-now.js    LIVE CLOUD — geostationary IR, temperature model (§10A)
     ├── cloud-photo.js      PHOTO MODE — the satellite picture composited (§10A.8c)
@@ -2593,6 +2593,273 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-08-26d** — **The merge of §26c was tightened; the merge itself had padded it.** Collapsing
+  city and country into one explanation was right, but the result opened with a whole paragraph
+  ANNOUNCING that they behave the same ("Cities, coordinates and countries all work the same way,
+  the only difference is what counts as there") and then a second paragraph demonstrating it. The
+  demonstration alone carries it: `total paris` from that spot, `chile total` anywhere inside it.
+  The announcement was deleted. Both documents now say it once, with an example, and stop.
+  In-app search copy is 133 words, down from ~220. The manual's four bullets were already tight and
+  were left alone.
+  **The pattern to watch: consolidating two explanations invites writing a THIRD sentence about how
+  they relate.** That sentence is almost always the one to cut.
+- **2026-08-26d** — **Cut the search prose roughly in half.** The 08-26c merge fixed the
+  duplication but replaced it with preamble: "cities, coordinates and countries all behave the same
+  way, the only difference is what counts as there" — a sentence explaining a distinction the
+  syntax list already shows, followed by bullets that then explained it again. Three passes at one
+  idea.
+  Bullets now lead with the query itself (`total paris`, `chile total`) instead of a bold label
+  restating the query. Redundant sentences deleted outright rather than reworded: "the city fixes
+  the spot; the country is just there to say which Paris, and doesn't filter anything" became
+  "the country just says which Paris, and filters nothing."
+  **Recording the pattern, since it recurred twice in one day:** merging duplicated copy tempts you
+  to add a sentence explaining that it was merged. Do not — cut and let the examples carry it. Two
+  paragraphs and a preamble went in the bin here with no loss of meaning.
+- **2026-08-26c** — **Country and city copy MERGED in both documents.** They were written as two
+  parallel explanations of one rule: a `Type + location` bullet and a `Type + country` bullet, a
+  `location + obscuration` bullet and a `Countries widen the same way` bullet. Same behaviour twice,
+  which is twice as much to read and twice as much to forget to update.
+  They now share the copy and split only where they actually differ. "How location changes type"
+  became "How a **place** changes type", opening with the one sentence that does the work: cities,
+  coordinates and countries behave identically, and the only difference is what counts as "there"
+  — a point, or anywhere inside a border. Six bullets became four.
+  The Countries section keeps only the FOUR genuine differences: city wins a name tie, a country
+  means its own land and not its overseas departments, obscuration is the best figure inside the
+  borders to 5%, and anything under a fifth is absent. Everything else was deleted as a restatement.
+  **The rule for next time: if a sentence about countries would read identically with "city"
+  substituted, it does not belong in the countries section.**
+- **2026-08-26b** — **The IN-APP instructions had no Country row at all.** The manual was brought
+  up to date the same day (§2026-08-26a) and this was missed — two places document the search
+  syntax and only one of them got updated, which is exactly the failure mode of having two.
+  Added: a `Country` row in the syntax list including the newly-separable `french guiana` /
+  `réunion`; a short paragraph on city-versus-country (one spot versus anywhere inside it) with
+  `paris france` as the qualifier example; the city-wins tie-break and the `country` override; and
+  that clicking the map replaces a typed place. The "Location changes what a type means" block now
+  covers countries, using `italy total` vs `italy total >90` — the same worked example as the
+  manual, because it is the clearest one either document has.
+  Also killed a comment claiming the cloud-overlay paragraph "joins this block when it lands". It
+  landed on 2026-08-23; the note outlived it by three days, directly above the paragraph it said
+  was missing.
+  **NOTE for whoever next changes search syntax: there are TWO documents.** `followtheshadow-manual.html`
+  and the `sg-instructions` block in index.html. Changing one and not the other is now a recorded
+  mistake rather than a hypothetical.
+- **2026-08-26a** — **Manual brought up to date.** Five things had shipped since it was last
+  touched and none were documented — the gap between what the app does and what the manual says it
+  does had been growing for two days:
+  **Clear sky** — a new subsection under Local Circumstances, saying plainly that it is the share
+  of time the spot is historically cloud-free, that higher is better like every other figure in
+  that block, and **that it is not a forecast**. Someone will plan a trip on it.
+  **Overseas territories** — France means France and Corsica; `french guiana`, `réunion`,
+  `martinique`, `caribbean netherlands` are searchable in their own right; accents optional.
+  **A new "Writing place names" section** covering the two things people will actually type and
+  which were previously undocumented: multi-word names need no quotes (`new york`, `ho chi minh`),
+  and a country may follow a city as a qualifier (`paris france total`) where it names which Paris
+  and filters nothing.
+  **Map click replaces a typed place** — stated explicitly, including that the eclipse TYPE
+  survives while the location does not.
+  Checked the added markup is balanced: the file carries a -2 tag-count delta from attributes on
+  `<td>`, identical before and after, so the additions are clean.
+- **2026-08-25k** — **`today+ total france` returned the 2045-08-12 eclipse, which goes nowhere
+  near France.** Not a code bug: Natural Earth's "France" is ONE shape containing the overseas
+  departments, and that path crosses FRENCH GUIANA. Legally correct, practically useless — nobody
+  typing "france" means South America. The same trap sat under the Netherlands (Caribbean
+  Netherlands) and New Zealand (Tokelau).
+  Rebuilt those three from Natural Earth's MAP UNITS file (`split_remote_units.js`), which splits
+  them. Each remote piece is now searchable in its own right: `french guiana`, `réunion`,
+  `martinique` work, and did not before. Accented names are aliased unaccented too — nobody types
+  Réunion with the accent on a phone.
+  **The file could NOT simply be swapped.** Map units also split the UK into England/Scotland/
+  Wales/N. Ireland, Belgium into three regions, Serbia into two — `united kingdom` would have
+  stopped working. The distinction is geographic, not political, and the measurement makes the cut
+  obvious: every unit that must stay attached is 40–1699 km from its mainland (Azores furthest),
+  every unit that must detach is 4886–9146 km (Tokelau nearest). **Nothing at all lies between.**
+  The 2500 km threshold sits in an empty gap rather than through a cluster, so no judgement call is
+  doing hidden work.
+  **Rebuilt INCREMENTALLY.** The index keys each country by POSITION, so reshaped countries kept
+  theirs and new units were appended — `gen_country_index.js --only 93,96,160,241..247` recomputed
+  10 of 248 and left the other 238 rows untouched. Two minutes rather than 45, and exact rather
+  than approximate.
+  **FOUND WHILE DOING IT — the sampler was putting three countries in the wrong ocean.**
+  New Zealand, Fiji and Kiribati straddle +-180, so their bounding box spans the whole globe, the
+  west-to-east walk crossed the empty Atlantic finding nothing, and the no-points fallback was the
+  BBOX CENTRE — in the South Atlantic, the opposite side of the world. They are now walked in a
+  0..360 frame, and the fallback is a vertex-derived point that is on the country by construction.
+  **164 of 248 countries get one sample point** because they are smaller than a 3 deg cell; that is
+  fine and deliberate — the penumbra is thousands of km across, so one well-placed point represents
+  a small country to well inside the 5% buckets. The point being in the wrong ocean was not fine.
+  `test_country.js` §14, 9 assertions, four of which exist purely to prove the UK, Belgium,
+  Portugal and Norway were NOT split.
+- **2026-08-25j** — **Cold load measured at 1m24s; two self-inflicted contributions removed.**
+  MEASURED FIRST: a cold install pulls **33.7 MB** — besselian 9.6, the two path centuries 10.0,
+  index.json 4.3, basemap 3.4, cloud 3.2, vendor 1.9. `country_index.json.gz` is **0.6 MB of
+  that, under 2%**, so the country work is not the cause. But two things it did WERE making the
+  cold path worse:
+  **(1) A DUPLICATE 720 KB DOWNLOAD.** When the index landed it called `_buildAliases()`, whose
+  fallback fetches the outlines when `basemapData` is absent — and on a cold load it always is at
+  that moment. So it raced map.js for the same file and pulled it twice. Aliases are built lazily
+  on first lookup now, by which time map.js has normally supplied them for nothing.
+  **(2) The index fetch was queued against the SHELL.** DOMContentLoaded was the fix for it never
+  loading at all (§2026-08-25b) and was an overcorrection. Now `load` + `requestIdleCallback`, so
+  it sits behind everything first paint needs. Free, because the file is precached: by the time
+  anyone types a country name it is a cache read either way, and a search arriving before it
+  re-runs itself when the index lands.
+  **The remaining 33 MB is pre-existing and deliberate** — §sw.js argues partial coverage is worse
+  than either extreme. If cold-start time is ever taken on as a task, the targets are besselian
+  (9.6 MB, all 50 centuries) and the two precached path centuries (10 MB), not this.
+- **2026-08-25i** — Two fixes on the day's work.
+  **(1) Clicking the map did not clear a COUNTRY from the search box.** `onMapClick` rebuilds the
+  box with the clicked coordinates and strips the named location so it cannot re-resolve and
+  override the click on the next parse — but it only ever cleared `city`. `country` and the
+  `paris FRANCE` qualifier were added later that same day and this was not updated, so clicking the
+  map with `chile total` in the box left Chile still filtering the list and the click did nothing.
+  All three are cleared now; the eclipse TYPE deliberately survives, since a click should narrow
+  the location, not discard what you were looking for. `test_country.js` §13.
+  **(2) The cloud row now reads CLEAR SKY, not cloud cover** — the inverse of what the climatology
+  stores. Every other figure in the local summary is one you want HIGH (duration, magnitude,
+  obscuration, altitude). A cloud percentage would be the only one you want low, and mixing the two
+  directions in a column of percentages is how a 90% gets read as good news when it means the
+  opposite.
+  Also worth recording: the row was reported missing when it was in fact deployed and correct. It
+  lives in the local summary, which does not exist without a location — same as Duration and
+  Magnitude. If it is ever "missing" again, check whether Sun alt/az is showing first.
+- **2026-08-25h** — **Cloud odds in the details panel.** A "Typical cloud" row at the foot of the
+  local summary, beneath Sun alt/az. Last in the block deliberately: it is the one row that says
+  nothing about the eclipse itself.
+  **`Cloud.ensureAt(lon, lat)` is new** and is what made this possible. `sampleAt` reads `_slices`,
+  which only the OVERLAY populates — so calling it from the details panel returned null for anyone
+  who had never toggled the map layer. `ensureAt` loads just the four slices one point needs (two
+  months x two local-time slices), all 96 of which sw.js already precaches, so it is a cache read
+  and works offline.
+  **The slot computation was EXTRACTED into `_slotFor()`** and is now shared by `sampleAt` and
+  `ensureAt`. That sharing is the point: if the loader fetched a different slice than the sampler
+  reads, the row would sit at "—" forever with nothing to show why. Verified the extraction did not
+  move the numbers — the arithmetic lines are unchanged, and both versions were run side by side
+  through jsdom on six points and agreed. **Caveat on that check: with no slices loaded both
+  returned null**, so it proves the plumbing, not the arithmetic; the arithmetic was checked by
+  direct comparison of the moved lines.
+  **The label is doing real work.** The figure is HISTORICAL AVERAGE cloud cover for that spot at
+  that time of day and year — not a forecast, and for an eclipse in 2085 no other kind of answer
+  exists. Hence "Typical cloud" and a tooltip saying so plainly. Someone will book a trip on this
+  number; overstating it is the worst thing the row could do.
+  **Stale-fill guard:** the panel can re-render while slices load (different eclipse, moved pin), so
+  the element is re-fetched after the await and stamped with the coordinates it was requested for.
+  Without it an old request lands on the new panel and quietly shows another place's weather.
+- **2026-08-25g** — **`new york` now finds New York City instead of YORK, ENGLAND.** The city data
+  holds full official names, so the exact lookup missed and the token walk fell back to the
+  one-word `york` at 53.96N — silent, plausible, and listed in the manual as a worked example.
+  `lookupCityPrefix()` in `js/search-cities.js` matches the START of a name. Quotes were considered
+  and rejected: they put the burden on the user AND leave the dangerous case untouched, since
+  someone typing `new york` unquoted would still get England.
+  **Three limits, each stopping a different wrong answer**, and none of them optional:
+  *multi-word only* — a single word stays exact, so `san` cannot silently become San Francisco and
+  every one-word search that works today is untouched; *must be unique* — a prefix fitting two
+  cities returns null, because the 7 ambiguous cases (of 58 ending in City/Town, 51 unambiguous)
+  are exactly where a guess is least forgivable; *word boundary* — `new york` may match "New York
+  City" but not a hypothetical "New Yorkshire".
+  **It is a SEPARATE PASS in the parser, after every exact name and every country at every width**,
+  and the ordering is load-bearing in both directions: `mexico` would prefix-match "Mexico City",
+  so countries must come first; `new` would prefix-match "New Delhi", so the wider `new york` must
+  come first. Folding it into the main loop breaks one or the other.
+  `test_country.js` §11-12, 12 assertions — half of them asserting what must NOT change — and
+  confirmed to fail with `lookupCityPrefix` stubbed out, reproducing `city=York, lat 53.96`.
+- **2026-08-25f** — **`paris france total` returned ZERO results.** The parser stops looking for a
+  location once it has one, so `france` fell through to freetext — where it is matched as a
+  SUBSTRING against the date, year and saros, which nothing satisfies. A country following a city
+  is now consumed as a QUALIFIER and discarded: the city already fixes the point, so the country
+  has nothing left to filter. Multi-word qualifiers too. It is re-emitted by `filterToString`,
+  because a pill rebuilds the box and silently deleting a word the user typed is its own small
+  betrayal. Guarded against over-reach: a non-country word after a city (`chicago xyzzy`) is still
+  freetext. `test_country.js` §10, 7 assertions.
+  **FOUND WHILE TESTING, NOT FIXED: `new york` has never worked.** The city dataset holds "New York
+  City", so `lookupCity('new york')` returns null and the token walk falls back to `york` — the one
+  in ENGLAND, at 53.96N. The manual has listed `new york` as a worked example this whole time. It is
+  the same shape as the `mexico` discovery: the city list uses full official names, and the search
+  requires an exact match. Not touched here because relaxing city matching changes behaviour that
+  currently works and is a decision of its own, not a bug fix to slip into a country change.
+- **2026-08-25e** — **Manual documents country search.** Folded into the existing location material
+  rather than given its own section, since a country IS a location as far as the search grammar is
+  concerned: a `Country` row in the syntax table, a short `Countries` section, and two new bullets
+  in "How location changes type" — including the `italy total` vs `italy total >90` pair, which is
+  the clearest demonstration of the widening rule anywhere in the docs. Both stated limits are in
+  the manual, in plain words: obscuration is the best figure anywhere inside the borders rounded to
+  5%, and anything under 20% is absent. Natural Earth attribution extended to cover the NAMES, not
+  just the geometry. Placeholder now shows `paris · chile` so the two location kinds are visible
+  without opening the manual.
+  **Tried and abandoned: red highlighting of unrecognised search terms.** A `<textarea>` cannot
+  colour part of its own text, so it needs a mirror layer behind it reproducing the string with
+  identical font, padding, border and wrapping — one differing pixel and the colour drifts off the
+  word after the first line wrap. Judged not worth the fragility. Reverted cleanly; `css/app.css`
+  is back to byte-identical on that block. **If it is ever revisited, note that leftover terms are
+  not actually IGNORED** — they become a substring match against the date, year and saros, which is
+  why an unknown word returns zero results rather than being dropped.
+- **2026-08-25d** — **`cities.js` -> `search-cities.js`, `countries.js` -> `search-countries.js`.**
+  Both are search support and neither name said so. **The rename immediately exposed a live bug**
+  and it is the one sw.js's own comment predicts: the CORE precache list holds BARE NAMES mapped to
+  paths, so `'cities'` went stale on rename — and `countries` had **never been in the list at all**,
+  meaning country search would have failed OFFLINE, silently, which is the one condition this app
+  exists for. Both fixed; `test_hygiene` checks the list against index.html and passes.
+- **2026-08-25c** — **Clicking any pill ERASED the country from the search box.** `france total` +
+  the annular pill became bare `annular`, silently widening the search to the whole world.
+  `filterToString` rebuilds the box from the filter and had no `country` branch — cities had one,
+  countries did not. Emitted in the same slot as `city`, since the parser accepts one location and
+  city wins ties. Where a country shares a name with a city, the marker word `country` is emitted
+  too, or `singapore` would round-trip into the CITY and the pill would change what you searched.
+  `test_country.js` §9 round-trips string -> filter -> string -> filter, including a type swap,
+  which is exactly what a pill does; confirmed to FAIL with the branch removed.
+  Also: country search no longer depends on the map. Aliases came only from `basemapData.countries`,
+  so if the basemap was late or failed, country search died silently with the index loaded and no
+  error. It now fetches the outlines itself as a fallback (a service-worker cache hit, not a second
+  download) — the LIST works perfectly well when the map does not, and they should not share a fate.
+- **2026-08-25b** — **`country_index.json.gz` was fetched but never DECOMPRESSED.** `search-countries.js`
+  called `r.json()` on the raw response; the file is stored gzipped and served as-is, so the
+  browser handed back deflate bytes and the parse died on byte one
+  (`Unexpected token '\u001f'`). Every other `.gz` in the app goes through `map.js`'s `fetchGz`,
+  which pipes through `DecompressionStream` — this was simply not following the existing pattern.
+  **The 24-assertion suite passed the whole time**, because the tests seed the index directly and
+  never touch the fetch; the guard added now asserts on the SOURCE of `search-countries.js` instead, and
+  was confirmed to FAIL with the bug reintroduced before being accepted. Lesson worth keeping: a
+  suite that injects its fixtures cannot see a loading bug, so the loader needs an assertion of its
+  own shape.
+- **2026-08-25a** — **SEARCH BY COUNTRY**, the 13-Aug request. `chile total`, `usa annular`,
+  `italy total >90`. Four parts:
+  **(1) The outlines had no names.** All 241 features in `countries.geojson.gz` carried EMPTY
+  properties — stripped when the file went through the Python `antimeridian` package. That, not
+  missing code, is why this sat undone: there was nothing for "Chile" to match. `data build
+  tools/name_countries.js` re-attaches them from Natural Earth 1:50m (the file's own documented
+  source, 241 shapes against their 242), pairing by centroid; 240 pair within 1.0 deg and the one
+  that does not is FIJI, whose centroid moved when the ±180 split rewrote it — matched on its
+  latitude band instead. **Geometry is passed through untouched and was verified byte-identical**;
+  only `properties` is written. Aliases come from Natural Earth's own columns (NAME, NAME_LONG,
+  ADMIN, FORMAL_EN, ABBREV, ISO_A2/A3), so `usa`, `us`, `U.S.A.` work without a hand list to rot.
+  **(2) A live scan was not viable.** `tools/checks/bench_country.js`: 24x a city scan for Chile,
+  **354x for Russia** — over a minute. Coarse-to-fine did NOT rescue it, and the reason is worth
+  keeping: the coarse pass must touch every sample point on every eclipse *before* it can reject
+  anything, so a big country pays full cost on the misses too. The rejection only saved the refine
+  step, which was never the expensive part.
+  **(3) So it is precomputed.** `data build tools/gen_country_index.js` → `data/country_index.json.gz`,
+  **650 KB**, 10,259 eclipses, 305,714 entries. Obscuration in 5% steps with a 20% floor (measured:
+  ~1359 KB at 1% and whole numbers; the floor and the buckets each save about as much as the other,
+  and raising the floor past 20% buys almost nothing because even at 30% an eclipse still touches
+  ~25 countries). **ABSENT MEANS UNDER 20%, NOT INVISIBLE.** Precached, not fetched per country —
+  a per-country fetch is exactly what fails in a field with no signal.
+  **(4) Two methods, and both are needed.** Sampling for obscuration; **exact path-vs-border
+  geometry for the central path**, because a totality corridor under 150 km wide falls straight
+  through a 3 deg grid. 1999-08-11 proves it: totality clipped Cornwall, sampling reached only 95%
+  for the UK, and the band test correctly flagged it central. A merge-time repair pass then lifts
+  central entries on TOTAL eclipses to 100% (1,653 of them) — only type T, because an annular peaks
+  near 95% and a hybrid may have shown a country only its annular portion.
+  The **SIGN** of each value carries "central path crossed here", which is what makes `usa annular`
+  distinguishable from a deep partial. Verified against three known paths: 1999-08-11 (17 countries,
+  Serbia and UK in, Italy out), 2024-04-08 (Mexico/USA/Canada central, Cuba 45%), 2023-10-14
+  (annular, central at 90%, correctly NOT lifted). `test_country.js`, 24 assertions, in the runner.
+  **A CITY STILL BEATS A COUNTRY** on a tie, so no existing search changed meaning; `singapore
+  country` forces the country reading. Note `mexico` was never a collision — the city list holds
+  "Mexico City", not "Mexico".
+  **NOT done: penumbral geometry.** Asked whether the umbral trick could find every country an
+  eclipse touches at all. Only 87 of 225 eclipses this century store BOTH penumbral limits; for the
+  rest one edge runs off the sunlit side and the region closes on the terminator. `js/map.js`
+  already refuses to FILL that region for the same reason. Left as its own job — and this index is
+  the test it would have to match.
 - **2026-08-24e** — **Clicking the black outside the globe now clears overlays**, via the off-globe
   branch that was already in `map.js`'s click handler (it round-trips `e.lngLat` back through
   `map.project` — an on-globe click lands under the cursor, an off-globe one snaps to the limb).

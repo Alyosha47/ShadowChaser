@@ -41,7 +41,8 @@ const CORE = [
      direction: shipped code the precache had never heard of. Offline, the
      cloud button did nothing and shadow-ui threw at parse. If you add a
      <script> to index.html, add it here in the same commit. */
-  ...['tz_lookup','format','state','tabs','cities','search-parser','eclipse',
+  ...['tz_lookup','format','state','tabs','search-cities','search-countries',
+      'search-parser','eclipse',
       'search-ui','search-list','local','details','tshirt','userlog','share','map',
       'shadow-layer','shadow-ui','url','init',
       /* The four cloud modules. NOTE these are listed as BARE NAMES and mapped to
@@ -68,6 +69,10 @@ const CORE = [
   'data/basemap/rivers.geojson.gz',
   'data/basemap/states.geojson.gz',
   'data/index.json',
+  /* Country search. Precached, NOT fetched per country: a per-country fetch is
+     exactly what fails in a field with no signal. ~650 KB against an install that
+     is already ~20 MB. See js/search-countries.js. */
+  'data/country_index.json.gz',
 ];
 
 const BESSELIAN = [
