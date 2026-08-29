@@ -2593,6 +2593,156 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-08-29o** — **Renamed "Sun Track" to "Sky Tracker" throughout, and documented the feature.**
+  The old name described only half of what the panel does now.
+  - Renamed in the panel heading, both "unavailable" messages, the manual, and the `test_details`
+    assertion that pins the heading. An intermediate "Eclipse Sky" naming was tried and discarded.
+  - `followtheshadow-manual.html` still described the panel as an azimuth-across/altitude-up chart,
+    which has been wrong since §29a. Corrected, plus a line on the objects appearing at totality.
+  - **Instructions** gained an ornamented **Details** section before Map Overlays, covering the
+    info panel, the contact-time icons and the Sky Tracker. **Search** gained a bold heading to
+    match. Location examples changed from paris/japan to kinshasa/nicaragua.
+  - **Data → Sources** now cites where the positions come from: truncated VSOP87D for the planets,
+    Yale Bright Star Catalogue (BSC5) for the 22 stars brighter than magnitude 1.5 with proper
+    motion applied, and Vondrák/Capitaine/Wallace (2011) long-term precession, noting why the IAU
+    2006 polynomial will not do across five millennia.
+  - **Tolerances** now says what the accuracy is measured AGAINST — the Sun's own position from the
+    Besselian elements, worst case 23″ — rather than just asserting a figure.
+  - The `buildSunTrack` doc comment still said "x = azimuth, y = altitude", which is precisely the
+    misconception that cost four rebuilds. Corrected, with a warning not to reintroduce it.
+  - ⚠ STILL SAYS THE OLD PLACES: the search box placeholder (`index.html` line ~301) still reads
+    `paris · chile`. Left alone deliberately — not asked for — but it now disagrees with the
+    examples directly below it.
+- **2026-08-29g** — **`eclipse.js` now branches on `localPhase`, not on the display badge, and the
+  refactor is proven inert.** `type` is the BADGE; `localPhase` is what actually happened where the
+  observer stood. For a hybrid they differ — `type` says 'hybrid' the whole path while
+  `localPhase` says total or annular depending where you were — so anything deciding BEHAVIOUR
+  must read `localPhase`. Three sites were testing `type`:
+  - **obscuration** — hybrids fell through to the partial lens-area formula. It gave the right
+    answer, but only because `mDist → 0` makes both `acos` arguments clamp to ±1 and drives the
+    triangle product negative so `Math.max(0, …)` zeroes the root, leaving πR² for a total and πr²
+    for an annular. Correct by accident of clamping: tighten those clamps and 569 records go wrong
+    silently. Now an explicit branch.
+  - **magnitude** and **isCentral** — both had `|| type === 'hybrid'` bolted on, the same
+    workaround for asking the badge instead of the phase. Both now read `localPhase` directly.
+
+  **Proof it changed nothing:** all 11,898 records at three sites each, capturing `type`,
+  `localPhase`, `mag`, `osc`, `tMax`, all four contacts with their V angles, `durCentral`,
+  `durPartial` and the Sun's alt/az — **identical sha256 before and after** (`fe6597ae99acef8a`).
+  - ⚠ The earlier §29c proof used the WRONG FIELD NAMES (`res.magnitude`, `res.duration`, which do
+    not exist) and so never compared obscuration or magnitude at all. Re-run properly against
+    HEAD: 11,690 identical, 208 changed, zero that should not have. The 13 near-midnight records
+    that show no diff are invisible at all three sample sites in both versions — no output to
+    differ; `test_eclipse.js` §1 covers them by asserting all 221 are normalised.
+  - `test_t0.js` is now `tools/checks/test_eclipse.js` and covers both the t0 normalisation and
+    the type/localPhase contract — 14 assertions, including that `eclipse.js` contains no
+    `type === 'hybrid'` test anywhere in its logic.
+  - Also cleaned `starmap-ui.js` after yesterday's clumsy surgery: removed a dead `SYM` variable
+    and a comment mangled by a sed edit. Checked for duplicated lines (0) and unused declarations
+    (0).
+- **2026-08-29f** — **⚠ The totality gate is `res.localPhase === 'total'`. THREE wrong gates were
+  tried before it; do not invent a fourth.**
+  - `C2 && C3` alone — an ANNULAR has C2 and C3 too, those being the ring phase. All 142 annulars
+    in 1900–2100 displayed planets that a rim of photosphere makes invisible.
+  - `res.type === 'total'` — `eclipse.js` deliberately relabels a hybrid as `'hybrid'` even where
+    the local phase IS total, so this silently excluded all **569 hybrids** (Exmouth 2023 showed
+    nothing).
+  - `moonRatio >= 1` — plausible and wrong. moonRatio compares the two apparent DISCS, and the
+    Moon's is larger for everyone watching a total eclipse whether or not they are inside the
+    umbra. It disagrees with the local phase at **1,463 of 8,765** sample points, every one an
+    observer outside the path. It only appeared to work because C2/C3 was also required.
+
+  `localPhase` was added to `eclipse.js` for precisely this purpose — the hybrid-promotion block
+  keeps the real total/annular determination there while `type` carries the display badge — and
+  reaching for `type` instead was the original mistake. Cross-checked against moonRatio at all
+  **5,721 in-path observations: zero disagreements.** `test_starmap.js` §5 asserts a hybrid shows
+  objects and an annular shows none.
+- **2026-08-29d** — **A missing `starmap-ui.js` took out the whole Local Circumstances section.**
+  `details.js` called `buildSunTrack` unguarded, so a `ReferenceError` killed far more than the
+  diagram. Now guarded, and it says which file failed to load. Note that `starmap-ui` is in the
+  service worker's precache list: if it 403s, `cache.addAll` rejects, the install fails and the
+  worker never activates, so NOTHING else updates either — the symptom looks unrelated to the
+  file that is actually missing.
+- **2026-08-29c** — **The `t0` bug is fixed, and the fix is PROVEN, not trusted.** `t0` is the whole
+  TD hour nearest greatest eclipse, so `t0 = 0` on a record peaking at 23:5x means midnight of the
+  FOLLOWING day; read literally it put 221 eclipses 24 hours early. New `refT0(rec)` in
+  `eclipse.js`, exported, used at all six sites that read `t0` (`eclipse.js` ×2, `details.js`,
+  `shadow-ui.js`, `cloud-average.js`).
+  - **The proof.** Every one of the 11,898 records was run through `computeEclipse` AND
+    `sampleEclipseAt` at three sites each, before and after, and the outputs diffed:
+
+        identical  11,677        changed  221
+        changed but should not have:  0
+        should have changed but did not: 0
+
+    The changed set is exactly the near-midnight set. This is why the fix was safe to make in the
+    module everything depends on — it is not a judgement that it looks right, it is a diff.
+  - **2012-05-20 end to end:** the scrubber window was 05-19 20:58 → 05-20 02:58 with greatest
+    eclipse at 05-20 23:52, i.e. 20.9 h OUTSIDE its own window. Now 05-20 20:58 → 05-21 02:58 with
+    greatest eclipse inside it. Redding CA maximum moved from 05-20 to 05-21 01:28, against a truth
+    of 05-21 01:29.
+  - `tools/checks/test_t0.js` is new and permanent: it asserts the 221 move, the other 11,677 do
+    not, all 221 have greatest eclipse in the 23:00 UT hour, and `|refT0 - td_ge| <= 12 h` for
+    every record — the property that makes the normalisation correct rather than a fudge.
+  - `test_starmap.js` §3 previously asserted this bug STILL EXISTED, deliberately, so that fixing
+    it would fail loudly. It now asserts the opposite.
+- **2026-08-29b** — **`buildSunTrack` moved to `js/starmap-ui.js`; `details.js` 759 → 386 lines.**
+  Matches the pattern every other feature follows (`shadow-layer`/`shadow-ui`,
+  `cloud-average`/`cloud-ui`): the module computes, the `-ui` module draws. The split was clean —
+  `skyColors`, `fmtHM`, `indexForUT` and `sunTrackJump` all lived INSIDE `buildSunTrack` and
+  travelled with it; the only cross-file reference, `_timeMode`, is read at call time so load order
+  does not matter. `test_hygiene`'s DOM-contract check needed `starmap-ui` adding to its file list,
+  or `shadow-ui.js`'s `#st-slider` looked like a reference to a nonexistent element.
+  - **Non-total eclipses now zoom in.** With no objects to show, 100 deg of field is dead space, so
+    the frame closes to the arc alone (41–65 deg across the catalogue). Partials get roughly twice
+    the arc: 200–220 px against 90–146 px for totals. Decided once, before drawing; never changes
+    while scrubbing.
+  - **⚠ Fixed: annular eclipses were showing stars.** The totality gate was `C2 && C3`, but an
+    annular has C2 and C3 too — the ring phase — so all 142 annulars in 1900–2100 were displaying
+    planets that a ring of photosphere would make completely invisible. Now `type === 'total'`.
+  - Rejected, with numbers: per-eclipse adaptive field sizing. Fitting to the planets actually
+    present gives a median field of 112 deg, and 62% of eclipses would need MORE than 100 — it
+    would mostly zoom OUT. Only 13% could tighten meaningfully, which is not worth losing the
+    property that 20 deg looks like 20 deg at every eclipse.
+- **2026-08-29a** — **The stars are IN the sun track. One picture. Four earlier attempts failed on a
+  number that was wrong.**
+  - **The wrong number.** §28c–e all assumed the track and a totality sky could not share a scale,
+    because the C1..C4 arc looked like it spanned 21.8 deg in Spain 2026 and 140.1 at Luxor 2027 —
+    7.3x. That is AZIMUTH, and azimuth compresses by cos(altitude): at Luxor's 78 deg elevation
+    those 140 deg are 29 deg of real sky. Measured across 136 totals 1900–2100, the arc is **24 to
+    49 deg of true sky angle — a 2.0x spread**. One fixed frame holds it for every eclipse on
+    Earth. Everything the earlier builds fought — the Sun coming loose from its arc (§28c), the Sun
+    stalling and REVERSING as the camera panned against its motion (§28d), a detached second panel
+    (§28e) — existed to work around a conflict that was never there.
+  - **The track now plots a true-scale patch of sky**, azimuthal-equidistant about the Sun at
+    maximum, instead of azimuth-across/altitude-up. Distance from centre is true angular separation
+    in every direction. Horizon became a CURVE and is sampled; ground below it is shaded.
+  - **⚠ A ROUND ALL-SKY PLOT WAS EVALUATED AND REJECTED.** Espenak's Figure 25 format is tempting
+    and shows far more sky, but on a zenith-centred disc the observer's "up" at the Sun points at
+    the disc CENTRE, not at the top of the screen. The Sun/Moon glyph must therefore be rotated by
+    |180 - azimuth|: **median 65 deg, and past 90 deg in 43% of eclipses.** Nearly half the time
+    the eclipse would be drawn on its side or upside down, destroying the one thing the diagram
+    exists for. A rectangular frame keeps up ≈ zenith, so the bite always reads correctly.
+  - **Field fixed at 100 deg, and the floor is Venus.** Not auto-sized, so the picture means the
+    same thing every time. Venus reaches 47 deg elongation and is the object essentially everybody
+    sees at totality, so the half-field must clear it — 80 deg was tried and lost Venus entirely at
+    the 2006 eclipse, the exact case being compared against Espenak.
+  - **Star limit 1.5, not 2.0 — 22 stars, not 50.** Totality is deep-twilight dark, not night, and
+    the sky is not uniformly dark either (there is a 360-deg sunset glow round the horizon), so
+    only the planets and first-magnitude stars are really visible. The 2.0 cut also listed Mirfak,
+    Hamal, Bellatrix, Alnilam and Menkalinan — names that make a display look authoritative while
+    telling the reader nothing. Also dropped Alp2Cru and Alp2Cen, bare BSC5 designations for stars
+    already listed as Acrux and Rigil Kentaurus.
+  - **Objects appear only between C2 and C3** — a plain opacity flip, which is only viable because
+    the frame no longer moves or rescales. 3–8 slider steps of 240; the panel opens at maximum so
+    they are there immediately.
+  - **Every object is named**, sorted by proximity to the Sun so a close pass keeps its label
+    (Regulus was 1.28 deg out in 2017 and lost its slot to Mercury when sorted by brightness).
+    Labels flip side near the edges and are dropped with their dot rather than clipped.
+  - Removed from §28e: the separate `buildStarMap` panel, its `starmap-wrap` host, the extra
+    sub-tier headings and the `.sm-*` styles. `test_hygiene`'s heading count is back to 2.
+  - **Still outstanding: the `eclipse.js` t0 bug** (221 eclipses placed 24 h early, §28c). Untouched.
+    `test_starmap.js` §3 asserts it still exists and will fail deliberately when it is fixed.
 - **2026-08-26d** — **The merge of §26c was tightened; the merge itself had padded it.** Collapsing
   city and country into one explanation was right, but the result opened with a whole paragraph
   ANNOUNCING that they behave the same ("Cities, coordinates and countries all work the same way,

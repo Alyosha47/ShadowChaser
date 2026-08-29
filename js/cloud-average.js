@@ -242,7 +242,7 @@
         try {
           var t = findMaximum(rec, lat, -lon, 0, dT);
           if (isFinite(t)) {
-            ut = rec.t0 + t - dT / 3600;
+            ut = ((typeof refT0 === 'function') ? refT0(rec) : rec.t0) + t - dT / 3600;
             if (!(Math.abs(ut - utGE) <= TCLAMP)) ut = utGE;
           }
         } catch (e) {}

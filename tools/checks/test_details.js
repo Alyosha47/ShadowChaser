@@ -16,7 +16,7 @@ console.log('1. heading tiers');
 ok('Local Circumstances is top tier', /detail-section-h">Local Circumstances/.test(det));
 ok('Global Circumstances is top tier', /detail-section-h">Global Circumstances/.test(det));
 ok('Contact Times demoted to sub',    /detail-sub-h">Contact Times/.test(det));
-ok('Sun Track demoted to sub',        /detail-sub-h">Sun Track/.test(det));
+ok('Sky Tracker demoted to sub',      /detail-sub-h">Sky Tracker/.test(det));
 ok('.detail-sub-h has no border',     /\.detail-sub-h \{[^}]*border:\s*none/.test(css));
 /* Post-audit rule: tiers separate by SIZE (both bold), colour carries no
    hierarchy at all, and headings carry no rule. See VISUAL-AUDIT.md. */

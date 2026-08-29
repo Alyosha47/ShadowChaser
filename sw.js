@@ -42,7 +42,7 @@ const CORE = [
      cloud button did nothing and shadow-ui threw at parse. If you add a
      <script> to index.html, add it here in the same commit. */
   ...['tz_lookup','format','state','tabs','search-cities','search-countries',
-      'search-parser','eclipse',
+      'search-parser','eclipse','starmap','starmap-ui',
       'search-ui','search-list','local','details','tshirt','userlog','share','map',
       'shadow-layer','shadow-ui','url','init',
       /* The four cloud modules. NOTE these are listed as BARE NAMES and mapped to

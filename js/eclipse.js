@@ -264,7 +264,44 @@
 
   /* ── Main public function ────────────────────────────────────────────── */
 
-  /**
+  
+/**
+ * The reference epoch to use for a record, in decimal TDT hours from 0h on the
+ * record's own calendar date.
+ *
+ * ⚠ THIS IS NOT ALWAYS rec.t0, AND THAT IS THE WHOLE POINT.
+ *
+ * Espenak's `t0` is the whole TD hour nearest greatest eclipse, and the
+ * Besselian polynomials are valid over tmin..tmax around it (normally ±3 h).
+ * When greatest eclipse falls at 23:5x, the nearest whole hour is 24 — and the
+ * catalogue writes that as 0. Read literally, `t0 = 0` means midnight STARTING
+ * the record's date when it means midnight ENDING it, and everything derived
+ * from it lands 24 hours early.
+ *
+ * 221 of the 11,898 records are affected. Every one has greatest eclipse inside
+ * the 23:00 UT hour — nothing else can trigger it. Six fall in 2000-2100:
+ * 2002-06-10, 2012-05-20, 2045-02-16, 2047-12-16, 2052-09-22, 2057-07-01.
+ *
+ * The symptom was easy to miss because contact times print modulo 24 and so
+ * still looked right. What broke was shadow-ui.js, which built its scrubber
+ * window from t0 + tmin/tmax (a day early) and its anchor from td_ge (correct),
+ * putting the greatest-eclipse instant 20.9 h outside its own window.
+ *
+ * Found by tools/checks/test_starmap.js, whose Sun gate compares against
+ * Espenak's own d0/mu0 and could not reconcile these records.
+ */
+function refT0(rec) {
+  var t0 = rec.t0;
+  var p = (rec.td_ge || '').split(':');
+  if (p.length === 3) {
+    var tge = (+p[0]) + (+p[1]) / 60 + (+p[2]) / 3600;
+    if (tge - t0 > 12) t0 += 24;
+    else if (t0 - tge > 12) t0 -= 24;
+  }
+  return t0;
+}
+
+/**
    * Compute full local eclipse circumstances for an observer.
    *
    * @param {Object} rec  Espenak eclipse record (see module header)
@@ -324,16 +361,26 @@
     var rSun  = (L1p + L2p) / 2;
     var rMoon = (L1p - L2p) / 2;
     var mag;
-    if (type === 'total' || type === 'annular' || type === 'hybrid') {
+    if (localPhase === 'total' || localPhase === 'annular') {
       mag = rMoon / rSun;
     } else {
       mag = (L1p - mDist) / (L1p + L2p);
     }
 
+    /* ⚠ TEST localPhase HERE, NOT type. A hybrid is relabelled 'hybrid' above
+       even where it is locally total or annular, so a `type` test drops all 569
+       hybrids into the partial branch below.
+
+       That branch happens to produce the right answer anyway — with the
+       observer central mDist tends to 0, both acos arguments clamp to ±1, and
+       the triangle product goes negative so Math.max(0, ...) zeroes the root,
+       leaving pi*R^2 for a total and pi*r^2 for an annular. Correct, but only
+       because of the clamps: tighten them and 569 records silently go wrong,
+       with no test to catch it. Branch explicitly instead. */
     var osc;
-    if (type === 'total') {
+    if (localPhase === 'total') {
       osc = 100;
-    } else if (type === 'annular') {
+    } else if (localPhase === 'annular') {
       /* Moon entirely inside Sun's disk; covered area = π·R_moon² */
       var k = rMoon / rSun;
       osc = Math.round(k * k * 1000) / 10;
@@ -358,14 +405,18 @@
     if (sun.alt <= 0) return { visible: false };
 
     /* Contact times (TDT offsets from t0) */
-    var isCentral = (type === 'total' || type === 'annular' || type === 'hybrid');
+    /* Central = the observer is inside the umbra or antumbra, which is exactly
+       what localPhase records. Listing 'hybrid' alongside was the same
+       workaround for testing the display label instead of the local phase. */
+    var isCentral = (localPhase === 'total' || localPhase === 'annular');
     var tC1 = findContact(rec, tMax, lat, lonWest, alt, dT_s, false, -1);
     var tC4 = findContact(rec, tMax, lat, lonWest, alt, dT_s, false, +1);
     var tC2 = isCentral ? findContact(rec, tMax, lat, lonWest, alt, dT_s, true, -1) : null;
     var tC3 = isCentral ? findContact(rec, tMax, lat, lonWest, alt, dT_s, true, +1) : null;
 
     /* Convert TDT offset to UT: UT = t0 + t − ΔT/3600 */
-    function toUT(t) { return t !== null ? rec.t0 + t - dT_s / 3600 : null; }
+    var _t0 = refT0(rec);
+    function toUT(t) { return t !== null ? _t0 + t - dT_s / 3600 : null; }
 
     /* Sun position at each contact */
     function getSun(t) {
@@ -457,7 +508,7 @@
   function sampleEclipseAt(rec, lat, lon, altM, t_ut) {
     var dT_s = rec.dt;
     var lonWest = -lon;
-    var t = t_ut - rec.t0 + dT_s / 3600;          /* UT → TDT offset from t0 */
+    var t = t_ut - refT0(rec) + dT_s / 3600;      /* UT → TDT offset from t0 */
     var o = fundamentalArgs(rec, t, lat, lonWest, altM, dT_s);
     /* unrounded alt/az */
     var phi = lat * DEG, H = o.H * DEG, dec = o.d * DEG;
@@ -493,6 +544,7 @@
 
   return {
     computeEclipse:  computeEclipse,
+    refT0:           refT0,
     fundamentalArgs: fundamentalArgs,
     sunAltAz:        sunAltAz,
     findMaximum:     findMaximum,

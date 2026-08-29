@@ -199,9 +199,12 @@ ok('no absolute links back to the deployed app', selfLinks.length === 0,
 console.log('\n8. DOM contract');
 
 const JSFILES = ['search','userlog','details','map','list','local','url','init',
-                 'tabs','share','shadow-ui','eclipse','cities','format','state'];
+                 'tabs','share','shadow-ui','eclipse','cities','format','state',
+                 'starmap-ui'];
 // Ids can come from the markup OR be built at runtime (the sun-track diagram
 // and the deck.gl overlay both construct their own DOM), so collect both.
+// starmap-ui.js is where the sun track lives since 2026-08-29b — leaving it out
+// makes shadow-ui.js's #st-slider look like a reference to nothing.
 const sources = {};
 for (const n of JSFILES) {
   try { sources[n] = fs.readFileSync(`${ROOT}/js/${n}.js`, 'utf8'); }

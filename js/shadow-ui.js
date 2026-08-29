@@ -91,8 +91,9 @@ function computeShadowWindow(entry) {
     /* Event window: tmin/tmax are TD-hour offsets from t0. */
     var t0ms, t1ms;
     if (rec.tmin != null && rec.tmax != null) {
-      t0ms = tdToMs(rec.t0 + rec.tmin);
-      t1ms = tdToMs(rec.t0 + rec.tmax);
+      var _t0 = (typeof refT0 === 'function') ? refT0(rec) : rec.t0;
+      t0ms = tdToMs(_t0 + rec.tmin);
+      t1ms = tdToMs(_t0 + rec.tmax);
       if (t1ms < t0ms) { var tmp = t0ms; t0ms = t1ms; t1ms = tmp; }
     } else if (maxms != null) {
       t0ms = maxms - 3 * 3600e3; t1ms = maxms + 3 * 3600e3;

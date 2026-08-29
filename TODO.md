@@ -324,8 +324,13 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   existing JSON, rendering a formatted summary + map image. The only way past the plain-text
   ceiling of `navigator.share`/`mailto`. Also the home for "prettier share" visual polish.
 - Splash / title page for installed-PWA mode; app icon; app logo / eclipse symbol.
-- Night-sky-during-totality view — planets/comets/bright stars near the Sun at totality,
-  positioned for the selected eclipse.
+- ~~Night-sky-during-totality view — planets/bright stars near the Sun at totality~~ DONE
+  2026-08-28f (`js/starmap.js` + the sun track's own frame in details.js). COMETS were dropped deliberately, not forgotten: they need
+  per-apparition orbital elements, so a static file cannot carry one, and a comet bright enough
+  to matter during totality is a once-in-decades accident. Do not re-add without a data source.
+- ~~`eclipse.js` places 221 eclipses 24 hours early~~ FIXED 2026-08-29c via `refT0()`, proven by
+  a before/after diff of all 11,898 records (11,677 byte-identical, 221 changed, zero surprises).
+  Regression suite: `tools/checks/test_t0.js`. See HANDOFF §2026-08-29c.
 
 ## MOVED FROM HANDOFF §3 on 2026-08-20 — file these properly next time you are in here
 

@@ -9,7 +9,7 @@ const path = require('path');
    failing" mean nothing. js/forecast.js went the same way: written 2026-08-15,
    never wired into index.html, never committed, now lost. #F2b starts from
    scratch. Put both back on this list when it is rewritten. */
-const SUITES = ['test_hygiene', 'test_details', 'test_userlog', 'test_picker', 'test_tshirt', 'test_satellite', 'test_imagery', 'test_sw', 'test_country'];
+const SUITES = ['test_hygiene', 'test_details', 'test_starmap', 'test_eclipse', 'test_userlog', 'test_picker', 'test_tshirt', 'test_satellite', 'test_imagery', 'test_sw', 'test_country'];
 let failed = 0, broken = 0;
 
 /* A SUITE THAT CANNOT START IS NOT A SUITE THAT FAILED, and reporting both as
