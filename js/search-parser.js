@@ -553,26 +553,29 @@
 
       /* Type — eclipse_type can be a single letter (T/A/H/P) or a subtype
          like Tm, As, H3, Pb. Classify by the first character.
-         With an obscuration filter present, "total/annular" means the eclipse's
-         GLOBAL classification (total/annular SOMEWHERE) and obscuration governs
-         what's visible at the location — so a spot in the partial zone of a total
-         eclipse still qualifies. Without an obscuration filter, a scanned location
-         uses the LOCAL type, so "total" means "total as seen from here".
 
-         A COUNTRY behaves identically, and this is what makes "chile total"
-         and "chile total >50" mean the two different things they should:
-         without a range, the country's own type — total only if the central
-         path actually crossed it; with a range, the global type, and the
-         range says what the country got. The central-path bit comes from
-         exact path-vs-border geometry, NOT from the sampled grid, because a
-         totality corridor under 150 km wide falls straight through a 3 deg
-         sample spacing (1999-08-11 clipped Cornwall and sampling missed it). */
+         ONE RULE: a type word means what the SELECTED PLACE saw.
+
+         A COUNTRY is the exception, and only because a country is an area, not
+         a point, so "what it saw" is ambiguous. Without a range, its own type —
+         total only if the central path actually crossed it. With a range, the
+         GLOBAL type, so "chile total >50" reads "a total eclipse, of which
+         Chile got at least 50%". That central-path bit comes from exact
+         path-vs-border geometry, NOT the sampled grid: a totality corridor
+         under 150 km wide falls straight through 3 deg sample spacing
+         (1999-08-11 clipped Cornwall and sampling missed it).
+
+         ⚠ The obscuration switch used to apply to POINTS too, which made
+         "partial >70" mean "globally partial, and over 70% here" — so 2017 was
+         excluded from St. Louis, where it was a 100% partial and the single
+         most interesting answer. A point is not ambiguous. Local always. */
       if (filter.types && filter.types.length) {
         var raw;
-        if (cRow && !filter.obscRange) {
-          raw = cRow.central ? (e.eclipse_type || '') : 'P';
+        if (cRow) {
+          raw = filter.obscRange ? (e.eclipse_type || '')
+                                 : (cRow.central ? (e.eclipse_type || '') : 'P');
         } else {
-          raw = (filter.obscRange ? e.eclipse_type : (e.local_type || e.eclipse_type)) || '';
+          raw = (e.local_type || e.eclipse_type) || '';
         }
         var full = TYPE_MAP[raw.charAt(0).toUpperCase()] || raw.toLowerCase();
         if (filter.types.indexOf(full) < 0) return false;

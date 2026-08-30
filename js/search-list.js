@@ -1,6 +1,7 @@
 /* ── Eclipse list ────────────────────────────────────────────────────── */
 
 var _listItems = [];   /* the current filtered+ordered list, for arrow nav */
+var _lastListSig = null;   /* what the list last CONTAINED — see the scroll note */
 
 function currentYear() { return new Date().getFullYear(); }
 
@@ -15,14 +16,14 @@ function renderList() {
 
   var source = locationResults !== null ? locationResults : eclipseIndex;
 
-  /* Apply search-range restriction unless the user has an explicit year filter */
-  if (!currentFilter.years) {
-    var RANGES = { modern: [1500, 2500], past500: [currentYear() - 500, currentYear() + 100],
-                   twomill: [-1000, 3000] };
-    var rng = RANGES[searchRange];
-    if (rng) source = source.filter(function (e) { return e.year >= rng[0] && e.year <= rng[1]; });
-  }
-
+  /* The "Search range" dropdown was removed on 2026-08-29v, and with it the
+     whole range restriction and the "None in 1500–2500, widen it below" message
+     that existed to explain it. It was a DISPLAY filter only — it skipped no
+     chunks and no computation, saving 0.206 ms against 0.058 ms — while its
+     default silently hid every eclipse outside 1500–2500. That was actively
+     misleading: St. Louis has 12 total eclipses and the default showed none,
+     because the last was 1442 and the next is 2505. A year in the search box
+     does the same job and says so: "1500-2500". */
   var items  = applyFilter(source, currentFilter);
   _listItems = items;   /* keep in sync for arrow-key navigation */
 
@@ -31,28 +32,33 @@ function renderList() {
     return;
   }
 
-  var shown, start, anchor = 0;
-  if (locationResults !== null || currentFilter.text ||
-      currentFilter.types || currentFilter.years || currentFilter.months ||
-      currentFilter.saros !== null || currentFilter.obscRange) {
-    start = 0;
-    shown = items.slice(0, 500);
-  } else {
-    var now = new Date();
-    var cy = now.getFullYear(), cm = now.getMonth()+1, cd = now.getDate();
-    for (var i = 0; i < items.length; i++) {
-      var e = items[i];
-      if (e.year > cy || (e.year===cy && e.month>cm) ||
-          (e.year===cy && e.month===cm && e.day>=cd)) { anchor=i; break; }
-    }
-    /* Center the 500-row window on today so the user can browse both
-       past and future eclipses without typing a filter. */
-    start = Math.max(0, anchor - 250);
-    shown = items.slice(start, start + 500);
+  /* Anchor = the first eclipse from today onwards, in EVERY list, filtered or
+     not. Previously only unfiltered lists were anchored, so "total" opened on
+     eclipses from 1999 BC and you had to scroll for years to reach anything you
+     could actually go and see. -1 means the whole list is in the past. */
+  var now = new Date();
+  var cy = now.getFullYear(), cm = now.getMonth() + 1, cd = now.getDate();
+  var anchor = -1;
+  for (var i = 0; i < items.length; i++) {
+    var e = items[i];
+    if (e.year > cy || (e.year === cy && e.month > cm) ||
+        (e.year === cy && e.month === cm && e.day >= cd)) { anchor = i; break; }
   }
 
-  var html = shown.map(function (e) {
-    var tc  = typeCode(e.eclipse_type || 'P');
+  /* Keep 250 rows of history above the anchor so the past is still reachable by
+     scrolling up, and cap the window at 500 rows. */
+  var start = anchor < 0 ? Math.max(0, items.length - 500)
+                         : Math.max(0, anchor - 250);
+  var shown = items.slice(start, start + 500);
+
+  var html = shown.map(function (e, idx) {
+    /* Show the type AS SEEN FROM THE SELECTED LOCATION when there is one.
+       The filter already matches on local_type (search-parser.js), so showing
+       the GLOBAL type here made the list contradict its own search box: from
+       St. Louis the list drew 115 hybrid icons while "hybrid" returned 0,
+       because every one of those hybrids is a partial from there. Same object,
+       same word, two different meanings. Now they agree. */
+    var tc  = typeCode(e.local_type || e.eclipse_type || 'P');
     var ico = typeIcon(tc, e.magnitude);
     var sel = selectedEntry
            && selectedEntry.year===e.year
@@ -60,6 +66,7 @@ function renderList() {
            && selectedEntry.day===e.day;
     var dur = e.duration_secs > 0 ? fmtDur(e.duration_secs) : '--';
     return '<div class="eclipse-item' + (sel ? ' selected' : '') + '"'
+         + (start + idx === anchor ? ' data-anchor="1"' : '')
          + (sel ? '' : ' onclick="selectEclipse(' + e.year + ',' + e.month + ',' + e.day + ')"')
          + '>'
          + '<span style="display:flex;align-items:center;justify-content:center">' + ico + '</span>'
@@ -75,7 +82,27 @@ function renderList() {
   }
 
   list.innerHTML = html;
-  /* No scroll here: the list never moves on its own. */
+
+  /* Put the next eclipse from today at the top.
+
+     ⚠ ONLY WHEN THE LIST ITSELF CHANGED. renderList() also runs on every
+     selection — clicking a row re-renders to move the highlight — so scrolling
+     unconditionally would yank the user back to today the moment they clicked
+     an eclipse in 1850. The signature below deliberately ignores which row is
+     selected and tracks only what the list CONTAINS. */
+  var sig = items.length + '|' + start + '|' + anchor + '|'
+          + (items[0] ? items[0].year + '.' + items[0].month + '.' + items[0].day : '')
+          + '|' + (locationResults !== null);
+  if (sig !== _lastListSig) {
+    _lastListSig = sig;
+    var a = list.querySelector('[data-anchor="1"]');
+    /* Measure against the list's own box. offsetTop is relative to the nearest
+       POSITIONED ancestor, which is not this container, so it overshot — the
+       next eclipse was 2027 and the list opened on 2029. Rects are exact
+       regardless of where the positioning context happens to be. */
+    if (a) list.scrollTop += a.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    else   list.scrollTop = 0;
+  }
 }
 
 

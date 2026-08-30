@@ -785,32 +785,6 @@
       padding: 0.75rem 1rem 0;
     }
 
-    .settings-row {
-      display:     flex;
-      align-items: center;
-      gap:         1rem;
-      padding:     0.6rem 0;
-      border-bottom: 1px solid var(--border);
-      font-family: var(--mono);
-      font-size:   0.72rem;
-    }
-    .settings-row:last-child { border-bottom: none; }
-    .settings-row label {
-      flex:          0 0 auto;
-      font-size:     0.72rem;
-      text-transform: none;
-      letter-spacing: 0;
-      color:         var(--text);
-      margin:        0;
-      white-space:   nowrap;
-    }
-    .settings-row select {
-      width: auto;
-      min-width: 12rem;
-      max-width: 22rem;
-      font-size: 0.72rem;
-      font-family: var(--mono);
-    }
 
     .about-text {
       font-family: var(--mono);
@@ -833,21 +807,6 @@
     }
     .settings-group .about-text { font-size: 0.72rem; color: var(--text-dim); }
 
-    /* #search-range's new home, at the bottom of the search tab under the
-       list — moved out of the Info tab's now-deleted Settings section (see
-       the comment at its call site). Same caption treatment that section
-       gave .about-text, reproduced here since that rule was scoped to
-       .settings-group and this no longer sits inside one. Separation from
-       the list above is the .instructions-ornament sitting right before this
-       in the markup, not a rule here — matches the same "breath, not a hard
-       break" used at the end of Instructions. */
-    .search-settings .about-text { font-size: 0.72rem; color: var(--text-dim); margin-top: 0.5rem; }
-    /* .settings-row's own border-bottom is normally cancelled by
-       :last-child, which relied on being the LAST thing in its parent
-       (.settings-group, where nothing followed it). Here .about-text comes
-       after it, so :last-child never matched and the hairline stayed —
-       cancel it directly instead of depending on sibling order. */
-    .search-settings .settings-row { border-bottom: none; }
     /* Icons quoted inside running prose (see the log block in Instructions).
        These use TIGHT per-icon viewBoxes, unlike the app's buttons which keep
        0 0 20 20 — there the box is the tap target, here it is dead space, and

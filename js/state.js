@@ -49,8 +49,7 @@ var AppState = (function () {
     localResult:     null,
     _lookedUpAlt:    null,
     map:             null,
-    mapReady:        false,
-    searchRange:     localStorage.getItem('sc.searchRange') || 'modern'
+    mapReady:        false
   };
   var listeners = {};
 
@@ -71,7 +70,7 @@ var AppState = (function () {
 
 /* Forwarding shims: keep existing global reads/writes working unchanged. */
 ['eclipseIndex','selectedEntry','activeTab','sidebarTab','locationResults','scanCache',
- 'scanCancelFlag','currentFilter','localResult','_lookedUpAlt','map','mapReady','searchRange']
+ 'scanCancelFlag','currentFilter','localResult','_lookedUpAlt','map','mapReady']
   .forEach(function (key) {
     Object.defineProperty(window, key, {
       get: function ()  { return AppState.get(key); },

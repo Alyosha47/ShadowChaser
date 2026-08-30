@@ -146,6 +146,50 @@ function bandTouches(band, bandBox, C) {
   return false;
 }
 
+/* Build the umbral corridor as polygons that can actually be tested against
+   country borders in [-180,180].
+
+   ⚠ THE TWO UMBRA LIMITS DO NOT ALWAYS SHARE A LONGITUDE CONVENTION.
+   gen_eclipse_paths unwraps each limit along its own track, so a path crossing
+   the antimeridian can come back with the north limit at 176..356 and the south
+   limit at -179..-5 — one corridor, written two ways. Concatenating them raw
+   gives a polygon spanning -179..356, a ring around the planet, and every
+   country on Earth intersects it. That is how 2453-09-03 came to be flagged
+   central in 108 countries including Andorra, where it is a 59.8% partial.
+
+   Unwrap both onto one continuous convention, then return the corridor shifted
+   into each 360 deg window, because after unwrapping it can sit outside the
+   range the country polygons occupy. */
+function bandWindows(un, us) {
+  var ref = un[0][0];
+  function unwrap(arr) {
+    return arr.map(function (pt) {
+      var x = pt[0];
+      while (x - ref >  180) x -= 360;
+      while (x - ref < -180) x += 360;
+      return [x, pt[1]];
+    });
+  }
+  var cont = unwrap(un).concat(unwrap(us).slice().reverse());
+  return [-360, 0, 360].map(function (d) {
+    var band = cont.map(function (pt) { return [pt[0] + d, pt[1]]; });
+    var bb = { w: 180, e: -180, s: 90, n: -90 };
+    for (var q = 0; q < band.length; q++) {
+      if (band[q][0] < bb.w) bb.w = band[q][0];
+      if (band[q][0] > bb.e) bb.e = band[q][0];
+      if (band[q][1] < bb.s) bb.s = band[q][1];
+      if (band[q][1] > bb.n) bb.n = band[q][1];
+    }
+    return { band: band, bb: bb };
+  });
+}
+
+function bandHits(windows, C) {
+  for (var i = 0; i < windows.length; i++)
+    if (bandTouches(windows[i].band, windows[i].bb, C)) return true;
+  return false;
+}
+
 /* --------------------------------------------------------------- inputs */
 
 function loadCountries() {
@@ -278,16 +322,11 @@ function buildCentury(century, COUNTRIES, COARSE_GRID, E, index, stats) {
     var un = (p.umbra_n && p.umbra_n[0]) || null;
     var us = (p.umbra_s && p.umbra_s[0]) || null;
     if (un && us && un.length > 1 && us.length > 1) {
-      var band = un.concat(us.slice().reverse());
-      var bb = { w: 180, e: -180, s: 90, n: -90 };
-      for (var q = 0; q < band.length; q++) {
-        if (band[q][0] < bb.w) bb.w = band[q][0];
-        if (band[q][0] > bb.e) bb.e = band[q][0];
-        if (band[q][1] < bb.s) bb.s = band[q][1];
-        if (band[q][1] > bb.n) bb.n = band[q][1];
-      }
+      /* See bandWindows() — the two limits can arrive in different longitude
+         conventions, and the corridor must be tested in each 360 deg window. */
+      var windows = bandWindows(un, us);
       for (var cj = 0; cj < COUNTRIES.length; cj++) {
-        if (!bandTouches(band, bb, COUNTRIES[cj])) continue;
+        if (!bandHits(windows, COUNTRIES[cj])) continue;
         /* NEGATIVE = the central path crossed here. Magnitude stays the best
            obscuration found; for a total that is 20 (=100%), for an annular
            it is whatever the annular peak sampled to, which is the honest
@@ -458,19 +497,17 @@ function onlyThese(COUNTRIES, want) {
         if (best >= FLOOR) row[i] = Math.round(best / BUCKET);
       });
 
-      /* Exact central path, same overrule as the full build. */
+      /* Exact central path, same overrule as the full build — INCLUDING the
+         longitude-convention fix. This block is a second copy of the logic
+         above; if you change one, change both, or an incremental rebuild will
+         quietly reintroduce the ring-around-the-planet bug. */
       var un = (p.umbra_n && p.umbra_n[0]) || null;
       var us = (p.umbra_s && p.umbra_s[0]) || null;
       if (un && us && un.length > 1 && us.length > 1) {
-        var band = un.concat(us.slice().reverse());
-        var bb = { w: 180, e: -180, s: 90, n: -90 };
-        band.forEach(function (q) {
-          if (q[0] < bb.w) bb.w = q[0]; if (q[0] > bb.e) bb.e = q[0];
-          if (q[1] < bb.s) bb.s = q[1]; if (q[1] > bb.n) bb.n = q[1];
-        });
+        var windows = bandWindows(un, us);
         var isTotal = String(rec.eclipse_type || '').charAt(0) === 'T';
         want.forEach(function (i) {
-          if (!bandTouches(band, bb, COUNTRIES[i])) return;
+          if (!bandHits(windows, COUNTRIES[i])) return;
           var mag = isTotal ? Math.round(100 / BUCKET)
                             : (row[i] || Math.round(100 / BUCKET));
           row[i] = -Math.abs(mag);

@@ -247,6 +247,9 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   served from disk cache in production (~11 s load, DOMContentLoaded ~950 ms), so profile the
   LOCAL-server case specifically before assuming it's the same cause.)* Profile the chunk-fetch
   pattern.
+- ~~Scan's O(n²) index lookup~~ FIXED 2026-08-29p — 232 ms → 65 ms. It walked all 11,898 index
+  entries per hit (10.2 M comparisons) to resolve a date; now a map. Result list proven identical
+  at twelve locations. This was never in this file; the item below is the *other*, larger win.
 - **Scan ignores non-location filters** — always scans all 5 centuries regardless of other
   *(This is the REAL scan win. Measured alternative — splitting partials into separate files —
   saves only ~1% of payload and was rejected. Filtering by date/type BEFORE loading chunks would

@@ -2593,6 +2593,143 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-08-30a** — **FOUND IT: the country index's central-path bug was two umbra limits in two
+  different longitude conventions.** `gen_country_index.js` built the corridor as
+  `un.concat(us.reversed())`, but `gen_eclipse_paths` unwraps each limit along its OWN track, so a
+  path crossing the antimeridian comes back with the north limit at 176..356 and the south limit at
+  −179..−5 — one corridor written two ways. Concatenated raw that polygon spans −179..356: **a ring
+  around the planet**, which every country intersects.
+  - **2453-09-03 was flagged central in 108 countries including ANDORRA**, where it is a 59.8%
+    partial with no totality anywhere along its longitude. That is why `andorra total` returned it.
+  - **Fixed in the generator** (`bandWindows()`): unwrap both limits onto one continuous
+    convention, then test the corridor in each 360 deg window, since after unwrapping it can sit
+    outside the range the country polygons occupy. ⚠ The generator had TWO copies of this logic —
+    the full build and the incremental rebuild — and both are now routed through the same helper.
+  - **Shipped index repaired** by `data build tools/repair_country_index_longitudes.js`. Only the
+    109 eclipses whose band spans over 300 deg can be affected; every other row is byte-identical.
+    Central entries **1,918 → 367**. Worst rows: 127→4, 116→7, 112→4, 108→5, 89→6, 87→3.
+    Six eclipses went UP by a country or two — genuine antimeridian crossings where the old code
+    missed the far side.
+  - **Verified against direct computation.** Andorra now reads 60%, not central, against a computed
+    59.8%. Of the 41 eclipses still listed as central over Andorra, spot-checks all confirm:
+    1842-07-08 gives 127 s of totality there, 1706-05-12 gives 155 s, 1605-10-12 gives 128 s,
+    2059-11-05 gives 103 s of annularity.
+  - ⚠ **NOT FIXED, still wrong:** two eclipses still claim 55 and 42 central countries. Their paths
+    ENCIRCLE A POLE, and a corridor wrapping 360 deg of longitude around the pole cannot be
+    represented as a simple lon/lat polygon at all. That needs a spherical containment test, which
+    is a different job. 46 eclipses claim 26–40, down from 63.
+  - ⚠ An earlier repair attempt used a hand-rolled 3 deg sampling grid and silently DELETED
+    Andorra's entry, because Andorra is 0.24 deg tall and no sample landed inside it. The generator
+    already solves this — `gridFor()` falls back to the vertex mean of the largest ring. Use the
+    generator's own helpers when repairing its output.
+- **2026-08-29x** — **"andorra total returns a non-total eclipse" is a STALE DEPLOYED DATA FILE, not
+  a bug in the code.** `data/country_index.json.gz` in the repo already carries
+  `"repaired":"2026-08-29 longitude-convention fix, 109 eclipses"`, and against that file 2453-09-03
+  reads Andorra 60%, central FALSE, and `andorra total` returns 19 eclipses without it. Matches
+  direct computation (59.8% partial). **Fix: upload that file.**
+  - The cause was already found and fixed before this session. `gen_country_index.js` documents it
+    at `bandWindows()`: `gen_eclipse_paths` unwraps each umbra limit along its own track, so a path
+    crossing the antimeridian returns the north limit at 176..356 and the south at −179..−5 — one
+    corridor written two ways. Concatenated raw it spans −179..356, a ring round the planet that
+    every country intersects. `repair_country_index_longitudes.js` fixed the 109 affected rows;
+    central entries went 1,918 → 367.
+  - **⚠ I MISCOUNTED and wasted a long investigation on it.** I reported 17 eclipses with >40
+    central countries; re-measuring the same file gives **2**, exactly as the repair script's own
+    header states. I then built a longitude hypothesis on that bad count and disproved it — but the
+    real cause was already written down in the generator. READ THE GENERATOR HEADER FIRST.
+  - **What genuinely remains: 2 eclipses**, −1790-09-08 (55 central) and −1089-12-25 (42). Their
+    paths encircle a pole, and a corridor wrapping 360 deg of longitude around a pole cannot be a
+    simple lon/lat polygon at all. Needs a spherical containment test. Stated in the repair
+    script's header; nothing new was learned here.
+- **2026-08-29w** — **ONE RULE for the search: a type word means what the SELECTED PLACE saw.** It
+  was violated in two places at once, and from the outside the search simply looked broken.
+  - **The list drew the GLOBAL type while the filter matched the LOCAL one.** From St. Louis the
+    list showed 115 hybrid icons and typing `hybrid` returned 0 — every one of those is a partial
+    from there. Same word, two meanings, in the same panel. `search-list.js` now draws
+    `typeCode(e.local_type || e.eclipse_type)`, so icon counts and filter counts are equal type by
+    type: P 1606, A 22, T 12.
+  - **An obscuration range flipped a POINT to global types.** `partial >70` meant "globally
+    partial, and over 70% here", so it returned 2 results and excluded 2017-08-21 — a 100% partial
+    at St. Louis and the single most interesting answer. Now 361 results, 2017 included. A point is
+    not ambiguous; local always. **A COUNTRY keeps the old behaviour** and that is deliberate: a
+    country is an area, so "what it saw" needs defining, and `chile total >50` must still mean "a
+    total eclipse, of which Chile got at least 50%". All 66 country assertions unchanged.
+  - **⚠ My own regression, fixed here:** the new scroll-to-today used `offsetTop`, which is
+    measured from the nearest POSITIONED ancestor rather than the list, so it overshot — the next
+    eclipse was 2027 and the list opened on 2029. Now uses the difference of two
+    `getBoundingClientRect().top` values, which is exact wherever the positioning context sits.
+  - `tools/checks/test_search_types.js` is new and permanent: 12 assertions writing the rule down,
+    including that the icon expression in `search-list.js` still reads `local_type` and that icon
+    counts equal filter counts. Both bugs would have been caught the day they were written.
+- **2026-08-29v** — **The "Search range" dropdown is gone, and every list now opens on the next
+  eclipse from today.**
+  - **Dropdown removed.** It was read in exactly one place and filtered the DISPLAY only — it
+    skipped no chunks and no computation (0.206 ms vs 0.058 ms), while its 1500–2500 default
+    silently hid eclipses outside that window. That was actively misleading: St. Louis has 12 total
+    eclipses and the default showed none, because the last was 1442 and the next is 2505. Typing
+    `1500-2500` does the same job and says so. Removed from `index.html`, `init.js`, `state.js`
+    (including the `sc.searchRange` localStorage key) and `search-list.js`, along with the
+    "None in 1500–2500, widen it below" message that existed only to explain it.
+  - **Dead CSS removed with it:** `.settings-row` (and label/select children) and the two
+    `.search-settings` rules — nothing in the markup or in generated HTML referenced them. ⚠ Note
+    `test_hygiene` §1 caught the follow-on: deleting a rule leaves its comment stranded, and two
+    block comments back to back is exactly what that check exists to find. It fired twice during
+    this edit and was right both times.
+  - **Every list is now anchored on today**, not just unfiltered ones. Previously `total` opened on
+    1999 BC and you scrolled for years to reach anything reachable. 250 rows of history are kept
+    above the anchor so the past is still there by scrolling up.
+  - **⚠ The list scrolls ONLY when its CONTENTS change.** `renderList()` also runs on every
+    selection — clicking a row re-renders to move the highlight — so scrolling unconditionally
+    would yank the user back to today the instant they clicked an eclipse in 1850. A signature of
+    what the list contains (length, window start, anchor, first entry, location-scan state) gates
+    it, and deliberately ignores which row is selected. Verified: first render scrolls, identical
+    re-render does not, two selections in a row do not, a new search does.
+- **2026-08-29u** — **The "Search range" control never made searching faster; the label said it
+  did.** `searchRange` is read in exactly ONE place, `search-list.js` line ~23, where it filters
+  the list before display. It does not skip a single chunk or avoid a single computation — the
+  location scan walks all 50 chunks and evaluates all 11,898 eclipses whatever the setting. The
+  saving it does make is 0.206 ms versus 0.058 ms per render. Old text: "Smaller ranges search
+  faster." Now: "Narrower ranges keep the list to the era you care about — every eclipse is
+  searched either way." A comment at the filter site records the same thing so the next person does
+  not go looking for the optimisation that was never there. Making the range REAL (skipping chunks)
+  is the TODO item "Scan ignores non-location filters", still open and still the risky one.
+- **2026-08-29q** — **"No eclipses match" now says when the DATE RANGE did the filtering — and only
+  when widening would actually help.** Found in use: searching a location, then adding `total`,
+  emptied the list. Nothing was broken — St. Louis has 12 total eclipses but the last was 1442 and
+  the next is 2505, so every default range shows none — but the message blamed the filter the user
+  had just typed rather than the range control they had not touched.
+  - Now reads "None in 1500–2500. 10 outside this range — widen it above."
+  - **⚠ The widest option is `all`, and it has NO entry in `RANGES`** — it applies no restriction
+    at all, which is easy to miss because the other three do. A first attempt treated `twomill`
+    (−1000..3000) as the ceiling and under-reported by 2 for St. Louis, whose oldest totals are at
+    −1897 and −1840: the message promised 10 and switching to All produced 12. Because `all` is
+    unrestricted, ANYTHING the current range excludes is reachable, so the count is simply the
+    unrestricted match count. When no restriction is in force we are already at the widest and the
+    plain wording is used. `RANGES` was hoisted out of the `!currentFilter.years` block so the
+    empty-list branch can see it. The extra filter pass runs only when the list is already empty.
+  - ⚠ Two OTHER things this investigation established, both NOT bugs, recorded so they are not
+    re-investigated: (a) 2017-08-21 shows **partial** for "st. louis" because Natural Earth pins
+    the city at 38.6273/−90.1979, which is **3.4 km north** of that eclipse's northern limit —
+    Tower Grove Park, 2.5 km further south, is correctly total at 35.8 s. A city is one point and
+    the 2017 umbra edge cut straight through this one. (b) The eclipse maths was cross-checked
+    against published durations while looking into it: Carbondale 157 s (2m38s), Hopkinsville
+    160 s (2m40s), Nashville 115 s (1m55s).
+- **2026-08-29p** — **The location scan was O(n²). 232 ms → 65 ms, five lines.** For every eclipse
+  that passed the visibility test, `scanLocation()` walked all 11,898 index entries from the start
+  to find its date — **10,152,824 comparisons per scan**, and 72% of the scan's total time. Now a
+  date-keyed map built once per scan (1,697 lookups).
+  - Safe because year/month/day is unique: 11,898 entries, 11,898 distinct keys, checked across the
+    whole catalogue. No two solar eclipses share a date.
+  - **Proven:** the result list — dates, cat_no, local type, magnitude, obscuration — hashed before
+    and after at twelve locations spanning both poles, the equator, Tokyo, Ushuaia and Reykjavík.
+    Identical at all twelve.
+  - This was NOT in the TODO. The TODO's "scan ignores non-location filters" item is a different,
+    larger win and remains open.
+  - **⚠ `f` (the parsed search filters) is still deliberately unused** and now carries a comment
+    saying so. Using it is the next optimisation — "2026-2030 total" would need 1 chunk instead of
+    50, effectively instant — but it is riskier than it looks: the scan is currently slow and
+    CORRECT, and a filter mistake makes eclipses vanish from results with nothing to signal it.
+    Wants its own build and a result-set diff across a few hundred query shapes.
 - **2026-08-29o** — **Renamed "Sun Track" to "Sky Tracker" throughout, and documented the feature.**
   The old name described only half of what the panel does now.
   - Renamed in the panel heading, both "unavailable" messages, the manual, and the `test_details`
