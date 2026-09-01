@@ -301,6 +301,61 @@ function refT0(rec) {
   return t0;
 }
 
+  /**
+   * Sun altitude in degrees, unrounded.
+   *
+   * sunAltAz rounds to 0.1 deg, which near the horizon is about a minute of
+   * time — too coarse to bisect a rise or set against.
+   */
+  function sunAltRaw(rec, t, lat, lonWest, alt, dT_s) {
+    var o   = fundamentalArgs(rec, t, lat, lonWest, alt, dT_s);
+    var phi = lat * DEG, H = o.H * DEG, dec = o.d * DEG;
+    var s   = Math.sin(phi)*Math.sin(dec) + Math.cos(phi)*Math.cos(dec)*Math.cos(H);
+    return Math.asin(Math.max(-1, Math.min(1, s))) / DEG;
+  }
+
+  /**
+   * The stretch of this eclipse during which the Sun is above the horizon here.
+   *
+   * An eclipse is only an eclipse to someone who can see it, so a phase that
+   * arrives after the Sun has set did not happen for this observer. At the two
+   * ends of every path the shadow crosses the terminator, and there the Sun can
+   * set (or rise) part way through: at 64.5S 66.5W on 1646-07-12 the Sun set 90%
+   * covered and totality followed underground.
+   *
+   * Returns the visible window and which end, if either, was cut short by the
+   * horizon. Null if the Sun is down for the whole eclipse.
+   *
+   * @returns {?{lo:number, hi:number, cutLo:boolean, cutHi:boolean}}
+   */
+  function visibleWindow(rec, lat, lonWest, alt, dT_s, tC1, tC4) {
+    if (tC1 === null || tC4 === null || tC4 <= tC1) return null;
+    function up(t) { return sunAltRaw(rec, t, lat, lonWest, alt, dT_s) > 0; }
+
+    var upLo = up(tC1), upHi = up(tC4);
+    if (upLo && upHi) return { lo: tC1, hi: tC4, cutLo: false, cutHi: false };
+
+    /* Find a moment in between with the Sun up. The altitude turns over at most
+       once across an eclipse's few hours, so a modest scan cannot miss it. */
+    var inside = null;
+    for (var k = 1; k < 240; k++) {
+      var t = tC1 + (tC4 - tC1) * k / 240;
+      if (up(t)) { inside = t; break; }
+    }
+    if (inside === null) return null;          /* Sun down throughout */
+
+    function edge(a, b) {                      /* a up, b down -> crossing */
+      for (var i = 0; i < 60; i++) {
+        var m = (a + b) / 2;
+        if (up(m)) a = m; else b = m;
+      }
+      return a;
+    }
+    var lo = upLo ? tC1 : edge(inside, tC1);
+    var hi = upHi ? tC4 : edge(inside, tC4);
+    return { lo: lo, hi: hi, cutLo: !upLo, cutHi: !upHi };
+  }
+
 /**
    * Compute full local eclipse circumstances for an observer.
    *
@@ -318,6 +373,28 @@ function refT0(rec) {
     var tMax  = findMaximum(rec, lat, lonWest, alt, dT_s);
     var oMax  = fundamentalArgs(rec, tMax, lat, lonWest, alt, dT_s);
     var mDist = Math.sqrt(oMax.u*oMax.u + oMax.v*oMax.v);
+
+    if (mDist >= Math.abs(oMax.L1p)) return { visible: false };
+
+    /* Clip to what was above the horizon. Durations and contacts describe what
+       an observer could watch, so the Sun setting part way through ends the
+       eclipse here — and if the umbra arrived after that, this is a partial
+       eclipse at this place, whatever the geometry says. Everything below is
+       computed from the clipped maximum, so type, magnitude, obscuration and
+       contacts stay consistent with each other. Observers who see the whole
+       eclipse are unaffected: for them the window is the eclipse. */
+    var pC1 = findContact(rec, tMax, lat, lonWest, alt, dT_s, false, -1);
+    var pC4 = findContact(rec, tMax, lat, lonWest, alt, dT_s, false, +1);
+    var win = visibleWindow(rec, lat, lonWest, alt, dT_s, pC1, pC4);
+    if (!win) return { visible: false };
+
+    var cutBy = win.cutLo ? 'sunrise' : (win.cutHi ? 'sunset' : null);
+    if (tMax < win.lo || tMax > win.hi) {
+      tMax  = (tMax < win.lo) ? win.lo : win.hi;
+      oMax  = fundamentalArgs(rec, tMax, lat, lonWest, alt, dT_s);
+      mDist = Math.sqrt(oMax.u*oMax.u + oMax.v*oMax.v);
+      if (mDist >= Math.abs(oMax.L1p)) return { visible: false };
+    }
 
     /* Eclipse type for this observer */
     var type;
@@ -402,7 +479,10 @@ function refT0(rec) {
     var sun = sunAltAz(oMax, lat);
 
     /* Eclipse is not observable if the Sun is below the horizon */
-    if (sun.alt <= 0) return { visible: false };
+    /* The window test above already established that some of this eclipse was
+       above the horizon, and tMax now sits inside that window, so this guard
+       only ever fires on a rounding edge. Kept as a backstop. */
+    if (sun.alt < 0) return { visible: false };
 
     /* Contact times (TDT offsets from t0) */
     /* Central = the observer is inside the umbra or antumbra, which is exactly
@@ -413,6 +493,16 @@ function refT0(rec) {
     var tC4 = findContact(rec, tMax, lat, lonWest, alt, dT_s, false, +1);
     var tC2 = isCentral ? findContact(rec, tMax, lat, lonWest, alt, dT_s, true, -1) : null;
     var tC3 = isCentral ? findContact(rec, tMax, lat, lonWest, alt, dT_s, true, +1) : null;
+
+    /* Contacts keep their true times: C4 below the horizon is still a real
+       event, and the sky track draws that part of the Sun's arc. It is the
+       DURATIONS that stop at the horizon, because a duration is how long there
+       was something to watch. So the visible window is kept separately and only
+       the durations are measured against it. */
+    var vLo = (tC1 === null || tC1 < win.lo) ? win.lo : tC1;
+    var vHi = (tC4 === null || tC4 > win.hi) ? win.hi : tC4;
+    var vC2 = (tC2 !== null && tC2 < win.lo) ? win.lo : tC2;
+    var vC3 = (tC3 !== null && tC3 > win.hi) ? win.hi : tC3;
 
     /* Convert TDT offset to UT: UT = t0 + t − ΔT/3600 */
     var _t0 = refT0(rec);
@@ -484,6 +574,10 @@ function refT0(rec) {
 
     return {
       visible:    true,
+      /* null normally; 'sunset' or 'sunrise' when the horizon cut this eclipse
+         short here, so callers can say "90% at sunset" rather than presenting a
+         clipped duration as the whole event. */
+      cutBy:      cutBy,
       type:       type,
       localPhase: localPhase,
       mag:        Math.round(mag * 100000) / 100000,
@@ -494,8 +588,11 @@ function refT0(rec) {
       C2:         { ut: toUT(tC2), sun: getSun(tC2), v: getV(tC2, true) },
       C3:         { ut: toUT(tC3), sun: getSun(tC3), v: getV(tC3, true) },
       C4:         { ut: toUT(tC4), sun: getSun(tC4), v: getV(tC4) },
-      durCentral: tC2 !== null && tC3 !== null ? (tC3 - tC2) * 3600 : null,
-      durPartial: tC1 !== null && tC4 !== null ? (toUT(tC4) - toUT(tC1)) * 3600 : null
+      /* Measured over the visible window, not the geometric one: at Sad Hill on
+         2026-08-12 the Sun set with the eclipse still in progress, so there was
+         100 minutes to watch even though C4 came later, underground. */
+      durCentral: vC2 !== null && vC3 !== null ? (vC3 - vC2) * 3600 : null,
+      durPartial: (toUT(vHi) - toUT(vLo)) * 3600
     };
   }
 

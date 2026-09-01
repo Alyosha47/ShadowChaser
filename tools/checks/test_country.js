@@ -104,12 +104,24 @@ ok('and lifted to 100%, not the sampled 95%', ukRow && ukRow.osc === 100,
 
 console.log('\n5. an obscuration filter WIDENS "total" to the global type');
 /* Same rule cities already follow: with a range present, "total" means total
-   SOMEWHERE and the range says what the country actually got. So Italy — 95%
-   partial in 1999 — must now appear. */
+   SOMEWHERE and the range says what the country actually got. So Italy — a
+   deep partial in 1999, not total — must now appear.
+
+   The figure here was 95%, taken from the old 3-degree sampling grid. Italy's
+   real peak is 98.4%, at its north-eastern tip by the Austrian border, close
+   to but outside the southern limit of totality. The table now records that,
+   so the exclusion case has to sit above it rather than at 98. */
 var it2 = search('italy total >90').results;
 ok('italy total >90 INCLUDES 1999-08-11', has(it2, 1999, 8, 11));
-var it3 = search('italy total >98').results;
-ok('italy total >98 EXCLUDES it (95% is not 98)', !has(it3, 1999, 8, 11));
+/* Italy was the exclusion case here, on a figure of 95% taken from the old
+   3-degree sampling grid. Its real peak is 98.4%, at the north-eastern tip by
+   the Austrian border, just outside the southern limit of totality — and 98.4%
+   rounds into the top bucket, which the search reads as 100%. So no threshold
+   can exclude Italy any more. Jordan, a clear 85%, tests the same thing
+   without sitting on a bucket edge. */
+var it3 = search('jordan total >90').results;
+ok('jordan total >90 EXCLUDES 1999-08-11 (85% is not 90)', !has(it3, 1999, 8, 11));
+ok('jordan total >80 INCLUDES it', has(search('jordan total >80').results, 1999, 8, 11));
 
 console.log('\n6. annular is not total');
 /* 2023-10-14 crossed the USA as an ANNULAR. It must answer to "annular" and
