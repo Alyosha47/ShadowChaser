@@ -81,6 +81,7 @@ function renderList() {
           + '</div>';
   }
 
+  var prevScroll = list.scrollTop;
   list.innerHTML = html;
 
   /* Put the next eclipse from today at the top.
@@ -102,6 +103,14 @@ function renderList() {
        regardless of where the positioning context happens to be. */
     if (a) list.scrollTop += a.getBoundingClientRect().top - list.getBoundingClientRect().top;
     else   list.scrollTop = 0;
+  } else {
+    /* Same contents, so no re-anchoring — but innerHTML above has just reset
+       scrollTop to 0, which threw the user to the top of the list on every
+       re-render that did not change what the list holds (moving the selection
+       highlight, or country data arriving a moment after the first paint).
+       With a country search that top is 250 rows of history back, so "france"
+       opened on 1118 CE instead of today. Put the scroll back where it was. */
+    list.scrollTop = prevScroll;
   }
 }
 

@@ -211,6 +211,15 @@ The data-key and safety-rail traps are renderer-agnostic.)*
 ---
 
 ## BUGS — open (detail; status in handoff)
+- ~~The country index marks far too many countries "central"~~ FIXED 2026-08-30a. Cause: the two
+  umbra limits arrive in different longitude conventions, so `un.concat(us.reversed())` made a
+  polygon ringing the planet. Generator fixed (`bandWindows()`, both copies); shipped index
+  repaired, central entries 1,918 → 367. Andorra now 60% not-central against a computed 59.8%.
+- **⚠ STILL WRONG: two eclipses claim 55 and 42 central countries.** Their central paths ENCIRCLE
+  A POLE. A corridor that wraps 360 deg of longitude around the pole cannot be represented as a
+  simple lon/lat polygon, so no amount of unwrapping fixes it — it needs a spherical containment
+  test (or an explicit polar cap case). 46 eclipses claim 26-40 central, down from 63; some of
+  those are probably the same thing in milder form.
 - **Two eclipses with a missing umbral sliver — WON'T FIX for now; documented so it isn't
   rediscovered.** `332-03-13` (cat 5554) and `2485-12-07` (cat 10668), both type `A+`, are the
   only two central eclipses in all 11,898 that produce NO umbral limb at all. Verified against

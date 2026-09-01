@@ -197,8 +197,12 @@ var SC_ICON = {
      2026-08-23: this is what used to be the tshirt icon; SC_ICON key and the
      poster/tshirt.js machinery it triggers are untouched — ask if you want
      those renamed too. */
-  tshirt:   '<path d="M10 15.4l-2.5-1.2l-5 2.5v-10.8l5-2.5l5 2.5l5-2.5v6.2"/>'
-          + '<path d="M7.5 3.3v10.8"/><path d="M12.5 5.8v4.6"/>',
+  /* Three panels, folded concertina: left and right panels hang low, the
+     middle one rides high. The outline must close — the previous version ran
+     up the left side, across the top and stopped halfway down the right,
+     leaving the shape visibly open on that side. */
+  tshirt:   '<path d="M2.5 5.9 7.5 3.4l5 2.5 5-2.5v10.7l-5 2.5-5-2.5-5 2.5z"/>'
+          + '<path d="M7.5 3.4v10.7"/><path d="M12.5 5.9v10.7"/>',
   pickNone: '<rect x="3.6" y="3.6" width="12.8" height="12.8" rx="2.6"/>',
   pickSome: '<rect x="3.6" y="3.6" width="12.8" height="12.8" rx="2.6"/>'
           + '<path d="M6.9 10h6.2"/>',
@@ -437,7 +441,12 @@ function scLogGoto(key) {
     var f      = parseSearch(search.value);
     search.value = filterToString(Object.assign({}, f, {
       coords: { lat: e.loc[1], lon: e.loc[0] },
-      city:   null
+      city:   null,
+      /* country and cityQualifier share the location slot with coords, and
+         filterToString prefers them, so leaving either in place silently
+         drops the pin and the goto lands on the eclipse with no location. */
+      country: null,
+      cityQualifier: null
     }));
     onSearchChanged(true);
     if (typeof lookupElevationAndTz === 'function') {
