@@ -290,7 +290,16 @@ The data-key and safety-rail traps are renderer-agnostic.)*
     indicator is sharp, the cloud one is regional. Do not present them as equally precise.
 - Thumbnail path map per list row (small SVG) — MOBILE ONLY (not desktop).
 - Century scroller on the mobile right edge.
-- KMZ download.
+- ~~KMZ download.~~ **DONE 2026-09-02b** — `js/kmz.js`, globe button in the details panel.
+  One eclipse per file (`YYYYMMDD_TSE.kmz`), path + penumbral/terminator limits + horizon curve +
+  shadow footprints + greatest eclipse, and a circumstances balloon every 100 km along the
+  centreline, all precomputed so the file works with no signal. See HANDOFF §10B for the gotchas.
+  - **Deliberately NOT live.** Jubier computes circumstances for the view centre on demand via a
+    `NetworkLink`; that needs a server, and Bluehost has no Node (checked). If a Cloudflare Worker
+    ever exists, `eclipse.js` runs on it unmodified and the NetworkLink is ~10 lines.
+  - Open if wanted later: dots across the umbra WIDTH as well as along the centreline (`KMZ_DOT_KM`
+    is a constant, not a rewrite), and a dark outline under each line if orange still fights the
+    basemap — KML has no stroke-outline, so it means drawing each curve twice.
 
 ## FEATURES — MEDIUM
 - **#F4 "Cache this spot" — offline tiles around the pin.** With a location and an eclipse
@@ -612,10 +621,10 @@ In order, and **report what you measure before writing any code**:
     fire before `selectNextEclipse` completes. Fix: wire selection before subscribers, or
     buffer events until init completes.
   - Search input still DOM-driven (not on AppState).
-  - `map.js` still large/single-file (split deferred until a bug motivates it). Still carries
-    dead `corridorToPolygonData` (harmless; remove only as part of a real verified refactor).
-    Also `sunArrowImage()` is now unused (billboard arrow replaced by surface geometry) —
-    remove in the next map.js cleanup pass.
+  - `map.js` still large/single-file (split deferred until a bug motivates it). The two dead
+    functions once listed here, `corridorToPolygonData` and `sunArrowImage()`, are GONE —
+    both went with the MapLibre renderer restore (b53dfc1). Verified 2026-09-02: no
+    references anywhere in the tree. Nothing to clean up in a future map.js pass.
   - `AppState.on()` — **now has real subscribers** (`js/map.js` redraws, `js/cloud-average.js`).
     No longer speculative; leave it.
   - **Connectivity state** — now a real subsystem (post 2026-07-29 rewrite): active probe (3 s

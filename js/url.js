@@ -145,6 +145,11 @@ function pushState() {
   if (q) parts.push('q=' + encodeURIComponent(q));
   var tz = getTz();
   if (tz !== 'auto') parts.push('tz=' + encodeURIComponent(tz));
+  /* Cloud overlay, so a copied URL carries what is actually on the map. Omitted
+     when the overlay is off, which is also what makes turning it off stick: the
+     next pushState simply stops emitting the key. */
+  var cm = (window.CloudBar && window.CloudBar.mode) ? window.CloudBar.mode() : null;
+  if (cm) parts.push('cloud=' + cm);
   var hash = parts.length ? '#' + parts.join('&') : '';
   /* Use replaceState to avoid polluting browser history on every keystroke */
   /* When hash is empty, compare against '' (current hash) — browser may report '' or '#'. */
@@ -155,7 +160,7 @@ function pushState() {
 }
 
 /**
- * Parse the URL hash and return { catNo, q, tz } — any may be null.
+ * Parse the URL hash and return { catNo, q, tz, cloud } — any may be null.
  */
 function readHash() {
   var hash = window.location.hash.slice(1);
@@ -169,8 +174,70 @@ function readHash() {
     if (k === 'e')  out.catNo = parseInt(v, 10);
     if (k === 'q')  out.q     = v;
     if (k === 'tz') out.tz    = v;
+    if (k === 'cloud') out.cloud = v;
+    if (k === 'shadow') out.shadow = v;
   });
   return out;
+}
+
+/* Cloud overlay from a link. CloudBar.setMode() is the single entry point and
+   already owns enabling, tearing the other modes down and redrawing the strip —
+   this only decides WHEN to call it.
+   TIMING: on a cold load restoreFromHash() runs as soon as index.json lands,
+   which can beat the map's `load` event. Cloud._enable() would then set its own
+   `_on` flag and bail out of _render() on !mapReady, and nothing re-renders the
+   overlay afterwards — the button would read ON over an empty map. So wait for
+   mapReady when it isn't ready yet. AppState.on() has no removal, and mapReady
+   goes false→true again if the map is ever re-initialised, so the listener
+   disarms itself. */
+var CLOUD_MODES = ['avg', 'now', 'photo'];
+function applyCloudMode(mode) {
+  if (CLOUD_MODES.indexOf(mode) < 0) return;   /* an unknown mode is not a mode */
+  var done = false;
+  function go() {
+    if (done) return;
+    done = true;
+    if (window.CloudBar && window.CloudBar.setMode) window.CloudBar.setMode(mode);
+  }
+  if (mapReady) go();
+  else AppState.on('mapReady', function (ready) { if (ready) go(); });
+}
+
+/* Terrain shadows from a link: `shadow=<zoom>` means ARM THEM AND GO THERE.
+   enableShadows() only arms — below SHADOW_MIN_ZOOM (6) it shows the "zoom in"
+   hint and no shadows — and the link's own recentre frames the whole path, which
+   is far below that. So the zoom is part of the instruction, not a separate one.
+   THREE THINGS FIGHT FOR THE CAMERA and this is the order that wins:
+     - updateMapState() re-frames on a new eclipse, but only when the map is
+       VISIBLE, and on mobile that can be after this runs (the framing is "owed"
+       until the Map tab opens). So wait for a visible, ready map rather than
+       flying at a hidden container.
+     - Claiming _framedEntry stops the re-frame from pulling the camera straight
+       back out to the resting zoom. tabs.js additionally skips its _scRecenter()
+       for these links, which would have cleared that claim.
+     - shadowOnEclipseChange() disarms on a new eclipse, so arming happens on
+       moveend, after the selection and the camera have both settled. */
+function applyShadowLink(zoom) {
+  var z = parseFloat(zoom);
+  if (!isFinite(z)) return;
+  var done = false;
+  function go() {
+    if (done || !window.map || !mapReady) return;
+    if (typeof isMapVisible === 'function' && !isMapVisible()) return;   /* try again on the next event */
+    var c = (typeof parseCoords === 'function') ? parseCoords() : null;
+    if (!c) return;
+    done = true;
+    if (typeof updateMapState === 'function') updateMapState._framedEntry = selectedEntry;
+    map.once('moveend', function () {
+      if (typeof enableShadows === 'function') enableShadows();
+    });
+    map.flyTo({ center: [c.lon, c.lat], zoom: z, duration: 1200 });
+  }
+  go();
+  if (!done) {
+    AppState.on('mapReady', go);
+    AppState.on('activeTab', go);   /* mobile: the Map tab is what makes it visible */
+  }
 }
 
 /* Auto-update URL when selection changes. Other triggers (search input, tz,
@@ -223,6 +290,26 @@ function restoreFromHash() {
   updateHeaderSelection();
   renderList();
   computeLocal();
+
+  /* Last, because the Average layer draws for the SELECTED eclipse and returns
+     early without one.
+     THE HASH DEFINES THE OVERLAY STATE, always — not only when it names an
+     overlay. An earlier version cleared the other overlay only for links that
+     carried `cloud=` or `shadow=`, on the reasoning that a plain link had no
+     opinion; the result was that cloud cover switched on by the "cloud" link
+     then rode along on top of every subsequent link, including the ones that
+     rotate to somewhere else entirely. A deep link is a fresh start.
+     Only hash navigation reaches here — pushState uses replaceState, which
+     fires no hashchange — so this never fights a toggle the user just pressed. */
+  if (!h.cloud && window.CloudBar && window.CloudBar.mode && window.CloudBar.mode()) {
+    window.CloudBar.setMode(null);
+  }
+  if (!h.shadow && typeof disableShadows === 'function' &&
+      typeof _shadowArmed !== 'undefined' && _shadowArmed) {
+    disableShadows();   /* guarded: it also forces the globe projection back on */
+  }
+  if (h.cloud)  applyCloudMode(h.cloud);
+  if (h.shadow) applyShadowLink(h.shadow);
 }
 
 /* Re-apply state when the user edits the URL hash directly. pushState uses

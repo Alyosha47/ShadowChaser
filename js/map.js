@@ -25,12 +25,15 @@ var _deckLayers = null; /* last layers array pushed to the overlay */
      cities.geojson.gz      — optional (Point features; populated places)
      rivers.geojson.gz      — optional (LineString/MultiLineString)
      lakes.geojson.gz       — optional (Polygon/MultiPolygon)
+     states.geojson.gz      — optional (LineString/MultiLineString; admin-1
+                              borders, drawn from zoom 4 up)
 
    Schemas:
      cities  : Feature properties may include `name` (string) and
                `rank` or `pop_max` (number; bigger = more important).
                Used to filter labels at low zoom.
      rivers  : no properties needed
+     states  : no properties needed
      lakes   : no properties needed
 */
 
@@ -305,10 +308,12 @@ function loadBasemapData() {
     fetchGz(base + 'lakes.geojson.gz?v='     + BUILD),
     fetchGz(base + 'rivers.geojson.gz?v='    + BUILD),
     fetchGz(base + 'cities.geojson.gz?v='    + BUILD),
+    fetchGz(base + 'states.geojson.gz?v='    + BUILD),
   ]).then(function (r) {
     basemapData = {
       land:      r[0], countries: r[1],
       lakes:     r[2], rivers:    r[3], cities: r[4],
+      states:    r[5],
     };
     /* Cities became available — any pending city-name token in the search
        input couldn't resolve at first parse. Re-run the search now so
@@ -529,6 +534,25 @@ function buildLocalStyle(data) {
     sources.countries = { type: 'geojson', data: seamFreeLines(data.countries), tolerance: 0.5 };
     layers.push({ id: 'countries-line', type: 'line', source: 'countries',
       paint: { 'line-color': BORDER, 'line-width': 0.6, 'line-opacity': 0.8 } });
+  }
+
+  /* Subnational borders (admin-1: states, provinces, oblasts). The file was
+     precached in sw.js from the start but nothing ever drew it. It earns its
+     150 kB at high zoom, where country outlines alone leave the map blank —
+     which is exactly where field use puts you.
+     minzoom 4 keeps the resting globe clean; below that these are noise. They
+     read as SUBORDINATE to national borders: same hue, thinner, fainter, so the
+     hierarchy survives at a glance.
+     NOT passed through seamFreeLines(): that walks Polygon/MultiPolygon rings
+     only, and these are LineStrings like the rivers — it would hand back an
+     EMPTY collection and the layer would silently draw nothing. Rivers ship raw
+     for the same reason and carry the same antimeridian exposure.
+     Geometry only, no properties, so nothing here can be labelled. */
+  if (data.states) {
+    sources.states = { type: 'geojson', data: data.states, tolerance: 0.5 };
+    layers.push({ id: 'states-line', type: 'line', source: 'states', minzoom: 4,
+      paint: { 'line-color': BORDER, 'line-width': 0.4,
+               'line-opacity': ['interpolate', ['linear'], ['zoom'], 4, 0, 6, 0.45] } });
   }
 
   if (data.rivers) {
@@ -1029,8 +1053,20 @@ function updateMapState() {
     var needsFrame = (selectedEntry !== updateMapState._framedEntry);
     if (needsFrame && isMapVisible()) {
       var ctr = null;
-      if (coords) {
-        ctr = [coords.lon, coords.lat];
+      /* RE-READ THE PIN HERE. The `coords` above is captured when updateMapState
+         is CALLED, but the camera runs a chunk fetch later — and restoreFromHash
+         assigns selectedEntry (an AppState property, so it fires a redraw) BEFORE
+         it calls onSearchChanged, which is what refreshes currentFilter. So a deep
+         link's first updateMapState carries the PREVIOUS link's coordinates in its
+         closure. It also registered its .then first, so it wins the framing race,
+         consumes _framedEntry and flies to the old pin, leaving the later call
+         with the correct coordinates nothing to do. That is the "globe is one step
+         behind" bug: the pin moved to Ouagadougou while the globe rotated to where
+         the last pin had been. The marker code below still uses the captured
+         `coords`, which is correct — it runs synchronously in the same turn. */
+      var pin = parseCoords();
+      if (pin) {
+        ctr = [pin.lon, pin.lat];
       } else if (ep.ge && ep.ge[0] != null) {
         ctr = [ep.ge[0], ep.ge[1]];
       } else {

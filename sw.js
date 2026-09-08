@@ -44,7 +44,7 @@ const CORE = [
   ...['tz_lookup','format','state','tabs','search-cities','search-countries',
       'search-parser','eclipse','starmap','starmap-ui',
       'search-ui','search-list','local','details','tshirt','userlog','share','map',
-      'shadow-layer','shadow-ui','url','init',
+      'shadow-layer','shadow-ui','url','kmz','init',
       /* The four cloud modules. NOTE these are listed as BARE NAMES and mapped to
          paths below — a rename that only rewrites 'cloud.js' in the tree does not
          touch them, and the failure is silent until someone goes offline. Renamed

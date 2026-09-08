@@ -217,9 +217,14 @@ document.addEventListener('click', function (ev) {
   var a = ev.target.closest && ev.target.closest('a[href*="#e="]');
   if (!a) return;
   /* Move the user to the results. Desktop has its OWN sidebar tab system — driving only
-     switchTab() left desktop users staring at the About text. */
+     switchTab() left desktop users staring at the About text.
+     A link that switches an OVERLAY on is about the map, not the list: on mobile the
+     search tab would hide the very thing the link turned on. Desktop keeps the sidebar
+     on Search either way — the map is always visible there. */
+  var href  = a.getAttribute('href');
+  var toMap = href.indexOf('cloud=') >= 0 || href.indexOf('shadow=') >= 0;
   setTimeout(function () {
-    if (typeof switchTab === 'function') switchTab('search');
+    if (typeof switchTab === 'function') switchTab(toMap ? 'map' : 'search');
     if (typeof switchSidebarTab === 'function') switchSidebarTab('search');
   }, 0);
 
@@ -228,7 +233,11 @@ document.addEventListener('click', function (ev) {
      while `selectedEntry` was still the PREVIOUS eclipse — the camera flew to the last
      eclipse while the new path was drawn. That is the "always one step behind" bug.
      Listening for hashchange guarantees the new selection exists first. Our listener is
-     registered here, after url.js's, so it runs after restoreFromHash(). */
+     registered here, after url.js's, so it runs after restoreFromHash().
+     A `shadow=` link is EXEMPT: it flies to the pin at its own zoom, and recentring
+     would clear the framing claim and pull the camera back out to see the whole path,
+     which is below the zoom shadows need. */
+  if (href.indexOf('shadow=') >= 0) return;
   window.addEventListener('hashchange', function once() {
     window.removeEventListener('hashchange', once);
     setTimeout(function () { if (window._scRecenter) window._scRecenter(); }, 0);

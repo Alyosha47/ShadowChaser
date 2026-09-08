@@ -144,10 +144,31 @@ function renderData(rec, _tz, _lat, _lon) {
   +   ' 0 0 1.4-1.4V9.9A1.4 1.4 0 0 0 15 8.5h-1.6"/>'
   + '</svg>';
 
+  /* Graticuled globe: what the file IS, rather than what the button does.
+     A download tray would have been the safe pairing with the share icon next
+     to it, but every other glyph in this panel names its content, and at 20px a
+     meridian-and-parallel globe reads instantly as "Google Earth".
+     Four strokes is the ceiling here — the limb, one meridian ellipse, the
+     equator, and two parallels. More lines turn to grey mush at this size, so
+     the parallels sit at ±3.2 where the limb is still wide enough to hold them
+     apart. */
+  var kmzIcon =
+    '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor"'
+  + ' stroke-width="1.3" stroke-linecap="round">'
+  + '<circle cx="10" cy="10" r="7.3"/>'
+  + '<ellipse cx="10" cy="10" rx="3.3" ry="7.3"/>'
+  + '<path d="M2.7 10H17.3"/>'
+  + '<path d="M4.1 6.2h11.8"/>'
+  + '<path d="M4.1 13.8h11.8"/>'
+  + '</svg>';
+
   html = '<div class="detail-title">'
        + '<span class="detail-title-icon">' + titleIcon + '</span>'
        + '<span class="detail-title-date">' + fmtDate(selectedEntry) + '</span>'
        + '<span class="detail-actions">'
+       +   '<button class="icon-btn" onclick="downloadKmz()"'
+       +     ' title="Download KMZ for Google Earth" aria-label="Download KMZ for Google Earth">'
+       +     kmzIcon + '</button>'
        +   '<button class="icon-btn" onclick="shareEclipse()"'
        +     ' title="Share this eclipse" aria-label="Share this eclipse">'
        +     shareIcon + '</button>'

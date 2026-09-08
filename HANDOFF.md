@@ -268,9 +268,11 @@ ignore rule obsolete.)*
 ### Unverified / unresolved
 - **`addPin` gap.** The Cesium renderer exposed `addPin`; the MapLibre renderer does not — confirmed,
   no occurrence anywhere in `js/`. Never investigated: it is not known whether anything wants it.
-- **The dead `MAP_JS_BUILD` guard.** `index.html` (~line 624) tests `window.MAP_JS_BUILD` to warn
-  about a stale `map.js`, but nothing sets it, so the warning can never fire. Still present. Harmless
-  — but `test_hygiene.js`'s build-stamp check now does this job properly, so it is deletable.
+- **The dead `MAP_JS_BUILD` guard.** REMOVED 2026-09-02. `index.html` tested `window.MAP_JS_BUILD`
+  to warn about a stale `map.js`; nothing ever set it, so the warning could not fire. The SW cache
+  name is keyed to BUILD and `test_hygiene.js` checks the stamps, so both jobs are covered. Do not
+  reinstate it: making it real means `map.js` declaring its own build, which either breaks the
+  one-line BUILD rule or needs another stamp in `set_build.js` — for a canary covering 1 file of 28.
 - **Cesium ion token.** No token pattern matches anywhere on the `maplibre` branch (`spikes/`, where
   it supposedly lived, is gone). But Cesium still exists in the user's working copy and the `cesium`
   branch is untested — before that branch is ever published, restrict the token to
@@ -455,6 +457,8 @@ ShadowChaser/
     ├── shadow-ui.js     TERRAIN-SHADOW INTEGRATION — toggle, ruler scrubber, 3-way time sync,
     │                    projection flip, online gating. setShadowTime owner. SHADOW_TINT.
     ├── share.js        share modal/sheet (tabstop format)
+    ├── kmz.js          KMZ export for Google Earth (§10B) — hand-rolled ZIP,
+    │                   precomputed per-dot circumstances, embedded icon
     ├── state.js        chunkCache, AppState get/set/on + window forwarding shims
     ├── tabs.js         switchTab, switchSidebarTab, TZ_ZONES, getTz/setTz, sidebar drag-resize (§11.8)
     ├── tshirt.js       poster generator, filename unchanged — display name is "Poster" (§11.4)
@@ -1984,6 +1988,87 @@ from scratch.**
 
 ---
 
+## 10B. KMZ EXPORT (`js/kmz.js`) — SHIPPED 2026-09-02
+
+The globe button beside share in the details panel writes one eclipse to a Google Earth file.
+**Everything is computed at download time and frozen in.** That is the whole design, and it is a
+deliberate trade against how Jubier does it.
+
+### Why there is no live "click anywhere" feature
+Jubier's KMZ carries a `NetworkLink` with `viewRefreshMode="onStop"` and
+`viewFormat="lon=[lookatLon]&lat=[lookatLat]"`. Google Earth re-fetches that URL whenever the view
+settles and **a server** computes circumstances for the view centre. That is ten lines of KML and a
+backend.
+
+We checked for the backend on 2026-09-02 and there isn't one: the site is static on Bluehost,
+`node` is absent (`which node` empty, no `/opt/cpanel/ea-nodejs*`, no `~/nodevenv`, no
+"Setup Node.js App" in cPanel). PHP cannot substitute — it has no JS engine, and emitting a page
+that loads `eclipse.js` does not help because **Google Earth is not a browser that will run it**
+(its balloon renderer is old QtWebKit with JavaScript effectively unusable for this app).
+
+**If an endpoint ever exists**, this becomes easy and nothing here has to be rewritten: a free
+Cloudflare Worker can `require('js/eclipse.js')` unmodified — it is UMD with a real
+`module.exports`, and the Alps recommendation in this session was computed by calling
+`computeEclipse` from Node against `data/besselian/*.json`. Add the `NetworkLink`, point it at the
+Worker, done.
+
+**The substitute that shipped**: a diamond every `KMZ_DOT_KM` (100 km) along the centreline, each
+with its own precomputed balloon — C1–C4, duration, sun alt/az, obscuration. Spacing is by
+DISTANCE, not degrees of longitude: 0.5° is ~55 km at the equator and ~15 km at 70°N, so a degree
+rule bunches dots exactly where paths are longest. Each balloon also links back into the app
+(`#e=…&q=…`) for anywhere between the dots.
+
+### Gotchas that cost real time
+- **`green_curve` IS A DIFFERENT SHAPE from every other curve.** Penumbra/umbra/terminator are
+  arrays of SEGMENTS; `green_curve` is a FLAT `[lon,lat]` list with `null` component delimiters
+  (`map.js` splits it the same way, ~line 1851). Fed to a segment consumer it yields
+  `undefined,undefined,0` for every vertex and Google Earth **silently draws nothing**.
+  `_kmzNormSegs()` normalises both shapes and additionally splits any >180° longitude jump, the
+  same antimeridian streak the map guards against. Verified across all 225 eclipses in
+  `paths_2001_2100`: zero malformed vertices.
+- **Curves are legitimately ABSENT per eclipse.** 1961 (9422) has no `penumbra_n` and no
+  `terminator_last`. Any consumer must tolerate empty keys rather than assume five curves.
+- **No `<Icon><href>` pointing at maps.google.com.** The obvious icon URLs are FETCHED OVER THE
+  NETWORK and render as nothing with no signal — in a file whose entire purpose is offline use. The
+  marker (`files/diamond.png`, 197 bytes, generated WHITE so `IconStyle` `<color>` can tint it per
+  style) travels INSIDE the archive, which is why `_zipFiles()` takes multiple entries.
+- **`hotSpot 0.5/0.5` on every marker style.** Google Earth anchors a custom icon at its BOTTOM
+  CENTRE — right for a pushpin whose tip is the point, wrong for a symmetrical diamond, which then
+  floats half its height above the centreline it is supposed to sit on.
+- **Times are baked, so UT is always shown.** Local time comes from `tz_lookup` + `Intl` resolved
+  PER DOT (a path crosses many zones; one offset would be wrong for most of it), but the file
+  cannot re-render itself, so UT sits beside it in every row. Before 1900 we do not pretend: tzdb
+  carries local *mean* time for those dates, so it falls back to the longitude's solar offset and
+  labels itself `LMT`.
+- **Balloon links open in Google Earth's OWN browser and the app does not render there** — old
+  QtWebKit, no V8, no WebGL: you get a bare unstyled heading and nothing else. Per Google's KML
+  reference, `target="_blank"` cannot change this: targets in HTML written directly into KML are
+  ignored and every link is treated as `_blank` already. The only lever is the user's
+  Tools → Options → General → "Show web results in external browser". Documented in the manual;
+  **do not try to fix it in code.**
+
+### Format
+KMZ is a ZIP of `doc.kml` + `files/diamond.png`, written by hand (~60 lines: CRC32 table, local
+headers, central directory, EOCD) to keep the app dependency-free. Compression is
+`CompressionStream('deflate-raw')` — available in exactly the browsers that already need
+`DecompressionStream` for path chunks, so nothing new is demanded of the browser; falls back to
+STORED entries rather than failing. Filename `YYYYMMDD_TSE.kmz`, the letter from `typeCode()`
+(T/A/H/P covers all 19 `eclipse_type` variants). ~32 kB for a 70-dot eclipse.
+
+Folders: Central path, Penumbral & terminator limits, Maximum on the horizon, Shadow footprints
+(collapsed), Circumstances, Greatest eclipse. Lines are orange except the umbra limits (red) and
+the footprints (yellow) — blue and green were tried and **vanish against Google Earth's own
+basemap**, which is nothing like this app's dark globe. **A graticule folder was built and then
+removed on request**; do not re-add it.
+
+### Not yet verified
+Everything above was verified by running the generator in Node — zip integrity (`unzip -t`), KML
+parses, PNG round-trips byte-intact, balloon contents spot-checked against `computeEclipse`. **The
+browser path has never executed**: `atob`, `CompressionStream`, the blob download and the button
+wiring. Click the button before trusting it.
+
+---
+
 ## 11. UI, FEATURES & VISUAL LANGUAGE
 
 ### 11.1 Working today
@@ -2518,6 +2603,9 @@ evidence — do not keep investigating the part they share.**
   annulars ~0.85–0.99, partials 0–1.
 - `rec.t0` is **TDT decimal hours**, not UT. `UT = t0 + t − dT/3600`; dT in seconds.
 - Obscuration is a two-circle **lens**, never a circular segment (§9.4).
+- `ep.green_curve` is a **flat [lon,lat] list with `null` delimiters**, unlike every other
+  curve in the path record (which are arrays of segments). Mixing them up draws NOTHING,
+  silently (§10B).
 - Jubier's printed **V** is a clock position (0–12); degrees = clock × 30 (§9.3).
 - `isOffline()` in `map.js` is the single connectivity owner (§7.3).
 - Strict-mode pure modules: `tz_lookup.js`, `search-parser.js`, `eclipse.js`.
@@ -2593,6 +2681,29 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-02b** — **KMZ export shipped** (§10B): globe button in the details panel writes one
+  eclipse per file, `YYYYMMDD_TSE.kmz`, with a precomputed circumstances balloon every 100 km along
+  the centreline so it works offline. No live NetworkLink — Bluehost has no Node, and the reasons
+  are recorded in §10B so nobody re-litigates it.
+- **2026-09-02a** — **The globe was "one step behind" on every deep link, and had been latently for
+  a long time.** `updateMapState()` captured `parseCoords()` at CALL time but flew the camera inside
+  a `loadPathChunk().then()`. `restoreFromHash()` assigns `selectedEntry` (an AppState property, so
+  it fires a redraw) BEFORE it calls `onSearchChanged()`, which is what refreshes `currentFilter` —
+  so a deep link's first `updateMapState` carried the PREVIOUS link's coordinates, registered its
+  `.then` first, won the framing race, consumed `_framedEntry` and flew to the OLD pin, leaving the
+  correct later call with nothing to do. The pin moved to Ouagadougou while the globe rotated to the
+  Pacific. **Fix: re-read `parseCoords()` inside the `.then`, at framing time.** The marker code
+  below still uses the captured value, which is correct — it runs in the same synchronous turn.
+  - Also: About deep links gained `cloud=` and `shadow=<zoom>`; **the hash now DEFINES the overlay
+    state**, so a link with no overlay key clears both. Safe because only hash navigation reaches
+    `restoreFromHash` (`pushState` uses `replaceState`, which fires no `hashchange`), so it can never
+    undo a toggle the user just pressed.
+  - `shadow=` links skip `_scRecenter()` and claim `_framedEntry` themselves, because terrain
+    shadows need zoom ≥ `SHADOW_MIN_ZOOM` (6) and the ordinary recentre frames the whole path.
+  - **`states.geojson.gz` is now DRAWN**, not just precached: `states-line`, minzoom 4, opacity
+    ramped 0→0.45 between z4 and z6. Raw data, NOT `seamFreeLines()` — that walks polygon rings only
+    and would hand back an empty collection for LineStrings.
+  - Dead `MAP_JS_BUILD` guard removed from `index.html` (nothing ever set it).
 - **2026-08-30a** — **FOUND IT: the country index's central-path bug was two umbra limits in two
   different longitude conventions.** `gen_country_index.js` built the corridor as
   `un.concat(us.reversed())`, but `gen_eclipse_paths` unwraps each limit along its OWN track, so a
