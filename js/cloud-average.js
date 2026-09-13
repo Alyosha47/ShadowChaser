@@ -614,9 +614,20 @@
     }
     var v0 = month(mb.m0), v1 = month(mb.m1);
     if (v0 === null && v1 === null) return null;
-    if (v0 === null) return v1 / SCALE;
-    if (v1 === null) return v0 / SCALE;
-    return (v0 * (1 - mb.w) + v1 * mb.w) / SCALE;
+    var raw = (v0 === null) ? v1
+            : (v1 === null) ? v0
+            : (v0 * (1 - mb.w) + v1 * mb.w);
+    /* CLAMPED, and it is not belt-and-braces. The generator packs cloud fraction
+       into 0..250 and reserves 255 for no-data, but the WebP is written LOSSY
+       (encode_cloud.py, quality 95), and a lossy encoder overshoots near a
+       saturated edge: 10 of the 96 shipped files contain values up to 253.
+       Unclamped those give a cloud fraction above 1, so the Details panel's
+       "Clear sky" row — 1 minus this — renders as MINUS one percent.
+       The palette path at _buildLut already does Math.min(1, v / SCALE); this
+       path did not, which is why the overlay looked right and the number did
+       not. A handful of pixels, but a visibly impossible figure. */
+    var f = raw / SCALE;
+    return f < 0 ? 0 : f > 1 ? 1 : f;
   }
 
   /* Load exactly the slices ONE POINT needs, then sample it.
@@ -764,7 +775,7 @@
   /* Bump on every change. The script tags carry a hardcoded ?v= and the service
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. Check Cloud.version. */
-  window.Cloud = { version: '2026-09-08a',
+  window.Cloud = { version: '2026-09-13a',
                    toggle: toggle, sampleAt: sampleAt, ensureAt: ensureAt,
                    ensureSlices: ensureSlices,
                    enable: _enable, disable: _disable,

@@ -2792,6 +2792,108 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-13g** — **All three map-overlay buttons converted to SVG; the Instructions quote the same
+  path data. This reverses a mistake made earlier the same day.**
+  SS11.9 already recorded that the PROSE icons were given real SVGs *"replacing the plain Unicode
+  characters the map buttons themselves still use, because those two specific glyphs render at
+  visibly different natural sizes from each other and from the SVG icons already in the
+  paragraph"*. Earlier today I replaced those SVGs with the Unicode characters to make prose match
+  button — without reading SS11.9 — and reintroduced exactly the bug it documents: the cloud drew as
+  a melted lump beside a crisp circle, and the smiley sat low and thin. **I also recreated the
+  orphaned `.inline-glyph` rule that SS11.9 records being deleted for the same reason.**
+  The real fix was the half SS11.9 left undone: the BUTTONS were still text. All three are now SVG
+  (Tabler `circle-half`, `cloud`, `mood-smile`) in a single `.btn-icon` box, and the prose reuses the
+  identical markup with `.inline-icon`. One set of paths, so they cannot drift apart again — asserted
+  by the suite, which now fails if any `&#9680;`/`&#9729;`/`&#9786;` returns to the markup or if the
+  prose stops sharing the buttons' path data.
+  **The lesson is not about icons.** Twice today I acted on what I assumed rather than what was
+  recorded — colours read off a JPEG instead of Anderson's published figures, and this. HANDOFF is
+  only worth its length if it is read BEFORE the change, not cited after it.
+- **2026-09-13f** — Instructions copy tightened (the user's wording); **Now nested UNDER Cloud** via
+  a third heading level `.about-sub2` + `.about-indent`, because at the same indent a mode of the
+  cloud overlay read as a peer of it. **Inline glyphs and the favorability button both sized up:** a
+  Unicode glyph draws far smaller inside its em box than an SVG fills a viewBox, so matching the
+  icons' 1.5em BOX made the quoted glyphs look tiny, and the smiley's thin strokes made that button
+  read as fainter rather than different. Both matched by eye — there is no shared metric across
+  three unrelated glyphs.
+- **2026-09-13e** — **Instructions given a heading hierarchy; overlay button glyph changed to a
+  smiley; the Instructions now quote the buttons' OWN characters.**
+  **Structure.** There were effectively no levels, so one button's explanation ran straight into the
+  next. Now three: `.about-sec` (Search / Details / Map overlays / User Log) in WHITE, `.about-sub`
+  (Terrain shadows / Cloud / Now / Favorability) in bold grey, and inline `<strong>` for emphasis.
+  `.about-sub` and `<strong>` share a colour deliberately — a sub-head is an emphasised lead-in, not
+  a different kind of thing; the separation is carried by the white top level and the space above.
+  **The favorability button is now `&#9786;` — and `&#65038;` beside it is load-bearing, not
+  decoration.** U+263A defaults to **colour emoji** presentation on iOS and Android, which would put
+  a yellow blob next to two monochrome glyphs and ignore the button's colour entirely.
+  VARIATION SELECTOR-15 forces the text form. This app is tuned to Chrome + iOS, so it is not
+  hypothetical. The suite now fails if `&#9786;` ever appears without it.
+  **The Instructions quote the button's own character** via a new `.inline-glyph`, instead of an SVG
+  that merely resembled it — the point of the icon is to say "this button", and a lookalike fails at
+  exactly that. Checked first that the old cloud SVG appeared **once** in the whole codebase and
+  that no JS or test references `inline-icon`, so the blast radius was one sentence.
+  *Caught by test_hygiene again:* the new `.inline-glyph` comment landed between an existing comment
+  and the rule it described, stacking two comment blocks. Moved below `.inline-icon`. That check has
+  now caught the same mistake three times this session and has been worth every one.
+- **2026-09-13c** — **Favorability entry in the Instructions rewritten to the user's own copy.**
+  Shorter and in his voice; the formula block now prints `(A/7.5)^0.35` with the clamp moved OUT of
+  the expression and into the key line, `A  sun altitude in deg, capped at 7.5 deg` — his call, and
+  better: the cap is a property of the input, not part of the maths a reader has to parse.
+  **Two things the old copy said were dropped, and the suite caught both** rather than letting them
+  disappear quietly. The per-eclipse point survives in different words ("tuned subjectively and is
+  per-eclipse ... there is still a best possible spot"), so that assertion was retargeted at the
+  FACT rather than the old phrasing. **The other is simply gone: the overlay knows nothing about
+  roads, access or local microclimate and will cheerfully recommend mid-ocean.** The assertion is
+  commented out with that note in `test_favorability.js`, so the omission is deliberate and
+  recoverable rather than forgotten.
+  *A new assertion was added in its place:* the key must say the sun term is CAPPED. Without it the
+  published formula reads as rewarding a high sun without limit, which it does not.
+  **Also fixed here: inserting the favorability block had ORPHANED the "Both live modes are
+  online-only" paragraph**, stranding an explanation of the Now satellite modes after a paragraph
+  about terrain. Moved back under the Now buttons. Worth watching for whenever a block is inserted
+  into a long prose section — the suite checks facts are PRESENT, not that they are in a sensible
+  order, and nothing would have caught this.
+- **2026-09-13b** — **#F7 re-measured and demoted; the favorability weights re-fitted and left
+  unchanged. Both entries in TODO corrected. No code changed.**
+  **The ERA5 "bias" was overstated by me, three times, always the same way: by reading colours off
+  a JPEG instead of numbers off a page.** Against Anderson's PUBLISHED figures the mean error is
+  ~5 points with mixed sign — Spain centreline 35% vs our 39%, Zaragoza "below 30" vs our 32,
+  Reykjavik 71 vs 77 — not the ~15-point systematic compression this file and TODO both asserted.
+  Anderson explicitly warns against reading his own colours: of Figure 8 he writes the colours
+  "seem to promise dismal prospects for the mountains, but the actual measurements range from 35 to
+  45 percent". Two separate wrong conclusions in this session came from exactly that.
+  **Also wrong, and recorded so it is not repeated:** a claim that the layer was saturating at the
+  top of its ramp (only ONE cell was, and removing the clamp moves the disputed pair by 0.04 on a
+  scale whose palette bands are 0.10 wide — invisible); and a recommendation to raise the cloud
+  weight, built on forced-choice answers the user had already revised.
+  **The weights are now calibrated against eleven pairs and the shipped values are the best fit.**
+  Ceiling is 6 of 8 for any power law and for every convex "risk" variant tried, because two pairs
+  mutually dominate. Achieving ratios span 1.12-2.59; we ship 1.50. Raising it scores WORSE.
+  **The complaint that drove the whole investigation did not survive a blind test** — with place
+  names removed the user picked 136s at 45% cloud over 104s at 39%, which is the Greenland-over-
+  Spain ranking he had been objecting to. Anderson's text says the same of the icecap.
+  **If #F7 is ever revived:** Anderson's source is CM SAF / EUMETSAT = **CLARA-A3**, on the
+  Copernicus CDS, same account and `cdsapi` as ERA5, 0.25 deg, CC-BY since 2025-07-02. The blocker
+  is that it has **no time-of-day dimension** and cannot have one (polar orbiters, fixed overpasses)
+  — and our 8 local-solar-time slices are worth more than the error being fixed: Burgos swings
+  **17 points** between dawn and midday against a ~5-point accuracy gain.
+- **2026-09-13a** — **`Cloud.sampleAt()` could return more than 100% cloud, and the Details panel
+  rendered it as "Clear sky &minus;1%".** Found while answering whether the `.npz` intermediates
+  would help with #F7.
+  `gen_cloud_climatology.py` packs cloud fraction into **0..250** and reserves **255 for no-data**,
+  but `encode_cloud.py` writes the WebP **LOSSY** (`quality = 95`, no `lossless=True`), and a lossy
+  encoder overshoots near a saturated edge. **MEASURED across all 96 shipped slices: 10 contain
+  values above 250, up to 253.** Unclamped, 253/250 is a cloud fraction of 1.012.
+  The palette path already did `Math.min(1, v / SCALE)` in `_buildLut`; the SAMPLE path did not —
+  which is exactly why the overlay looked right and the number beneath it did not. Now clamped to
+  0..1 at the sample.
+  **Two things NOT done, with the measurements behind them.** Re-encoding lossless was considered
+  and rejected: the round-trip error is a mean of **0.03 points of cloud** and a worst case of 2.8,
+  which is nothing beside the ~15-point ERA5 bias in #F7, and lossless costs **+153%** on the
+  payload (3.4 MB → 8.6 MB). And the 255 no-data sentinel is currently unused — no shipped file
+  contains 254 or 255 — but if it ever were, lossy encoding could smear it into the 251-253 range
+  and it would read as ~101% cloud rather than as missing. Worth knowing before anyone feeds a
+  dataset with genuine gaps through this pipeline.
 - **2026-09-11d** — **The favorability explanation was a `title` attribute, which nobody would ever
   see.** The browser delays `title` about a second, gives no visible hint that anything is there,
   and never shows it at all on touch — so the explanation may as well not have existed.

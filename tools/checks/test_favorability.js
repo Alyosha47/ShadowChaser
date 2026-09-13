@@ -395,15 +395,56 @@ ok('unknown timeline modes fail to OFF rather than showing the control',
    strip. What matters is that a user can find out; not where. */
 (function () {
   var html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  ok('the instructions state that blue is relative to THIS path',
-     /best this eclipse offers, not good in itself/i.test(html));
+  /* The wording changed 2026-09-13 (the user's). The FACT still has to be there —
+     that the scale is per-eclipse and relative, not absolute — but it is now
+     carried by "tuned subjectively and is per-eclipse ... there is still a best
+     possible spot" rather than the old sentence. Assert the fact, not the phrasing. */
+  ok('the instructions state that the scale is per-eclipse, not absolute',
+     /per-eclipse/i.test(html) && /best possible spot/i.test(html));
   ok('the instructions state that the veto time re-centres as you move',
      /re-centres as you move/.test(html));
+  /* The Instructions have THREE levels — white section, bold-grey sub-head,
+     inline emphasis — because without them one button's explanation ran straight
+     into the next with nothing to separate them. */
+  ok('each overlay button has its own sub-heading',
+     /class="about-sub">Terrain shadows</.test(html) &&
+     /class="about-sub">Cloud</.test(html) &&
+     /class="about-sub2">Now</.test(html) &&   /* nested: Now is a MODE of Cloud */
+     /class="about-sub">Favorability</.test(html));
+  ok('the four top-level sections are promoted above them',
+     (html.match(/class="about-sec"/g) || []).length === 4);
+  /* The Instructions quote the button's OWN character, not a lookalike SVG. The
+     point is to say "this button", which a different-looking icon fails at. */
+  /* SS11.9 and SS14: a Unicode symbol has no guaranteed size or baseline against
+     another, so button and prose could never match while the buttons were text.
+     Both are SVG now and the prose quotes the SAME path data — assert that, since
+     it is the only thing that keeps them identical. */
+  ok('the overlay buttons are SVG, not Unicode characters',
+     (html.match(/class="btn-icon"/g) || []).length === 3 &&
+     !/&#9680;|&#9729;|&#9786;/.test(html));
+  ok('the instructions reuse the buttons\' own path data',
+     (function () {
+       var m = html.match(/class="btn-icon"[^>]*>([\s\S]*?)<\/svg>/g) || [];
+       return m.length === 3 && m.slice(1).every(function (btn) {
+         var paths = btn.replace(/^[\s\S]*?>/, '');
+         return html.indexOf(paths) !== html.lastIndexOf(paths);
+       });
+     })());
+  /* U+263A defaults to COLOUR EMOJI on iOS and Android. VS15 forces the text
+     form; without it the button is a yellow blob beside two monochrome glyphs
+     and ignores the button's colour entirely. */
+
   ok('the instructions give the formula',
-     /about-formula/.test(html) && /min\(A\/7\.5, 1\)/.test(html) &&
-     /2nd&ndash;98th percentile/.test(html));
-  ok('the instructions name what it does NOT know',
-     /roads, access, or local microclimate/i.test(html));
+     /about-formula/.test(html) && /\(A\/7\.5\)/.test(html) &&
+     /T\/T<sub>max<\/sub>/.test(html));
+  /* The cap is real and load-bearing: A is clamped at 1, so above 7.5 deg the
+     term stops mattering. Without saying so the published formula reads as
+     rewarding a high sun without limit, which it does not. */
+  ok('the key says the sun term is CAPPED', /capped at 7\.5/.test(html));
+  /* DROPPED by the user 2026-09-13 along with the longer copy. Recorded here
+     rather than silently deleted: the overlay has no idea about roads, access or
+     local microclimate and will cheerfully recommend mid-ocean. If that caveat
+     is wanted back it belongs in the Instructions, not the legend. */
   ok('the quick line in Instructions mentions the overlay',
      /combined <strong>favorability<\/strong> score/.test(html));
 })();
@@ -515,6 +556,21 @@ ok('cloud is shown as CLEAR sky, matching the row above it',
 ok('the layer exposes ensureAt', !!D && typeof D.ensureAt === 'function');
 ok('load and render are separated', /function _prepare\(entry\)/.test(code) &&
    /_prepare\(entry\)\.then/.test(code));
+
+console.log('\n4e. the cloud byte must never read as more than 100%');
+/* The generator packs 0..250 and reserves 255 for no-data, but encode_cloud.py
+   writes LOSSY WebP (quality 95) and a lossy encoder overshoots near a saturated
+   edge — 10 of the 96 shipped files contain values up to 253. Unclamped that is
+   a cloud fraction above 1, and "Clear sky" renders as MINUS one percent. */
+(function () {
+  var ca = fs.readFileSync(path.join(ROOT, 'js/cloud-average.js'), 'utf8');
+  ok('Cloud.sampleAt clamps its result to 0..1',
+     /f < 0 \? 0 : f > 1 \? 1 : f/.test(ca));
+
+  var files = fs.readdirSync(path.join(ROOT, 'data/cloud'))
+                .filter(function (f) { return /\.webp$/.test(f); });
+  ok('the cloud slices are all present', files.length === 96, files.length + ' files');
+})();
 
 console.log('\n5. the UI module');
 var uisrc = fs.readFileSync(path.join(ROOT, 'js/favorability-ui.js'), 'utf8');

@@ -27,11 +27,8 @@ HANDOFF §3 no longer carries a task list; everything open is here.
 *(Priorities are the USER's to set — this is a suggestion. The map is stable and cosmetically
 finished; offline works; terrain shadows are done and wired in.)*
 
-1. **#F7 ERA5 cloud bias — see DATA CORRECTNESS.** Deferred through the whole of #F6 at the user's
-   instruction and now next in line. It is the term that decides where a chaser actually goes, and
-   until it is fixed the favorability layer under-separates the good end of a path from the bad —
-   measured at ~15 points too cloudy over Spain and ~14 too clear over Iceland.
-2. **#F6 favorability overlay — COMPLETE as scoped 2026-09-11.** All four steps shipped, renamed
+1. **#F6 favorability overlay — COMPLETE, nothing outstanding blocks anything.** Listed first only
+   so the deliberate leftovers below are seen before anyone reopens it. All four steps shipped, renamed
    from "desirability" 2026-09-11a. Left deliberately, none of it blocking:
    - **A tidy pass, offered and not yet taken.** Two named smells: `_lastD` is a SIDE CHANNEL —
      `_raw()` writes it as a side effect and `_draw()` reads it for the edge fade, which is
@@ -39,6 +36,18 @@ finished; offline works; terrain shadows are done and wired in.)*
      constants (`MARGIN`, `BUDGET`, `BUDGET_MOVE`, `MOVE_ZOOM_DRIFT`, `MAX_PX`, `MIN_PX`, `PX_DIV`,
      `EDGE_FADE`, `MASK_DEG`) each individually justified but collectively a control panel, with
      interactions nobody has written down. No behaviour change; the 122 assertions hold it still.
+   - **THE WEIGHTS ARE CALIBRATED. LEAVE THEM ALONE.** Re-fitted 2026-09-13 against ELEVEN
+     forced-choice pairs; the shipped values are the best available fit. The ceiling is **6 of 8** —
+     no power law, and no convex "risk of missing it" variant tried, does better, because two pairs
+     mutually dominate (one option better on BOTH axes yet the other chosen). Ratios achieving 6 of
+     8 span **1.12 to 2.59**; we ship **1.50**. **Raising the cloud weight makes it WORSE** (0.70 ->
+     5 of 8, 0.80 -> 4 of 8). That was proposed and withdrawn once already — do not re-propose it
+     without re-running the fit. The two remaining mismatches are coin-toss pairs; more pairs fit
+     noise.
+     **The Greenland-vs-Spain complaint that drove this did not survive a blind test:** with the
+     place names removed the user chose 136s at 45% cloud over 104s at 39% — Greenland over Burgos,
+     the ranking being objected to. Anderson's text agrees, calling the icecap the best weather
+     prospect on the northern half of the track.
    - **`P_A` (sun altitude, 0.35) is NOT calibrated.** The eight forced-choice pairs held sun height
      equal on purpose, so nothing in the fit constrains it. First knob to reach for if altitude ever
      feels wrong. `ALT_HI` went 18 -> 10 -> 7.5 by eye in one session.
@@ -53,21 +62,21 @@ finished; offline works; terrain shadows are done and wired in.)*
      identical; for one crossing midnight the cloud slice could be picked for a time 24 h off while
      duration and altitude are right. `TCLAMP` probably rejects it and falls back to greatest
      eclipse — probably. Worth half an hour.
-3. **`Now` takes ~15 s on first load** — the only remaining defect a user in a field would notice.
+2. **`Now` takes ~15 s on first load** — the only remaining defect a user in a field would notice.
    Measured, and the obvious fix has already been tried and reverted. Detail under **#F2c** below;
    read it before touching anything.
-4. **Evaluate a non-GIBS imagery source** — the single change that improves every complaint at once:
+3. **Evaluate a non-GIBS imagery source** — the single change that improves every complaint at once:
    freshness, resolution and reliability. Detail under **#F2c**.
-5. **#R5 iOS pinch-zoom not blocked** (detail under BUGS). Known cause, known fix —
+4. **#R5 iOS pinch-zoom not blocked** (detail under BUGS). Known cause, known fix —
    `touch-action: pan-y` on the scrollable panels, LEAVING the map container alone. Small and
    contained, but needs a real iPhone to confirm, so it is the user's to verify.
-6. **Scan ignores non-location filters** (detail under BUGS). Filter by date/type BEFORE loading
+5. **Scan ignores non-location filters** (detail under BUGS). Filter by date/type BEFORE loading
    chunks instead of walking ~30 of them on every first scan. No user-visible change, no data
    restructuring.
-7. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
+6. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
    Deliberately NOT first: least visible, most likely to consume a whole session. Read HANDOFF §11.4.
-8. **Search temporal tokens** — needs a design decision before any code. Not currently bothering him.
-9. Remaining open bugs → UX deliberations → Features.
+7. **Search temporal tokens** — needs a design decision before any code. Not currently bothering him.
+8. Remaining open bugs → UX deliberations → Features.
 
 ## MAP COSMETICS — mostly DONE (2026-07-12/13). What remains:
 - **Limb not perfectly round** — the globe silhouette shows slight facets at grazing angle
@@ -784,36 +793,46 @@ In order, and **report what you measure before writing any code**:
 ---
 
 ## DATA CORRECTNESS
-- **#F7 ERA5 cloud is COMPRESSED against observed cloud amount — bias-correct it. MEASURED
-  2026-09-08, and this reverses a previous decision.** Sampled against Jay Anderson's published
-  2026-08-12 map, reading his own colour bar:
+- **#F7 ERA5 cloud vs observed cloud — MUCH SMALLER THAN THIS ENTRY ORIGINALLY CLAIMED, and
+  probably not worth doing. Re-measured 2026-09-13.**
 
-  | place | Anderson | ours (ERA5) | error |
+  **The original claim was wrong and is corrected here rather than deleted, because the mistake is
+  more instructive than the item.** It asserted a systematic ~15-point compression (too cloudy over
+  Spain, too clear over Iceland) and put itself at the top of the priority list on that basis. That
+  came from reading colours off a JPEG of Anderson's map by eye. It does not survive contact with
+  his PUBLISHED NUMBERS:
+
+  | place | Anderson (text) | ours | error |
   |---|---|---|---|
-  | Burgos, N Spain | ~0.20-0.25 | **0.39** | ~15 pts too cloudy |
-  | Mallorca / W Med | ~0.10 | **0.19** | ~9 pts too cloudy |
-  | W Iceland | ~0.85 | **0.71** | ~14 pts too clear |
+  | Spain centreline | ~35% | 39% | +4 |
+  | Zaragoza / Ebro | "below 30%" | 32% | ~+2 |
+  | Soria-Logrono | 35-45% | 42% | inside |
+  | Reykjavik | 71% | 77% | +6 |
+  | Ittoqqortoormiit | 65% | 66% | +1 |
+  | Scoresby Sund (deep) | 45% | 57% | +12 |
+  | Taymyr coast | 75% | 81% | +6 |
 
-  **Our pipeline is not at fault** — checked: the raw August 18:00 slice at Burgos reads 39% and
-  that is exactly what comes out after the month and local-solar-time blending. ERA5 itself says
-  39%. The error is one-way in each regime and therefore SYSTEMATIC: it squashes the range toward
-  the middle. Likely cause is that ERA5 total cloud cover counts anything in the column, thin
-  cirrus included, while a satellite-observed cloud AMOUNT applies a detection threshold — a
-  different quantity, not a worse measurement of the same one.
+  Mean error ~5 points, mixed sign, no systematic compression. **Anderson explicitly warns against
+  reading his own colours** — of Figure 8 he writes that the colours "seem to promise dismal
+  prospects for the mountains, but the actual measurements range from 35 to 45 percent". That is
+  exactly the trap, and it was fallen into twice in one session.
 
-  **Why it matters enough to do:** it is the term that decides where a chaser actually goes. On
-  2026-08-12 it puts northern Spain and the Greenland Sea 8 points apart when the true gap is
-  nearer 25, so the favorability layer (#F6) ranks a Greenland cell level with Burgos. The user's
-  position is that Spain being the clearer bet is *known, not expected*, and the data disagrees.
+  **If it is ever picked up**, the route is known and it is NOT a fitted bias curve:
+  - Anderson's source is named on every figure: **CM SAF / EUMETSAT**, polar-orbiting satellites.
+    That is **CLARA-A3**, and it is on the **Copernicus CDS** — the same account and the same
+    `cdsapi` already used for ERA5. Dataset `satellite-cloud-properties`, family CLARA-A3, origin
+    EUMETSAT, 0.25 deg (finer than our 0.5). Licence is plain **CC-BY** since 2 July 2025, so it
+    needs an attribution line, which Anderson himself gives as "Data: CM SAF/EUMETSAT".
+  - **The blocker is TIME OF DAY.** CLARA comes from polar orbiters with fixed overpass times, so it
+    exists only as monthly or daily means — there is no hour-of-day breakdown and there cannot be.
+    Our whole pipeline is 8 local-solar-time slices, and that is not decoration: **measured, Burgos
+    swings 54% at dawn to 37% at midday, a 17-point spread**, larger than the error we would be
+    fixing. Switching to CLARA buys ~5 points of accuracy and costs 17 points of diurnal signal.
+  - A hybrid (CLARA for the level, ERA5 for the shape of the day) was considered and is NOT
+    recommended without checking how CLARA's monthly means are actually built from its overpasses —
+    scaling a full day to match an average of two overpasses is not obviously meaningful.
 
-  **This reverses HANDOFF SS3's "explicitly dropped" entry**, which called an ERA5 bias blend "real
-  work for a refinement smaller than the gap between two valleys". That was a fair judgement when
-  the climatology only had to colour a map; it is wrong now that a score is ranking locations on it.
-  Do NOT fix it by raising the cloud exponent in `favorability.js` — that fakes the contrast without
-  correcting the number, and `Cloud.sampleAt()` would still hand a wrong figure to the details
-  panel and anything else that asks.
-
-## PERFORMANCE / DATA
+## PERFORMANCE / DATA## PERFORMANCE / DATA
 - **Splitting partial eclipses into separate on-request files: MEASURED, NOT WORTH IT.**
   Partials are 4,200 of 11,898 (35.3%) — but only ~3.5 MB of the 10.1 MB besselian cache, and they
   have NO central path, so they add ~nothing to the 274 MB of path data that dominates storage.

@@ -860,6 +860,42 @@
       font-weight: 800;
       color:       #96a4b3;
     }
+
+    /* THREE LEVELS in the Instructions, because there were effectively none and
+       one button's explanation ran straight into the next.
+         .about-sec   Search / Map overlays / Details / User Log   - white
+         .about-sub   one button or feature within a section       - bold grey
+         <strong>     emphasis inside a sentence                   - bold grey
+       .about-sub and <strong> share a colour on purpose: a sub-head is an
+       emphasised lead-in, not a different kind of thing. The separation that
+       does the work is the WHITE at the top level and the space above each. */
+    .about-text .about-sec {
+      color:          var(--text);
+      font-weight:    800;
+      font-size:      0.82rem;
+      letter-spacing: 0.04em;
+      margin-top:     1.6rem;
+      margin-bottom:  0.5rem;
+    }
+    .about-text .about-sec:first-child { margin-top: 0; }
+
+    .about-text .about-sub {
+      font-weight:   800;
+      color:         #96a4b3;
+      margin-top:    1.1rem;
+      margin-bottom: 0.35rem;
+    }
+
+    /* A THIRD level, for something that belongs to the feature above it rather
+       than standing beside it: Now is a mode of the cloud overlay, and at the
+       same indent the two read as equals. Indent carries the relationship; the
+       paragraphs under it are indented to match or the heading floats free. */
+    .about-text .about-sub2 {
+      font-weight:   700;
+      color:         #96a4b3;
+      margin:        0.9rem 0 0.3rem 1.1rem;
+    }
+    .about-text .about-indent { margin-left: 1.1rem; }
     .settings-group .about-text { font-size: 0.72rem; color: var(--text-dim); }
 
     /* Icons quoted inside running prose (see the log block in Instructions).
@@ -1482,7 +1518,18 @@
     }
     /* Icon-only. The glyphs carry the meaning: a hard-edged half-lit circle
        (terrain shadow) beside a soft cloud outline — different silhouettes, so
-       they separate at a glance where two words would just be two words. */
+       they separate at a glance where two words would just be two words.
+
+       ALL THREE ARE SVG, and the Instructions quote the SAME markup with a
+       different class. They were Unicode characters until 2026-09-13 and could
+       never be made to match: a symbol character has no guaranteed size or
+       baseline relative to another (SS14), so the cloud drew as a melted lump
+       beside a crisp circle whatever font-size was applied. SS11.9 had already
+       recorded this and swapped the PROSE to SVG; leaving the buttons as text
+       meant prose and button still disagreed. Now there is one set of paths,
+       in one box, so they cannot drift again. */
+    .map-overlay-btn .btn-icon { width: 1.15rem; height: 1.15rem; display: block; }
+
     .map-overlay-btn {
       width:           2.1rem;
       height:          2.1rem;
@@ -1761,6 +1808,7 @@
          needs the room more than it needs the tap target. */
       .basemap-opt    { width: 1.95rem; height: 1.95rem; }
       .map-overlay-btn { width: 1.9rem; height: 1.9rem; font-size: 1.05rem; }
+      .map-overlay-btn .btn-icon { width: 1.05rem; height: 1.05rem; }
       /* Matches the picker chip's height: tile + its 2 x 0.3rem padding + borders. */
       #btn-locate     { width: 2.7rem; height: 2.7rem; font-size: 1.1rem; }
     }
