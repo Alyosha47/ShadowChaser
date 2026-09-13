@@ -50,7 +50,11 @@ const CORE = [
          touch them, and the failure is silent until someone goes offline. Renamed
          2026-08-21: cloud->cloud-average, satellite->cloud-now, imagery->cloud-photo,
          cloudbar->cloud-ui. test_hygiene now checks this list against index.html. */
-      'cloud-average','cloud-now','cloud-photo','cloud-ui'].map(n => `js/${n}.js`),
+      'cloud-average','cloud-now','cloud-photo','cloud-ui',
+      /* The favorability score layer. It reads Cloud.sampleAt, so it loads after
+         cloud-average.js in index.html — and it must be precached, or it is
+         missing offline, which is exactly where a field user wants it. */
+      'favorability','favorability-ui'].map(n => `js/${n}.js`),
   /* The map engine. These were MISSING: the app moved from Cesium to MapLibre
      but the precache list didn't, so ~1.9 MB of engine was only ever cached
      opportunistically after first use — a fresh install that went offline

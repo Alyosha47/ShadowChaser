@@ -1636,7 +1636,7 @@ function setDeckLayers(layers) {
    layers, so they are untouched. */
 function updateOvalVisibility() {
   if (!deckOverlay || !_deckLayers) return;
-  var vis = map.getZoom() < OVAL_HIDE_ZOOM;
+  var vis = ovalsVisible();
   var changed = false;
   var next = _deckLayers.map(function (L) {
     if (L && L.id.indexOf('umbra-ovals') === 0 && L.props.visible !== vis) {
@@ -1712,6 +1712,21 @@ function segsToPathData(segs, id) {
    a 'zoom' listener toggles that one layer's visibility via setProps when the
    threshold is crossed — touching only the deck layers, not markers. */
 var OVAL_HIDE_ZOOM = 7;
+
+/* Should the umbra footprint ovals be drawn at all?
+   Two reasons not to: too far zoomed in (they become bigger than the screen and
+   stop meaning anything), or the favorability overlay is on — it paints a score
+   along this same corridor, and the translucent ovals sit on top of it as a row
+   of evenly spaced lozenges that read as blotches in the score.
+   SINGLE POINT OF TRUTH: three places used to test `getZoom() < OVAL_HIDE_ZOOM`
+   independently, so a rule added to one of them would be undone by the next
+   redraw through another. Guarded on window.Favorability so map.js keeps working
+   with the favorability files absent. */
+function ovalsVisible() {
+  if (map.getZoom() >= OVAL_HIDE_ZOOM) return false;
+  var D = window.Favorability;
+  return !(D && D.isOn && D.isOn());
+}
 
 function drawEclipsePath(ep) {
   clearMapLayers();
@@ -1806,7 +1821,7 @@ function drawEclipsePath(ep) {
         layers.push(new DeckGL.SolidPolygonLayer({
           id:           'umbra-ovals',
           data:         ovalData,
-          visible:      map.getZoom() < OVAL_HIDE_ZOOM,
+          visible:      ovalsVisible(),
           getPolygon:   function(d) { return d.polygon; },
           getFillColor: ovalFill,
           filled:       true,
@@ -1815,7 +1830,7 @@ function drawEclipsePath(ep) {
       layers.push(new DeckGL.PathLayer({
         id:              'umbra-ovals-outline',
         data:            ovalData,
-        visible:         map.getZoom() < OVAL_HIDE_ZOOM,
+        visible:         ovalsVisible(),
         /* Close the ring: ovalData strips the duplicated last point for the
            fill's triangulation, but an open path would leave a visible gap. */
         getPath:         function(d) { return d.polygon.concat([d.polygon[0]]); },

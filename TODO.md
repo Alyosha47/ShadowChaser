@@ -27,21 +27,47 @@ HANDOFF §3 no longer carries a task list; everything open is here.
 *(Priorities are the USER's to set — this is a suggestion. The map is stable and cosmetically
 finished; offline works; terrain shadows are done and wired in.)*
 
-1. **`Now` takes ~15 s on first load** — the only remaining defect a user in a field would notice.
+1. **#F7 ERA5 cloud bias — see DATA CORRECTNESS.** Deferred through the whole of #F6 at the user's
+   instruction and now next in line. It is the term that decides where a chaser actually goes, and
+   until it is fixed the favorability layer under-separates the good end of a path from the bad —
+   measured at ~15 points too cloudy over Spain and ~14 too clear over Iceland.
+2. **#F6 favorability overlay — COMPLETE as scoped 2026-09-11.** All four steps shipped, renamed
+   from "desirability" 2026-09-11a. Left deliberately, none of it blocking:
+   - **A tidy pass, offered and not yet taken.** Two named smells: `_lastD` is a SIDE CHANNEL —
+     `_raw()` writes it as a side effect and `_draw()` reads it for the edge fade, which is
+     invisible coupling that will break when someone reorders the calls; and there are nine tuning
+     constants (`MARGIN`, `BUDGET`, `BUDGET_MOVE`, `MOVE_ZOOM_DRIFT`, `MAX_PX`, `MIN_PX`, `PX_DIV`,
+     `EDGE_FADE`, `MASK_DEG`) each individually justified but collectively a control panel, with
+     interactions nobody has written down. No behaviour change; the 122 assertions hold it still.
+   - **`P_A` (sun altitude, 0.35) is NOT calibrated.** The eight forced-choice pairs held sun height
+     equal on purpose, so nothing in the fit constrains it. First knob to reach for if altitude ever
+     feels wrong. `ALT_HI` went 18 -> 10 -> 7.5 by eye in one session.
+   - **The two remaining forced-choice pairs.** #2 and #6 could not be reconciled with the other six
+     (see the calibration note below); three more pairs would settle it.
+   - **The veto is one instant for the whole viewport**, the local maximum at the centre, re-centred
+     on every settle. Measured spread across a screen: 8 min at zoom 6, 2 at zoom 8, 30 s at zoom
+     10. Fine as it stands; if it ever is not, the shadow engine paints per frame, so a wide view
+     could be split into horizontal bands with their own times.
+   - **`cloud-average.js` uses raw `rec.t0` where the score uses `refT0(rec)`**, which corrects for
+     an eclipse straddling 0h UT. Flagged 2026-09-10, NOT investigated. For most eclipses they are
+     identical; for one crossing midnight the cloud slice could be picked for a time 24 h off while
+     duration and altitude are right. `TCLAMP` probably rejects it and falls back to greatest
+     eclipse — probably. Worth half an hour.
+3. **`Now` takes ~15 s on first load** — the only remaining defect a user in a field would notice.
    Measured, and the obvious fix has already been tried and reverted. Detail under **#F2c** below;
    read it before touching anything.
-2. **Evaluate a non-GIBS imagery source** — the single change that improves every complaint at once:
+4. **Evaluate a non-GIBS imagery source** — the single change that improves every complaint at once:
    freshness, resolution and reliability. Detail under **#F2c**.
-3. **#R5 iOS pinch-zoom not blocked** (detail under BUGS). Known cause, known fix —
+5. **#R5 iOS pinch-zoom not blocked** (detail under BUGS). Known cause, known fix —
    `touch-action: pan-y` on the scrollable panels, LEAVING the map container alone. Small and
    contained, but needs a real iPhone to confirm, so it is the user's to verify.
-4. **Scan ignores non-location filters** (detail under BUGS). Filter by date/type BEFORE loading
+6. **Scan ignores non-location filters** (detail under BUGS). Filter by date/type BEFORE loading
    chunks instead of walking ~30 of them on every first scan. No user-visible change, no data
    restructuring.
-5. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
+7. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
    Deliberately NOT first: least visible, most likely to consume a whole session. Read HANDOFF §11.4.
-6. **Search temporal tokens** — needs a design decision before any code. Not currently bothering him.
-7. Remaining open bugs → UX deliberations → Features.
+8. **Search temporal tokens** — needs a design decision before any code. Not currently bothering him.
+9. Remaining open bugs → UX deliberations → Features.
 
 ## MAP COSMETICS — mostly DONE (2026-07-12/13). What remains:
 - **Limb not perfectly round** — the globe silhouette shows slight facets at grazing angle
@@ -302,6 +328,217 @@ The data-key and safety-rail traps are renderer-agnostic.)*
     basemap — KML has no stroke-outline, so it means drawing each curve twice.
 
 ## FEATURES — MEDIUM
+- **#F6 FAVORABILITY OVERLAY — COMPLETE as scoped, 2026-09-11.** All four build steps shipped
+  (2026-09-08a through 2026-09-11c); renamed from "desirability" at 2026-09-11a. The remaining
+  items are listed under PRIORITY ORDER #2 and none of them block anything. **Everything below is
+  kept as the RECORD of what was decided and why** — the calibration, the rejected approaches, and
+  in particular the corridor-polygon ledger, which exists to stop a fifth attempt at it.
+  A third map overlay: **one composite score**, green→red, for "how good is this spot for watching
+  *this* eclipse". Not a stack of layers — cloud and terrain have their own overlays; this is the
+  single number that blends them. Drawn only inside the **central path**, total and annular only, no
+  penumbra; the button is disabled for non-central eclipses.
+
+  **The score.** `S = C^0.60 · D^0.40 · A^0.15`, with a hard VETO where terrain blocks the sun.
+  C = clear-sky from the existing climatology (0–1); D = totality duration ÷ this eclipse's maximum;
+  A = sun altitude, `clamp((alt − 2) / (15 − 2), 0, 1)` — flat above ~15–20°, falling below ~10°,
+  zero at the horizon. Multiplicative, not a weighted sum: a sum lets a cloud-locked 4-minute valley
+  outrank a clear 2-minute ridge, and the concave exponents give the diminishing returns that plain
+  expected-seconds (`C · D`) gets wrong — the first second of totality is worth far more than the
+  240th.
+  - **0.60 / 0.40 are CALIBRATED, not invented** — fitted to the user's own answers on eight
+    forced-choice pairs (duration vs clear-sky odds, sun height held equal), run 2026-09-01. Cloud
+    carries the larger exponent because it spans 0→1 while D only spans edge→centre.
+  - **0.15 on A is a STARTING POINT, not calibrated** — the pairs held sun height equal deliberately,
+    so it was never fitted. Tune by eye against the Spain 2026 reference map.
+  - **Known inconsistency, recorded deliberately.** A single power law predicts the answers flip once
+    as the trade steepens; the user's flipped three times, and pairs #2 and #6 cannot be reconciled
+    with the other six. Sorting by the SIZE of the clear-sky gap gives a cleaner rule: a gap of 8–10
+    points → he took the longer, cloudier option; 15+ points → he took the clearer, shorter one. I.e.
+    small cloud differences are ignored, then a switch flips once the gap is real. He confirmed that
+    is his actual reasoning. It is also defensible on grounds he did not have in front of him: §10.6
+    says the cloud figure is a climatological mean on ~55 km cells and not a probability, so 8 points
+    between neighbouring cells is inside the noise. **Do NOT build a deadband in v1** — blotchy map,
+    second mechanism to debug. Ship 0.60/0.40; revisit only if the map visibly ranks spots on
+    differences too small to mean anything. Three more forced-choice pairs would settle #2 vs #6.
+  - **VETO is not a low score.** Same red family as the ramp's worst but **darker and fully opaque**
+    where the ramp's worst is lighter and slightly translucent. One extra LUT entry, no hatch, no new
+    hue. Rationale: the veto only exists at zoom ≥6 and online, so an identical red would silently
+    change meaning on zoom; and the bottom of the ramp is already occupied by path-edge slivers,
+    which are a poor spot rather than an impossible one.
+
+  **Normalisation — decided. Per eclipse, always.** The colour means "best spot *for this eclipse*",
+  never "this eclipse beats that one". Consequence to accept: green on the 2028 map and green on the
+  1997 map do not mean the same thing, so the legend must say "compared to the rest of this path".
+  Plus a **Whole path / This view** mode — whole path is the default and never moves; this view
+  restretches to what is on screen, so once you have chosen Spain over Greenland you can still see
+  contrast within Spain. **A mode, not a button**: a "recalibrate now" button goes stale the moment
+  you pan with nothing to tell you, where a mode makes colours-move-on-pan the stated behaviour.
+  Debounce on `moveend`, stretch on the 2nd–98th percentile (one anomalous cell would own min/max),
+  and restretch the **composite once** — never rescale C and D separately, which amplifies whichever
+  term is flat into false contrast.
+
+  **THERE IS NO CORRIDOR POLYGON. DO NOT BUILD ONE.** The layer is a raster and only ever asks "is
+  THIS cell in the central path?", which `computeEclipse` answers directly:
+  `var r = computeEclipse(rec, lat, lon, 0); var inCorridor = r.visible && (r.type === 'total' || r.type === 'annular');`
+  (`alt` is not optional — HANDOFF §9.0.) It costs nothing extra: the layer is already calling
+  `computeEclipse` per cell for duration, and one call carries both answers. **MEASURED:** 2026-08-12
+  rasterised over a deliberately oversized 440×260 grid spanning 180° of longitude took **417 ms in
+  Node**, and the result is a clean ribbon — correct over the pole, no flat bar, no fold, no
+  self-crossing. A real viewport is smaller. So do not build limb pairing, 360° branch alignment,
+  limb de-forking, an area-ratio guard, or Sutherland–Hodgman clipping: all were scaffolding for a
+  polygon that should not exist. `map.js` (~line 1713) already has corridor fill deliberately
+  disabled for this reason, and the deleted `BACKLOG.md` (`git show de95fda^:BACKLOG.md`) records
+  four prior elegant attempts that each fixed one case and broke others. Scoping 2026-09-01 walked
+  into the same wall independently and measured why it is structural, not shallow: the two limbs can
+  land in different 360° branches (2072-09-12: north +111..+169, south −134..−228); multi-segment
+  limbs are usually ONE curve cut at a seam, not two branches (2097-11-04 splits at latitude −89.99
+  with its ends 1 km apart, so "longest segment wins" discards 78 real points and closes the ring
+  across 7,000 km, manufacturing a bowtie — while 1979-08-22 is a true fork, so the rule must be a
+  test, not a preference); and after fixing both, a contact sheet of 24 corridors still showed ~9
+  broken fills, **every one a polar path, including 2026-08-12**. Proper latitude clipping did not
+  help, because when a corridor crosses a pole the north and south limits swap sides and the ring
+  wraps instead of closing. **Also note the chord approximation and the 13×7 interpolation grid are
+  both unnecessary** — call `computeEclipse` per cell and get the exact answer, including the hard
+  zero at the path limits that any interpolation would smear. **NO GENERATOR CHANGES**: paths carry
+  no durations and do not need to. The existing deck.gl outline is untouched by all of this.
+  One-limit grazers have no interior and are excluded automatically (the membership test simply finds
+  no qualifying cells).
+
+  **Architecture.** Two files, matching the existing convention: `js/favorability.js` (the score,
+  palette LUT, `sampleAt`; rendering cloned **structurally** from `cloud-average.js`) and
+  `js/favorability-ui.js` (button, mode, legend, and the borrowing of the shadow engine — it talks to
+  `shadow-ui.js`, **never into `shadow-layer.js`**). The UI file owns the engine handover because
+  **the shadow engine is a paintbrush, not a sensor**: it draws and discards and exposes no query, so
+  at high zoom terrain is not an input to the score but a mask above it. Coordinating two renderers
+  is a UI job, exactly as `cloud-ui.js` already does across three cloud modules.
+  - **Clone from `cloud-average.js` and do not "simplify"**: two canvases (§10.3), `_safeSize()` (the
+    power-of-two black-texture trap), canvas sized to the DATA, `_drawnKey` (§10.5), `_againForce`,
+    top-of-stack placement, and a `version` constant bumped on every change (§10.7).
+    `Cloud.sampleAt` (incl. its returns-null-until-rendered behaviour) is the model for the readout.
+  - **The terrain half needs NO changes to `shadow-layer.js`.** `setOptions({shadowColor})` takes
+    RGBA and repaints; `setTime()` repaints. Borrow the engine, set it to veto red, pin its time, hide
+    the scrubber. **Pass `ss:false` explicitly** — the module default is false but `shadow-ui.js:54`
+    passes true, which would give the veto mask fractional edges instead of a hard binary.
+    `SHADOW_RGBA` is module-level, not per-instance, which is safe only because of the next line.
+  - **Decision (user's): ONE overlay at a time.** Favorability and shadow mode are mutually exclusive
+    presentations of the same engine; whoever owns it sets colour, time and projection.
+  - **The score layer works on the globe; the terrain veto does not.** `cloud-average.js` has no
+    projection flip and its `_bbox()` handles the globe; `shadow-ui.js` forces Mercator. So: **score
+    everywhere on either projection, terrain veto at high zoom, Mercator, online.** Inherit
+    `shadow-ui.js`'s existing gates (`isOffline()` hides at line 291; below `SHADOW_MIN_ZOOM` it hides
+    while staying armed) rather than reinventing them.
+  - **The zoom handover must be VISIBLE.** Below the shadow zoom gate the terrain term is absent;
+    above it the veto appears, and the score under the cursor changes. Not a bug, but it needs a
+    legend line naming which visibility source is live, the way the cloud mode strip names its source.
+  - **Add ONE entry point to `shadow-ui.js`** (e.g. `showShadowAsVeto(timeMs)` / `restoreShadowMode()`)
+    — do not call its underscore internals. The time is **NOT** `computeShadowWindow().maxms`, which
+    is greatest eclipse, GLOBAL: one instant for the whole planet. The veto needs the **local**
+    maximum, `computeEclipse(rec, lat, lon, 0).tMax` at the viewport centre. The handover must land
+    clean both ways — failure modes are map stuck in Mercator, orphaned scrubber, shadows vanishing
+    with the wrong layer.
+  - **Palette needs a look before committing.** Green→red for the ramp, distinct from cloud's
+    blue→red (Anderson's scale, which *means* cloud). §11.5's visual language is test-enforced.
+
+  **THE PER-CELL COST WAS WRONG BY 5x, AND THE FIX IS LOAD-BEARING — see HANDOFF §9.0.**
+  The note claimed `computeEclipse` was 4.9 us and concluded exact-per-cell was affordable. Measured
+  2026-09-08 it is **26.5 us inside the path**: 1,043 ms for one Iberia viewport, 11,385 ms for the
+  world canvas — four and forty-five seconds on a phone. The score now uses `findMaximum` +
+  `fundamentalArgs` (**1.10 us**, the two calls `computeEclipse` itself opens with) plus the
+  Besselian semi-duration `2*sqrt(L2'^2 - m^2)/n`. **103 ms** and **1,522 ms**. Duration error
+  against the full engine is 0.00-0.18 s median, p95 <= 0.43 s, and every disagreement over a second
+  is a horizon cell where A is 0 and the score is 0 anyway. This is NOT the rejected chord
+  approximation: same physics, same fundamental arguments, and it keeps the hard zero at the limits.
+  **Two dead lines in the note's own snippet**, both fixed here: `computeEclipse` promotes central
+  types to `'hybrid'`, so its `type==='total'||type==='annular'` test silently dropped all 569
+  hybrids; and an omitted `alt` returns `{visible:false}`, not `annular`/`NaN`.
+
+  **Build order.**
+  0. DONE 2026-09-08a — `Cloud.ensureSlices()` + version bump (HANDOFF §10.7).
+  1. DONE 2026-09-08b — `js/favorability.js`: per-cell membership, C x D x A, palette,
+     `sampleAt`/`detailAt`, two canvases, whole-path normalisation, `setMode('path'|'view')` hook.
+     Wired into `index.html` + `sw.js` CORE. `tools/checks/test_favorability.js`, 26/26, registered
+     in `run.js`. Verified by RENDERING it: the 2026 polar loop closes, the Iberia ribbon grades
+     green at the centreline to yellow at the limbs, 2027's long African totality is green in the
+     middle and red at the sunrise/sunset ends. No bowtie, no wedge, no polar fold.
+     **The antipodal-shadow bug (fixed 2026-09-08c, HANDOFF §15) is the one to know about**: the
+     fundamental-plane projection cannot tell which side of the Earth you are on, so the far side
+     passed the membership test at night and drew a dark-red ring round the world. A `sun.alt > 0`
+     test fixes it. It hid because score 0 is a legitimate colour, so it looked like an answer
+     rather than a fault — **zero and "no eclipse here" must never render the same.**
+     **Known gaps left for later, deliberately:** no button (step 2); the terrain veto is step 3;
+     `'view'` mode stretches on min/max, not the 2nd-98th percentile, so one anomalous cell can own
+     the ramp — fix when the UI can exercise it; and the A exponent 0.15 produces a visible hard
+     edge where sun altitude crosses 2 deg and the score snaps to zero — a blunt dark-red cap at
+     each end of the path. FIXED 2026-09-08e — the shape was wrong, not the weight; ALT_LO/ALT_HI
+     are now 0/18 with P_A 0.35 (HANDOFF SS15). P_A remains uncalibrated and is the obvious knob if
+     sun height ever feels over- or under-weighted.
+     **Resolution is a TIME budget, not a quality dial** — the cost is per cell: 288 px 146 ms,
+     384 px 175 ms, 512 px 289 ms, roughly 4x each on a phone. Shipped at 384. To go sharper, do a
+     two-level pass (score coarsely, refine only blocks containing corridor) rather than paying for
+     a viewport that is mostly empty.
+  2. DONE 2026-09-08h — `js/favorability-ui.js`: the bullseye map button, the Whole path / This
+     view mode strip, and the legend, reusing `#cloudbar`'s box and cell classes so there is one
+     styling to maintain. **One overlay at a time, wired BOTH ways** — favorability drops the cloud
+     overlay and any cloud mode drops favorability; the guard in `cloud-ui.js` is `window.FavorBar &&`
+     so deleting the UI file leaves cloud working unchanged. The score still READS the climatology
+     when it is not painted, which is why it needs no cloud layer switched on.
+     **Still to do here, agreed with the user 2026-09-08:**
+       - DONE 2026-09-10g — **step 3, the terrain veto** (HANDOFF SS15).
+       - DONE 2026-09-10m — **the legend wording** (the user's), and the full Instructions entry
+         with the formula. No percentages in the legend: the weights are not fixed, they depend on
+         which input has the widest spread along that particular path (measured: duration is 18% of
+         the effect on 2026-08-12 and 42% on 2031-11-14).
+       - DONE 2026-09-10c — **"This view" mode**, stretching on the 2nd-98th percentile.
+       - DONE 2026-09-11b — the score row in the Details panel, with the inputs on hover.
+         `details.js` edited (SHARED per PARITY.md), both additions typeof-guarded.
+  3. Borrow the shadow engine at high zoom via the new `shadow-ui.js` entry point: veto red,
+     `ss:false`, time pinned to the LOCAL maximum. No changes to `shadow-layer.js`.
+  4. The `u_mask` uniform in `shadeFS` — **SIGNED OFF** (the user has taken his own `PRE-MASK` copy,
+     HANDOFF §8.1a). `uniform sampler2D u_mask; uniform float u_hasMask;` and at the top of `main()`:
+     `if (u_hasMask > 0.5 && texture2D(u_mask, v_uv).a < 0.5) discard;` plus binding the texture in
+     `render()`. `v_uv` is the atlas rect in Mercator, which is what the score canvas already covers —
+     so the score canvas **is** the mask and the corridor is solved once for both purposes. With
+     `u_hasMask` at 0 the shader is bit-identical to today, which makes the **zero-pixel diff** proof
+     available; land it in the same commit, diffed against `PRE-MASK` (NOT against `ORIGINAL` — that
+     would show the supersampling too). MapLibre has no `clip` layer type and `gl.scissor` is
+     rectangles only; an inverse-polygon fill was rejected by the user as it hides the basemap.
+
+  **Estimate: two to four working days for steps 1–3.** Steps 1–2 are a structural clone of debugged
+  work; step 3 is settings on an existing engine. The estimate came down because the corridor polygon
+  — the entire source of variance — turned out to be unnecessary.
+
+  **Tests** — `tools/checks/test_favorability.js`: score is 0 outside the corridor (40.4, −3.7 for
+  2026-08-12 returns `type:'partial'`); **the polar case works** — 2026-08-12 across the Arctic leg
+  returns `total` cells with no gap and no wrap, which is the regression guard against anyone
+  reintroducing a polygon; one-limit grazers produce no cells; `computeEclipse` is always called with
+  an explicit `alt`; `_drawnKey` rejects a canvas drawn for another eclipse.
+
+  **Rejected, with reasons:** land mask (2031 is total over no land at all; at sea the horizon is
+  genuinely clear and a boat is a viewing location); elevation bonus (double-counts cloud, and
+  mountains make their own weather); road/settlement access (no data).
+
+  **STILL UNVERIFIED, and it is a five-minute measurement in the browser rig:** how much the LOCAL
+  maximum varies across a zoom-6 viewport. It affects only the terrain veto — if it is a minute or
+  two, viewport-centre is fine and the mask can be recomputed on `moveend`.
+
+- **#F6b DEFERRED, a separate project: the precomputed horizon field.**
+  Terrain visibility at **path scale** cannot be computed live, and the reason is not cost: at zoom 3
+  one pixel is ~100 km while a 3 km mountain at a 3° sun casts a shadow ~57 km long — less than one
+  pixel, and the DEM atlas degrades with it. The question has no per-pixel answer at that scale.
+  The answerable question is *what fraction of this ~1 km cell has a clear view*, and it is answered
+  by a field with **no time in it**: per cell, the terrain horizon altitude at each of ~16 compass
+  bearings, ray-cast once, offline, from a real 30 m DEM. At runtime
+  `blocked = sun.alt < horizon(cell, sun.az)` — and `computeEclipse` already returns both. Works at
+  every zoom, works offline, and yields a **number**, so it feeds the score and `sampleAt()` rather
+  than only painting pixels.
+  **Why deferred: size, and it has NOT been sized — that is the first task.** Global, 16 bearings, one
+  byte each, against a current payload of 3.3 MB of cloud slices. Ocean is zeros and flat land nearly
+  so, so it compresses. Generate it for one region first, prove the score works with a real visibility
+  term, then decide about global. Honest limits to carry forward: it is a **fixed-observer,
+  ground-level** horizon (a 10 m tower beats it), and at ~1 km a valley floor and the ridge above it
+  share one answer. Storing the **best** horizon per cell rather than the mean makes it read as "there
+  is a good spot here", which is the honest claim for a planning tool.
+
 - **#F4 "Cache this spot" — offline tiles around the pin.** With a location and an eclipse
   selected, one press downloads basemap and terrain tiles for a small box round the pin, so the
   detail you need on the day survives having no signal. Plan at home, navigate in a field.
@@ -545,6 +782,36 @@ In order, and **report what you measure before writing any code**:
   Cosmetic: without it iOS opens on the manifest background colour, which matches the app.
 
 ---
+
+## DATA CORRECTNESS
+- **#F7 ERA5 cloud is COMPRESSED against observed cloud amount — bias-correct it. MEASURED
+  2026-09-08, and this reverses a previous decision.** Sampled against Jay Anderson's published
+  2026-08-12 map, reading his own colour bar:
+
+  | place | Anderson | ours (ERA5) | error |
+  |---|---|---|---|
+  | Burgos, N Spain | ~0.20-0.25 | **0.39** | ~15 pts too cloudy |
+  | Mallorca / W Med | ~0.10 | **0.19** | ~9 pts too cloudy |
+  | W Iceland | ~0.85 | **0.71** | ~14 pts too clear |
+
+  **Our pipeline is not at fault** — checked: the raw August 18:00 slice at Burgos reads 39% and
+  that is exactly what comes out after the month and local-solar-time blending. ERA5 itself says
+  39%. The error is one-way in each regime and therefore SYSTEMATIC: it squashes the range toward
+  the middle. Likely cause is that ERA5 total cloud cover counts anything in the column, thin
+  cirrus included, while a satellite-observed cloud AMOUNT applies a detection threshold — a
+  different quantity, not a worse measurement of the same one.
+
+  **Why it matters enough to do:** it is the term that decides where a chaser actually goes. On
+  2026-08-12 it puts northern Spain and the Greenland Sea 8 points apart when the true gap is
+  nearer 25, so the favorability layer (#F6) ranks a Greenland cell level with Burgos. The user's
+  position is that Spain being the clearer bet is *known, not expected*, and the data disagrees.
+
+  **This reverses HANDOFF SS3's "explicitly dropped" entry**, which called an ERA5 bias blend "real
+  work for a refinement smaller than the gap between two valleys". That was a fair judgement when
+  the climatology only had to colour a map; it is wrong now that a score is ranking locations on it.
+  Do NOT fix it by raising the cloud exponent in `favorability.js` — that fakes the contrast without
+  correcting the number, and `Cloud.sampleAt()` would still hand a wrong figure to the details
+  panel and anything else that asks.
 
 ## PERFORMANCE / DATA
 - **Splitting partial eclipses into separate on-request files: MEASURED, NOT WORTH IT.**

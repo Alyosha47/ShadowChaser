@@ -207,7 +207,10 @@ someone should DO, it belongs in TODO; if it is something someone should KNOW, i
 
 ### What is deployed
 
-`BUILD 2026-08-20u`. `cloud-now.js 2026-08-20a`, `cloud-photo.js 2026-08-20a`, `cloud-ui.js 2026-08-20a`.
+`BUILD 2026-09-08a`. `cloud-average.js 2026-09-08a`, `cloud-now.js 2026-08-20a`,
+`cloud-photo.js 2026-08-20a`, `cloud-ui.js 2026-08-20a`.
+*(This line said `2026-08-20u` for a fortnight while five commits landed. It is the one fact in this
+file most likely to be stale — check `index.html` before believing it.)*
 The map, offline mode, terrain shadows, the user log and the poster are all shipped and working.
 
 The cloud overlay has **three modes** in one strip (`js/cloud-ui.js`), and **all three work**:
@@ -411,6 +414,10 @@ ShadowChaser/
 ├── DESIGN_SPEC_cesium_map.md   (pin / arrow / palette values — ported, still authoritative)
 ├── shadow-layer-README.md      (terrain-shadow engine API + integration notes)
 ├── shadow-layer-example.html   (minimal standalone wiring of the engine)
+├── shadow-layer-building-DO-NOT-DELETE/   the shadow-layer ARCHIVE (§8.1a).
+│                       PRE-MASK is the rollback target; ORIGINAL is provenance
+│                       ONLY and restoring it would silently delete supersampling.
+│                       Loaded by nothing; no test asserts that.
 ├── vendor/
 │   ├── maplibre-gl-csp-5.5.0.js + maplibre-gl-csp-worker-5.5.0.js   (official CSP build)
 │   ├── maplibre-gl-5.5.0.css
@@ -453,7 +460,6 @@ ShadowChaser/
     ├── search-ui.js    parseCoords, onSearchChanged — was search.js
     ├── shadow-layer.js  TERRAIN-SHADOW ENGINE — createShadowLayer() MapLibre custom layer;
     │                    GPU DEM raymarch + supersampling. Mercator-only. Don't rebuild (§8).
-    ├── shadow-layer.ORIGINAL.js  pristine v64 engine backup — NOT loaded (§8)
     ├── shadow-ui.js     TERRAIN-SHADOW INTEGRATION — toggle, ruler scrubber, 3-way time sync,
     │                    projection flip, online gating. setShadowTime owner. SHADOW_TINT.
     ├── share.js        share modal/sheet (tabstop format)
@@ -794,10 +800,30 @@ relitigate build-vs-buy** (our own GPU raymarch, no API key, no $25/mo).
   `setOptions({selfTest,showElevation,shadowColor,onStatus,onLog})`.
 - **`shadow-layer-example.html`** — minimal working wiring (map + time slider).
 - **`shadow-layer-README.md`** — full API + integration notes.
-- **`js/shadow-layer.ORIGINAL.js`** — the pristine byte-for-byte v64 engine as first committed
-  (`ba1c20f`), in `js/`, not loaded. The shipped engine differs from it by **supersampling only** —
-  verified by diff. Keep it as the safety net; if a shadow change ever misbehaves, diff against it.
-- The standalone study remains as `shadows_v64.html` (VERSION `v64`) for reference/debugging.
+- The archive of engine snapshots lives in **`shadow-layer-building-DO-NOT-DELETE/`** — see §8.1a,
+  which says which file is the safety net and which one will silently cost you supersampling.
+
+### 8.1a The archive folder — the files have similar names and DIFFERENT jobs
+
+`shadow-layer-building-DO-NOT-DELETE/` predates the favorability work and outlives it. It is written
+down here because the last backup once vanished in a commit titled "refactored handoff", and because
+`ORIGINAL` looks like a safety net and is not one.
+
+| file | what it is | use |
+|---|---|---|
+| `js/shadow-layer.js` (live, not in the folder) | the shipped engine, 1243 lines | live |
+| `shadow-layer_PRE-MASK.js` | copy of the shipped file taken immediately before the mask work | **the rollback target, and what to diff against** |
+| `shadow-layer.ORIGINAL.js` | the v64 **extraction**, 1157 lines, no supersampling | provenance only |
+| `shadows_v64_FINAL.html` | the original standalone study the engine came from | provenance |
+
+**MEASURED 2026-09-08.** `PRE-MASK` is **byte-identical** to the shipped engine (the mask work has
+not started). `ORIGINAL` differs from shipped by **92 lines — that is the supersampling (§8.6)**, so
+**restoring `ORIGINAL` silently deletes it**. It is a provenance record, not a rollback.
+*(§8.1 previously located `ORIGINAL` at `js/shadow-layer.ORIGINAL.js`. It has moved into this
+folder; nothing is in `js/` any more.)*
+
+Nothing in the folder is loaded by `index.html` or listed in `sw.js` CORE, and **no test checks that
+it isn't** — verified by grep, not assumed.
 
 ### 8.2 Architecture (v50+ engine)
 Per-screen-pixel ray-march (NOT the old rotate/re-grid scan — that caused staircase coasts, streak
@@ -964,6 +990,58 @@ whole session chasing the wrong baseline.)
 
 Not yet checked: whether the WIP is complete apart from the N/S splitter §9.5 is blocked on. Do that
 before starting §9.5 from scratch.
+
+### 9.0 `computeEclipse`'s `alt` argument is NOT optional — and it is EXPENSIVE
+
+**MEASURED 2026-09-08, by running it.** `computeEclipse(rec, 42.5, -2.0)` with `alt` omitted
+returns **`{visible: false}`** — the arithmetic goes NaN and the point reads as "no eclipse here".
+The same call with `alt` given explicitly as `0` returns `type:'total'`, `mag 1.03276`. It does not
+throw. A consumer that rasterises points would simply find an empty world and no error.
+
+*(An earlier draft of this section, taken from the favorability scoping note rather than from a run,
+said it returns `type:'annular'` with `mag: NaN`. That is wrong on this commit. Corrected here
+rather than left as a second story.)*
+
+The app never hits it because `local.js:29` always passes `_lookedUpAlt || 0`. **Any new caller must
+pass `alt`.** `tools/checks/test_favorability.js` asserts its own module does.
+
+**COST — the figure that governs any per-cell consumer.** One `computeEclipse` call is **26.5 µs
+inside the path** (1.9 µs far away, where it early-returns; 13.6 µs over a random global mix). Node
+22, warmed, 20k calls. That is **not** the 4.9 µs the scoping note claimed, and the difference
+decides architectures: rasterising an Iberia-sized viewport measured **1,043 ms**, and the world
+canvas **11,385 ms** — four and forty-five seconds on a phone.
+
+**Almost all of it is discardable.** `findMaximum()` + `fundamentalArgs()` — the two calls
+`computeEclipse` itself opens with — cost **1.10 µs** together and carry the geometry: distance from
+the axis `m = √(u²+v²)`, the umbra radius `L2'` (negative = total, positive = annular) and the
+relative velocity `n`. The remaining 25 µs is C1/C4 contacts, the visible-window clip, five
+`getSun` calls and four limb angles. From those three numbers:
+
+```
+central   m < |L2'|                       the same comparison computeEclipse makes
+duration  2·√(L2'² − m²) / n              hours; Besselian semi-duration
+altitude  sunAltAz(o, lat)                o is already in hand, so free
+```
+
+**Validated against the full engine** over four eclipses (2024-04-08, 2026-08-12, 2027-02-06
+annular, 2028-07-22): duration median error **0.00–0.18 s**, p95 ≤ 0.43 s. Where they disagree by
+more than a second the sun is on the horizon and `computeEclipse` is **clipping duration at
+sunset** — deliberate there (line 379), irrelevant to a score that is already zero at that
+altitude. On 2028, 4 of 442 corridor cells disagree and the highest sun altitude among them is
+0.1°. Altitude behaves the same way: 23 of 806 cells differ, highest altitude involved 0.0°.
+
+**This is not the chord approximation the scoping note rejected.** That assumed a shape
+(`dur_centre·√(1−(d/w)²)`). This is the same physics from the same fundamental arguments, and it
+keeps the hard zero at the path limit, because `√(L2'² − m²)` vanishes exactly at the umbra edge.
+Used by `js/favorability.js` (TODO #F6); reach for it before any new per-cell consumer.
+
+**One more trap in the same area.** `computeEclipse` **promotes** a central `type` to `'hybrid'`
+when the eclipse is globally hybrid, so a membership test written as
+`type === 'total' || type === 'annular'` silently excludes all 569 hybrids in the catalogue. Test
+the geometry (`m < |L2'|`), not the string.
+
+*(Aside, flagged not fixed: `osc` came back as exactly `100` for a point with `mag 0.9986`, where
+~99.x is expected. Belongs with §9.4's obscuration work.)*
 
 ### 9.1 Validation vs Jubier
 | Curve | vs Jubier | Verdict |
@@ -1307,6 +1385,15 @@ truth for a hillside.
   local-maximum timing as the map, so a readout can never disagree with the colour under it.
   **Returns null until the layer has rendered once** (it reads the loaded slices). The details-panel
   item in TODO depends on this.
+- **`Cloud.ensureSlices()`** *(added 2026-09-08)* loads everything `sampleAt()` needs for the whole
+  selected eclipse **without turning the overlay on** — the 16 slices, and the Besselian record into
+  `_lastRec`. `ensureAt()` does the same for ONE point; a consumer sampling thousands of points wants
+  this instead. **The record is the half that is easy to miss:** `_slotFor()` reads `_lastRec` to time
+  each point at its own local maximum, and `_render()` was previously the only writer, so sampling
+  with the overlay off quietly fell back to greatest-eclipse timing (§10.2 measures that at up to 90
+  minutes at the ends of a track — half a slice, no error, a plausible wrong number). Resolves
+  true/false, follows `_render()`'s degradation rule exactly (one month missing falls back to its
+  neighbour; only both missing is a failure), and needs no network — all 96 slices are precached.
 - A month that 404s **degrades to its neighbour** rather than killing the layer; only both missing
   disables it, with a console warning naming the months. Found because 12 August blends July and
   August, and July did not exist yet.
@@ -2675,12 +2762,491 @@ evidence — do not keep investigating the part they share.**
   render-quality trap in some engines. This was suspected as part of why the masked mark looked
   softer than its source PNG, but the icon was removed before the theory was actually tested —
   don't cite it as confirmed if the mark is ever rebuilt (§11.7).
+- `computeEclipse`'s `alt` argument is not optional: omit it and the point returns
+  `{visible:false}` — silently no eclipse anywhere. Pass `0` if nothing better (§9.0).
+- `computeEclipse` costs **26.5 µs** inside the path, not the 4.9 once claimed. `findMaximum` +
+  `fundamentalArgs` is **1.10 µs** and carries membership, duration and altitude — use those for any
+  per-cell work (§9.0).
+- `computeEclipse` promotes a central `type` to `'hybrid'` on hybrid eclipses, so
+  `type==='total'||type==='annular'` silently drops all 569 of them. Test `m < |L2'|` (§9.0).
+- `Cloud.sampleAt()` needs `_lastRec` for its local-maximum timing, and only `_render()` and
+  `ensureSlices()` set it. Sampling with the overlay off and neither called falls back to
+  greatest-eclipse timing — up to 90 minutes out at the ends of a track, silently (§10.2, §10.7).
+- **MapLibre has no `clip` layer type** (verified against v5.5.0 source; Mapbox GL JS v3 has one).
+  Stencil clipping exists in `painter.ts` but is internal and custom layers are told not to rely on
+  it. There is no wheel to reuse — do not go looking for one (TODO #F6).
+- **Anchoring a doc edit on the entry you added last time is a silent-failure machine.** Seven
+  changelog entries (`08h`–`08o`) were written and lost in one session: each `str.replace` anchored
+  on the previous entry, `08g` had never been created as its own entry, so the first match failed
+  and every later one anchored on something absent. `str.replace` returns the string UNCHANGED when
+  it does not match — no error, and the file is rewritten looking fine. **Anchor on something
+  stable (the `## 15. CHANGE LOG` heading), and grep for the new text afterwards.**
+- **`js/eclipse.js` is UMD and the two branches can disagree.** The Node branch returns the exports
+  object; the browser branch copies it onto `root`. It used to list the names by hand and had missed
+  `refT0` — so a caller worked in every Node test and threw in the browser. The browser branch now
+  copies every key in a loop. **The checks all run under Node**, so anything that differs between
+  the two environments is invisible to them unless a test loads the file the browser's way.
 - The generator's in-run AUDIT checks gaps and turns only — a missing or 2-point-stub limb passes it
   silently. Structural limb checks live in `audit_paths.py` (§9.7).
 
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-11d** — **The favorability explanation was a `title` attribute, which nobody would ever
+  see.** The browser delays `title` about a second, gives no visible hint that anything is there,
+  and never shows it at all on touch — so the explanation may as well not have existed.
+  Replaced with a `.circ-tip` CSS bubble driven by `data-tip`: instant, dotted-underlined so it
+  announces itself, `tabindex="0"` so a tap or the keyboard opens it, `white-space: pre-line` so the
+  newlines in the text survive, and `:focus` as well as `:hover`.
+  **Two things the suite caught, both real:** `.circ-row` was defined a second time to add
+  `position: relative`, and `test_hygiene` rejects a selector defined twice outside a media query —
+  rightly, since two blocks for one selector is how a rule ends up silently overridden; merged into
+  the existing block. And the first draft used `var(--panel, #10161d)`, but **`--panel` does not
+  exist** in this stylesheet (only `--panel-pad-x`), so it would quietly have hardcoded a colour and
+  ignored the theme. Now `--bg3` / `--border2`, the pair every other raised surface uses.
+  **Clear sky given the same treatment** (2026-09-11e): one dotted underline in a column of two
+  reads as an oversight, and its caveat — long-run average, NOT a forecast — was the least likely
+  line in the panel to be read, which is exactly backwards.
+  **Both are qualified on `[data-tip]`.** These rows start as an ellipsis and fill asynchronously,
+  and a failed fill leaves a dash; without the qualifier the underline would promise an explanation
+  that never arrives and hovering would open an empty bubble. Every failure path now also
+  `removeAttribute('data-tip')`, so a dash cannot keep the previous point's explanation. Verified by
+  driving both fills through success and failure and checking the mark appears only with a value.
+- **2026-09-11b** — **Favorability row in the Details panel**, last in Local Circumstances because it
+  summarises the rows above rather than adding another measurement.
+  **`details.js` was edited — SHARED per PARITY.md.** Both additions are `typeof`-guarded, so the
+  panel renders unchanged with the favorability files absent.
+  **It works with the overlay OFF**, which required splitting the layer: `_prepare(entry)` is now the
+  shared load-and-cache step (record, cloud slices, corridor mask, per-eclipse normalisation) and
+  `_render()` calls it, while the new `Favorability.ensureAt(lon, lat)` calls it and returns a score
+  without drawing anything. Deliberately mirrors `Cloud.ensureAt`, which is why `Clear sky` already
+  works without the cloud overlay — same precedent, same contract, everything cached against the
+  eclipse key so the second caller is free.
+  **Same stale-fill guard as `fillCloudOdds`, and it matters MORE here**: the element is re-looked-up
+  after the await and the coordinates re-checked, because this row is a single unitless percentage —
+  a value left over from the previously selected point is completely undetectable by eye, where a
+  wrong cloud figure at least has a plausibility check. Verified headlessly: a superseded request
+  refuses to paint.
+  Hover gives the three inputs (totality against the path's best, sun altitude, clear sky), says the
+  score is RELATIVE to this path and not absolute, and says terrain is not counted in it. Cloud is
+  shown as CLEAR sky to match the row above rather than flipping direction halfway down a column of
+  percentages.
+  **Outside the central path the row is not DRAWN at all** — a dash is not worth a line. Gated on
+  `res.durCentral`, the same test the Duration row above it uses, and deliberately the same one:
+  two different ideas of "is this point central" would let the panel show a duration with no score
+  or a score with no duration. The remaining dash branch is now only reachable when the panel and
+  the score layer disagree, which is the 0.2% of limb cells where one finds a sliver of totality and
+  the other does not, and it says so: "Right on the edge of the path — too marginal to score."
+  Verified by building the row block for a central and a partial point and confirming Favorability
+  appears and vanishes with Duration.
+- **2026-09-11a** — **Renamed "desirability" to "favorability" throughout.** Mechanical, and done as
+  a scripted rename with longest-token-first ordering rather than by hand, so nothing could be half
+  renamed: `js/desirability.js` -> `js/favorability.js`, `desirability-ui.js` -> `favorability-ui.js`,
+  `tools/checks/test_desirability.js` -> `test_favorability.js`, `window.Desirability` ->
+  `window.Favorability`, `DesirBar` -> `FavorBar`, source/layer ids `desir`/`desir-base` ->
+  `favor`/`favor-base`, `#btn-desir` -> `#btn-favor`, `#desirbar` -> `#favorbar`, plus prose in
+  `index.html`, `sw.js`, `css/app.css`, `map.js`, `shadow-ui.js`, `cloud-ui.js` and both docs.
+  **The four things that make a rename here risky, all checked:** the `sw.js` CORE list must match
+  the `index.html` script tags or the layer is simply absent offline (test_hygiene compares them);
+  `run.js` must name the renamed suite or it stops running silently; `css/app.css` styles `#favorbar`
+  by id; and the CSS `:disabled` / class distinction is untouched. Verified by grepping for every
+  remaining `desir` (only false positives on the English words "desirable"/"desire" remain), running
+  all 110 assertions, and loading both modules headlessly to confirm `window.Favorability` and
+  `window.FavorBar` still export the same surface.
+  *Note the old file names stay in the service worker's previous cache until `BUILD` bumps, which it
+  has.* Users get the new files on the next load; the stale ones are dropped with the old cache.
+- **2026-09-10n** — **"Dark red: terrain blocks the sun" stayed in the legend after zooming out.**
+  `isShadowVeto()` answered "is the engine BORROWED", and the legend was asking "is terrain
+  DRAWING". They are different states: zooming out below `SHADOW_MIN_ZOOM` calls
+  `_hideShadowKeepArmed()`, which drops the layer but deliberately keeps the borrow alive so it
+  resumes on the way back in — so `_vetoMode` stayed true with nothing on screen.
+  Split in two: `isShadowVeto()` now means drawing (`_vetoMode && _shadowShowing`), and
+  `isVetoArmed()` means borrowed. The legend reads the first; the handover reads the second, because
+  the answer to "should I give the engine back" is yes even while it is hidden.
+  *Same test trap a second time:* `ovals are repainted on disable` matched a 600-character window
+  after `function _disable`, and adding a comment inside that function pushed the call out of range.
+  **Match a function BODY, not a neighbourhood** — this is now written in §14 and has still caught
+  me twice.
+- **2026-09-10m** — **Legend wording (the user's), and the favorability entry in the Instructions.**
+  Strip now reads "Location favorability eclipse-wide." / "Rescaled to this view; changes as you
+  pan.", then "Based on duration, cloud avg, and sun alt.", then either "Dark red: terrain blocks
+  the sun." or "No terrain — zoom in for that."
+  **No percentages, and that is a measured decision, not a style one.** Weights were asked for and
+  computed first: how much each term MOVES the score is not fixed — duration is 18% of the effect on
+  2026-08-12 and 42% on 2031-11-14, because what dominates is whichever input has the widest spread
+  along that particular path. A fixed figure in the legend would be wrong on most eclipses. The
+  exact formula is in the Instructions instead, where it can be stated without lying.
+  Instructions gain a full favorability entry with `S = (1-C)^0.60 x (T/Tmax)^0.40 x
+  min(A/7.5,1)^0.35` in a new `.about-formula` block, the variable key, why it multiplies rather
+  than adds, what blue means, Whole path vs This view, the terrain veto and its re-centring time,
+  and what it does NOT know (roads, access, microclimate — it will happily recommend an ocean). One
+  short line added to the top-of-Instructions summary.
+  **The suite caught a real break while this was edited:** shortening the note deleted the line
+  declaring `veto`, which under `'use strict'` would have thrown on every render and taken the strip
+  down. Three assertions also had to be RETARGETED rather than deleted — the facts they guard (blue
+  is relative to this path, the veto time re-centres, the formula) moved from the legend into the
+  Instructions, and what matters is that a user can find them, not which element holds them.
+  The legend is now rendered headlessly in all three states as part of the check.
+- **2026-09-10l** — **The render box covered a continent to draw a ribbon. Root cause, after a patch
+  was tried and rejected.** `Favorability.debug()` showed `drawn` spanning **111 degrees** of
+  longitude while the user was zoomed onto the sea between Iceland and the UK.
+  **`getBounds()` is NOT wrong.** On the globe you are looking at a spherical CAP, and the lat/lon
+  rectangle enclosing a cap is legitimately vast — near the limb 111 degrees really is visible. The
+  first fix clamped the box to a zoom-derived Web-Mercator span; that is a PATCH, and it would have
+  left the edges of the globe with no overlay at all. It was written, measured, and thrown away.
+  **The mistake was the question.** This layer never needed a box covering what the user can SEE.
+  It needs one covering where there is CORRIDOR; everything else is transparent whatever we do. The
+  mask already knows exactly where that is, so `_corridorBox()` intersects with it — padded OUTWARD
+  by a cell so the corridor cannot be clipped by its own bounding box. Nothing is hidden, because
+  nothing outside the corridor was ever drawn.
+  **Three symptoms, one box.** The canvas covered a continent to draw a ribbon; the resolution
+  budget divided itself across all of it; and "This view" restretched to nearly the whole path and
+  therefore looked like it did nothing. Measured on the reported view: 111.5 x 31.7 degrees down to
+  43.2 x 31.7 — the same pixels now cover **39%** of the ground. Latitude unchanged, correctly: the
+  corridor does span that whole vertical range there.
+- **2026-09-10l** — **`map.getBounds()` OVER-REPORTS ON THE GLOBE, and it was poisoning three
+  things at once.** Zoomed onto the sea between Iceland and the UK, `Favorability.debug()` showed a
+  drawn box **111 degrees of longitude wide** — Greenland to Moscow. A sphere seen from outside
+  shows curvature that a flat lat/lon box has to swallow, so the box covers far more than is on
+  screen.
+  Everything downstream inherited it: the render extent, the resolution budget (which sizes itself
+  from how much corridor is in the box), and **"This view"**, which restretched to nearly the whole
+  path and therefore looked like it was doing nothing — the reported symptom, and the second time it
+  had been reported. It behaved correctly only above zoom 6, where the terrain veto forces Mercator
+  and `getBounds()` starts telling the truth; that is also the "only refines close in" complaint
+  from earlier, same root cause.
+  `_bbox()` now also derives the span from the zoom — `world = 512 * 2^zoom` pixels — and keeps
+  whichever box is TIGHTER. On Mercator the two agree and nothing changes. At the reported view the
+  honest span is about 26 degrees against the 65 `getBounds()` claimed.
+  *Method note:* this was found by the `debug()` readout added in `10c`, not by reasoning — two
+  earlier attempts to explain "This view" from the code were wrong. The `drawn` box was the
+  giveaway, and it was only in there because a diagnostic existed at all.
+- **2026-09-10k** — **Terrain is MANDATORY, not a choice; and the legend was reporting a stale
+  answer.** The Terrain switch added in `10j` showed greyed-out and the legend said "No terrain"
+  while the terrain shadows were plainly drawn on the map. **Cause:** the panel is rendered when the
+  button is pressed, and the veto is applied asynchronously several hundred ms later inside
+  `_render()`'s success path — so everything the panel said about terrain described the state
+  *before* the thing it was reporting on had happened. Nothing told it to redraw. It does now.
+  **And the switch is gone.** Terrain is part of what this overlay MEANS — a spot with a mountain in
+  the way is not a good spot — so there was nothing to choose. It appears when the zoom and the
+  connection allow it, and the legend's last line says which of the two states you are in. The
+  overlay is one thing with one button again.
+  *General:* anything that REPORTS on an asynchronous result has to be told when that result lands.
+  Rendering it at the moment the user acts is rendering it too early.
+- **2026-09-10j** — **Two buttons appeared "on" and the Shadows one evicted the overlay it seemed to
+  belong to.** Borrowing the engine set `_shadowArmed`, which lit the Shadows button — so both read
+  as on, and pressing Shadows twice did not toggle the veto, it handed the engine to the other
+  overlay and turned favorability off.
+  **The button reflects the USER'S shadow mode, not whether the engine is drawing.** While borrowed
+  it now reads OFF, which is honest: pressing it does not turn that terrain off, it switches
+  overlays.
+  **And terrain is a COMPONENT of the favorability overlay, not a separate one, so its switch now
+  lives in the favorability panel** — a Terrain cell beside Whole path / This view. Turning it off
+  drops the mask and leaves the score untouched. It is shown even when unavailable, disabled with
+  the reason in its title ("Needs a closer zoom and a connection"), so its absence is never mistaken
+  for the feature being gone. `vetoAvailable()` asks the same gates shadow-ui enforces rather than
+  duplicating them.
+  *Caught before shipping:* the disabled state was first written as a CSS class, but
+  `css/app.css:1496` styles `.cloudbar-cell:disabled` — the ATTRIBUTE. As a class it would have
+  looked enabled and stayed clickable. Emitted as a real `disabled` attribute, which also blocks the
+  click for free.
+- **2026-09-10i** — **The veto's scrubber was NOT hidden, because I invented a mode name.**
+  `_renderTimeline(mode)` understands `'off'` and `'hint'` and treats **every other value as
+  show**. Veto mode passed `'hide'`, which is not a mode, so it fell through to `tl.hidden = false`
+  and displayed the scrubber on an overlay whose time the user is explicitly not allowed to choose —
+  the exact opposite of both the code and the comment next to it. The suite asserted the call
+  existed, not that it did anything, so it passed.
+  Fixed to `'off'`, and **unknown modes now fail to `'off'` and warn**: showing a control by
+  accident is the worse direction, and a permissive default that treats typos as "show" is a trap
+  that will catch the next person too.
+  Also, the user's other point: **the veto time re-centres on every pan and zoom**, and nothing said
+  so. It is drawn for ONE instant, the local maximum at the centre of the view. Across a zoom-6
+  screen the local maximum spans about 8 minutes, 2 at zoom 8, 30 seconds by zoom 10 (measured), so
+  it is always timed to what is in front of you — the right behaviour, and the reason the scrubber
+  is off. But shadows that move when you pan need saying out loud or they read as a fault, so the
+  legend now says it.
+- **2026-09-10h** — **`refT0 is not defined` in the browser — and the reason NO TEST COULD HAVE
+  CAUGHT IT.** `js/eclipse.js` is UMD. The browser branch listed its globals BY HAND
+  (`root.computeEclipse = ...` and four more) and had simply missed `refT0`, which IS in the exports
+  object the Node branch returns wholesale. Every check in `tools/checks` runs under Node and takes
+  `module.exports`, so the browser branch had never once been executed by the suite. The terrain
+  veto's `_localMaxMs()` used `refT0`, passed 92 assertions, and threw on the first real click —
+  taking the whole overlay down with it, since `_render()`'s catch calls `_disable()`, which is also
+  why the legend panel vanished when any button was pressed.
+  Fixed by copying every key of the exports object to `root` in a loop: **a loop cannot drift from
+  the thing it copies, a hand-written list can and did.** `test_favorability` now loads eclipse.js
+  the way a browser does and asserts the two apis match.
+  **The general lesson is bigger than this bug.** A Node-only suite cannot see anything that differs
+  between the two environments, and a UMD file is exactly such a thing. Any future module with two
+  loading paths needs one test that exercises the path the app actually uses.
+- **2026-09-10g** — **Favorability step 3: the TERRAIN VETO.** At high zoom the favorability layer
+  borrows the shadow engine and dresses it as a veto: ground where terrain blocks the sun is painted
+  out over the score. `js/shadow-layer.js` is UNCHANGED, as scoped.
+  **The engine is a paintbrush, not a sensor** — it draws and discards and exposes no query — so
+  terrain is not an INPUT to the score but a mask above it. That is why this lives in the layer and
+  not in the maths, and why the score itself does not change when the veto appears.
+  `shadow-ui.js` gains ONE entry point in each direction — `showShadowAsVeto(timeMs)`,
+  `setVetoTime()`, `restoreShadowMode()`, `isShadowVeto()` — and the favorability modules call no
+  underscore internals of it, asserted by the suite.
+  Four things that each look like tidy-up bait and are not:
+  **(1) `ss:false`, explicitly.** The module default is false but `shadow-ui.js:54` passes true, and
+  supersampling gives the veto soft fractional edges where it must be a hard binary: the sun is
+  blocked or it is not.
+  **(2) `VETO_TINT` is not the ramp's worst red.** The ramp's worst is a bad place; this is an
+  impossible one. Darker and fully opaque against the ramp's lighter, translucent worst — otherwise
+  the same red silently changes meaning at the zoom where the veto appears.
+  **(3) The instant is the LOCAL maximum**, `findMaximum` at the viewport centre — NOT
+  `computeShadowWindow().maxms`, which is greatest eclipse: one instant for the whole planet and up
+  to 90 minutes out at the ends of a track (§10.2). Ninety minutes of solar motion is a completely
+  different set of shadows, so the wrong one vetoes the wrong ground while looking plausible.
+  **(4) `_showShadowNow()` had to learn about veto mode.** It is reached when zoom crosses back
+  above `SHADOW_MIN_ZOOM`, and without the guard it quietly reverted the veto to a scrubbable
+  greatest-eclipse shadow.
+  Gates are inherited, not reinvented: offline and below-threshold both refuse, and
+  `showShadowAsVeto()` RETURNS FALSE rather than failing silently, so the legend can say which
+  visibility source is live. **The score does mean something slightly different above and below the
+  zoom threshold.** That is not a bug, but it is now visible: the legend's last line reads either
+  "Dark red: terrain blocks the sun" or "No terrain — zoom in for that".
+  *Test-writing trap, again:* an assertion used `uicode`, declared further down the suite — `var` is
+  hoisted, so it was `undefined` there and the regex ran against the string "undefined". Read the
+  file at the point of use.
+- **2026-09-10f** — **Palette: full spectral, red -> orange -> yellow -> green -> blue** (user's
+  call, after seeing the two-hue version of `10e`). Anderson's scale reversed, so the layer matches
+  the convention eclipse chasers already read on cloud maps.
+  **The trade is recorded because it is a real one and someone will revisit it.** A spectral ramp is
+  a RAINBOW: the eye does not rank hues, so apparent boundaries appear where the HUE turns rather
+  than where the data changes; luminance is not monotonic, so it collapses in greyscale; and
+  red-green is the common colour-blind pair. The two-hue red->blue ramp avoids all three and was
+  built and rendered first (`10e`, still in the change log if it is ever wanted back). Familiarity
+  won, on the argument that the audience already reads this scale on Anderson's maps.
+  Both ends checked against a sea-coloured background before committing, since a pale good-end
+  vanishes over water — which is where much of any central path lies, so the BEST spots would
+  otherwise be the least visible.
+- **2026-09-10e** — **Palette changed from green->red to BLUE->red** (user's call). Red straight to
+  blue runs through muddy purple, so it follows the standard cartographic red-yellow-blue diverging
+  ramp: legible over a light basemap, and monotonic in luminance so it survives greyscale.
+  **The blue end is deliberately DEEP, and the pale middle deliberately narrow.** A textbook RdYlBu
+  puts near-white at 0.7 and a soft pale blue at the top, and both vanish against the sea — which is
+  where a great deal of any central path lies, so the BEST spots would have been the least visible.
+  Checked by rendering it over a sea-coloured background before committing to it.
+  **It now sits close to the cloud layer's blue->red**, which is why the first version was green: to
+  be unmistakably a different quantity. The directions agree (blue is the good end on both), so the
+  risk is the two being confused for one another, not being read backwards. If that ever bites,
+  change THIS palette, not the cloud one, which is Anderson's scale and means cloud.
+- **2026-09-10d** — **Mid-gesture quality: rebalanced, and the knobs named.** `BUDGET_MOVE` 55k and
+  a 0.6 zoom-drift trigger redrew often and cheaply, which the user reported as "noticeably more
+  rough and jagged while dragging". Now 130k and `MOVE_ZOOM_DRIFT` 0.9 — fewer redraws, each much
+  better, the old canvas stretched a little further in between. **These two are the opposite ends of
+  one trade and BOTH ends are visible:** often-and-cheap gives a coarse chunky ribbon while
+  dragging, rarely-and-good gives a slightly stretched one. Neither is a correctness question, so
+  they are named constants with the trade written next to them.
+  Also: **view mode takes its second pass only at rest.** It costs two draws — measure, then paint to
+  the measurement — and mid-gesture that is the wrong place to spend the budget. It now keeps the
+  stretch from the last resting render, so the colours are a frame behind during a drag and correct
+  the instant it stops, which is far less visible than the coarseness a second pass would cost.
+- **2026-09-10c** — **"This view" finished: percentiles, not min/max — plus a diagnostic, because
+  the reported symptom could not be reproduced by reasoning.** The mode was stretching on the
+  MINIMUM and MAXIMUM of the visible corridor. The limb cells sit at ~0 after the whole-path
+  stretch, so the minimum is almost always 0 and the restretch does far less than it appears to,
+  while a single anomalous cell owns the top. Now the 2nd-98th percentile of a sample of the
+  visible corridor (every 4th cell, capped at 200k).
+  **The repaint is conditional.** View mode draws twice — measure, then paint to the measurement —
+  and the first pass uses the PREVIOUS stretch, so it is not wasted when the range has not moved.
+  Without the guard every view-mode render costs double, on the most expensive layer on the map.
+  `Favorability.debug()` returns mode, both stretches, `pathMax`, sample count and the drawn box.
+  Added because a restretch that does nothing and a restretch that does a little look identical, so
+  the numbers have to be readable rather than guessable — the simulated maths said the median should
+  move 0.50 -> 0.87 on a cloudy zoomed view, which is plainly green, and the user saw almost no
+  change. Until that is reconciled the cause is NOT established.
+- **2026-09-10b** — **Soft blobs while zooming: the canvas was being STRETCHED, not drawn coarse.**
+  Smooth blobs rather than hard blocks is the upscaling signature. There is only ever ONE canvas,
+  drawn for wherever the map last stopped, so a zoom-in magnifies it until `moveend` redraws. Real
+  map tiles avoid this by keeping a set per zoom level; the cheap equivalent is to redraw DURING the
+  gesture at a fraction of the cost — `BUDGET_MOVE` 55k engine calls against the resting 260k — so
+  the picture stays roughly matched to the zoom and the render at `moveend` sharpens it. Triggered
+  from `move` once the zoom has drifted 0.6 from what is drawn, or the view has left the box, and
+  gated on `_busy` so at most one gesture render is ever in flight.
+  **The swap rule had to change with it.** It was `_swap(!_moving)`, correct when the only render
+  happened after the gesture; with mid-gesture redraws that hides the canvas just drawn and shows
+  the coarse world one instead — the exact opposite of the point. Now `_moving ? _stillCovers() : true`.
+  *And another assertion that pinned an exact expression rather than a behaviour* — it matched
+  `BUDGET / Math.max(frac` and broke the moment the budget became a choice between two constants.
+  Assert what the code DOES, not how it is spelled.
+- **2026-09-10a** — **Jagged low-zoom edge and a "burnt" brown fringe: ONE cause, two fixes.**
+  The outermost pixels of the ribbon are the path LIMIT, where totality length goes to zero. Those
+  fall below the whole-path 2nd percentile, clamp to exactly 0, and 0 is the darkest colour on the
+  ramp — so a line of the darkest brown-red ran along both limbs, a whole fat pixel wide at low
+  zoom. That is both symptoms. It is also wrong on its own terms: a spot with two seconds of
+  totality is not the worst place on the path, it is barely on it. **The limb now fades out in
+  ALPHA** over the last 6% of this path's longest totality, which gives a soft edge at any zoom
+  without supersampling.
+  **And the fixed canvas cap was the wrong instrument.** Cost here is not pixels, it is pixels NEAR
+  THE CORRIDOR, which swings enormously with zoom — measured on one view at 1024/2048/3072 px:
+  zoomed OUT 84 / 97 / 177 ms, so doubling is nearly free; zoomed IN the same doubling costs about
+  four times as much. The canvas is now sized per render from an engine-call BUDGET, using
+  `_maskFraction()` — a 64x64 sweep of the corridor mask, microseconds — to estimate how much of
+  this box is corridor. Zoomed out that spends the budget on resolution, zoomed in on area. No mask
+  returns 1, i.e. the SMALLEST canvas, which is the safe direction since every pixel would then
+  cost an engine call.
+- **2026-09-08o** — **A third route to the stale canvas, found by CHECKING rather than by seeing
+  it.** A render captures `entry` and `key` and then awaits three fetches, so one begun before an
+  eclipse switch resolves after it, paints the PREVIOUS corridor and marks it current — defeating
+  the `_swap(null)` of `08n` a moment later. It now abandons itself if `selectedEntry` has moved on;
+  the queued re-render is already waiting to do the right one.
+- **2026-09-08n** — **Two visible ordering bugs, both from treating an async render as instant.**
+  (1) The ovals were hidden in `_enable()`, but `_render()` loads the record, the cloud slices and
+  the path chunk, then builds the mask and measures the whole path — a few hundred ms — so they
+  vanished and the score arrived noticeably later, leaving a hole. Now hidden in the render's
+  success path, in the same frame the first pixels land. (2) Selecting a new eclipse left BOTH
+  canvases painted with the PREVIOUS corridor until the redraw landed, so the new path was drawn
+  under the old score and swapped late. `_swap()` gained a third state — `null` means neither — and
+  a new eclipse hides both at once. *A blank corridor for a moment is honest; the wrong corridor is
+  not.*
+  *Third source-matching assertion in this suite to fail against CORRECT code:* a character window
+  after `_on = true` swallowed the `_refreshOvals` DEFINITION, which sits just after `_enable` once
+  comments are stripped. The other two were `/ring\b/` matching "String" and "during". **Asserting
+  about source text: match a FUNCTION BODY, not a character neighbourhood, and word-boundary every
+  identifier.** An assertion that fires on correct code is worse than none.
+- **2026-09-08m** — **Umbra ovals hidden while the favorability overlay is on** (user's call, after
+  a first attempt was reverted). They are drawn along the same corridor below zoom 7 and sit over
+  the score as translucent lozenges. **The lesson is in HOW.** The first attempt set deck layer
+  props from `favorability-ui.js`; it appeared to work and silently came undone, because `map.js`
+  decided oval visibility in THREE independent places — `updateOvalVisibility()` and two layer
+  constructors — each testing `getZoom() < OVAL_HIDE_ZOOM`, so the next redraw through any other
+  one undid it. Now a single `ovalsVisible()` is the only decider, all three read it, and it asks
+  `window.Favorability.isOn()` — guarded, so map.js still works with the favorability files absent.
+  The layer calls `updateOvalVisibility()` on enable and disable, since deck layers otherwise only
+  rebuild on zoom or a new eclipse. The suite asserts the single point of truth by COUNTING the
+  `OVAL_HIDE_ZOOM` comparisons: one, not three.
+- **2026-09-08l** — **Blocky during pan and zoom: the FALLBACK, not the render.** The layer swapped
+  to the coarse world canvas the instant a gesture started — inherited from `cloud-average.js`,
+  where it is right because that layer's canvas is sized to its data. Here the detail canvas is
+  georeferenced and MapLibre stretches it correctly at any zoom, so this discarded a perfectly good
+  sharp image for the whole gesture. Now swaps only when the view actually LEAVES the drawn box,
+  rechecked on `move` rather than only at `movestart`, so a zoom-in stays sharp throughout. Note
+  `_stillCovers()` asks a DIFFERENT question from `_covered()`: that one asks "is this good enough
+  to keep or must I redraw", where a zoom change means the pixels are too coarse; this asks only
+  "does it still cover the screen". `BASE_PX` 512 → 1024 while here (measured 64 / 73 / 284 ms for
+  512 / 1024 / 2048 — 2048 quadruples the cost for one doubling, on a low-zoom fallback).
+- **2026-09-08k** — **"We should only ever be calculating cells inside the corridor" — a corridor
+  MASK, built from the centreline the map already draws.** The engine answers membership in ~1.1 µs,
+  fine for a ribbon and ruinous for the empty 90% of a frame. But the geometry is already in the
+  path record: `ep.centreline`. `_buildMask()` stamps a proximity envelope along it into a 0.25°
+  bitmap, with the half-width MEASURED from the record (centreline to nearest limb) rather than
+  assumed, because annular paths run far wider than total ones. `loadPathChunk()` supplies it; if it
+  fails, `_near()` returns true everywhere and the layer is correct, just slower.
+  **NOT A POLYGON** — proximity to a polyline, no ring, no winding, no antimeridian join, so none of
+  the topology that defeated four previous corridor attempts applies. Above 85° the whole longitude
+  row is marked rather than dividing by a vanishing cosine.
+  **A SUPERSET by design**: the engine still decides, so the only fatal error is EXCLUDING something
+  real, which would drop path silently. Verified against real path data on four eclipses including
+  the polar one and a hybrid — mask covers 0.6–5.2% of the world, misses **zero** corridor cells.
+  The block lattice stays as a second filter: the mask is a geometric envelope about twice the true
+  width, while a bare lattice spends engine calls discovering the empty frame is empty. **Measured
+  against full resolution:** Atlantic/Spain 1024×700 959 → **196 ms**; Iberia close 769 → **286**;
+  whole path 523 → **151**; world base 413 → **21**. Engine calls 6.5–38.5% of frame against a true
+  corridor of 2.1–28.8%, so within ~1.35× of the floor.
+- **2026-09-08j** — **The blocky band edge was the CANVAS CAP.** `MAX_PX` was 384 as a time budget,
+  but 384 px across a box 1.7× a wide viewport puts five or more screen pixels in one canvas pixel.
+  Raising it flat out is unaffordable (1024² ≈ four seconds). `_draw()` became two-level: sample a
+  coarse lattice, keep blocks touching the corridor, dilate by one, pay full price only inside.
+  **THE FAILURE MODE IS SILENT** — a lattice coarser than the ribbon would skip stretches of path
+  with no error — so block size is derived in DEGREES, not pixels: a path is ~2° across at its
+  narrowest, the lattice is held at or below 0.4° and floored at 2 px. *Also reverted here:* the
+  oval-hiding of `08i`, on the user's word that they were not the problem.
+- **2026-09-08i** — **Three fixes, all reported from a screenshot.** (1) **Terrain shadows could be
+  on at the same time** — exclusivity had been wired only between favorability and cloud. It is SIX
+  directions, not three: each pair needs both halves, and two were missing. (2) An attempt at hiding
+  the umbra ovals (reverted next build). (3) **`PX_DIV` was lying by a factor of 1.7** — the render
+  box is `1 + 2*MARGIN` times the viewport and the canvas width was not scaled for it, so "half
+  screen resolution" was really about a third. *The dark red at the Arctic end is CORRECT and was
+  queried:* ERA5 puts that stretch at **96% mean cloud**, the worst place on the path by a wide
+  margin.
+- **2026-09-08h** — **Favorability step 2: the controls** (`js/favorability-ui.js`). Bullseye button
+  in the map overlay strip, a Whole path / This view mode strip, and a legend built from the layer's
+  own `stops()` so bar and pixels cannot drift. Reuses `#cloudbar`'s box and `.cloudbar-*` cells.
+  **One overlay at a time wired in BOTH directions**, each a separate edit. The `cloud-ui.js` half
+  is guarded with `window.FavorBar &&`, the same shape as `cloud-average.js`'s existing
+  `if (window.CloudBar)` delegation, so removing the UI file leaves cloud exactly as it was. The
+  score still READS the climatology when it is not painted, which is why it needs no cloud layer on.
+- **2026-09-08f** — **Sun altitude weakened: a low sun is not a bad eclipse.** The ramp reached
+  18 deg, so it was taxing every early-morning and late-afternoon eclipse — Burgos on 2026-08-12,
+  at a sun of 8.2 deg, scored 0.76 on the altitude term when it deserves ~0.93. `ALT_HI` is now 10,
+  matching the scoping note's own "falling below ~10": flat to 10 deg, 0.93 at 8.2, 0.79 at 5,
+  0.66 at 3, 0.35 at 0.5, zero only at the true horizon. Altitude now bites only where extinction
+  and horizon murk genuinely do. **P_A remains uncalibrated** — the forced-choice pairs held sun
+  height equal deliberately, so nothing in the fit constrains it.
+  *Recorded because it is the kind of thing that gets re-litigated:* this was raised by the map
+  ranking a 79.5N Greenland Sea cell above northern Spain for 2026-08-12. The weights were NOT
+  tuned until Spain won — that would be fitting to one case. With the honest ramp the two sit at
+  0.69 and 0.65, near enough a tie; at 7.5 they are 0.690 and 0.696. The user's position on the
+  underlying question is worth recording, because it bears on the CLOUD data rather than this term:
+  he holds that Spain being clearer than the Greenland Sea for 2026-08-12 is **known, not
+  expected**, whereas ERA5 puts them only 8 points apart (34% against 42%). If that gap is really
+  larger, the fault is in the climatology or in how it is sampled at high latitude, and no altitude
+  weighting will fix it — see 10.6 on what a 55 km monthly mean can and cannot resolve.
+- **2026-09-08e** — **The sun-altitude term reshaped; each end of the path had been finishing in a
+  blunt dark-red stub.** The shape was wrong, not the weight: with a floor at 2 deg and an exponent
+  of 0.15 the term read 0.89 at 7.8 deg, 0.76 at 4, 0.59 at 2.4 and then 0.00 at 0.8 — flat, flat,
+  flat, cliff, because the exponent flattened everything above the floor and the floor did all the
+  work. Now zero at the TRUE horizon, easing from 18 deg, with P_A 0.35: 0.75 / 0.59 / 0.49 / 0.34
+  over the same stretch. **P_A was never calibrated** — the eight forced-choice pairs held sun
+  height equal deliberately — and it only bites below 18 deg, so this changes nothing about good
+  spots and everything about how the bad end reads. The ribbon still ENDS flat, which is honest:
+  the eclipse stops at sunset.
+- **2026-09-08d** — **The score ribbon was orange end to end with no green, and it was the
+  NORMALISATION.** Only D was being normalised; the composite was left at its absolute value. The
+  2026-08-12 track is cloudy along its whole length — 93% cloud in the Arctic, 82% over Iceland,
+  36% in northern Spain at its best — so C never approached 1, the raw composite peaked at **0.70**,
+  and the top of the ramp was unreachable. The colour is meant to say "best spot FOR THIS ECLIPSE",
+  which is a claim about the rest of the path, not an absolute. Fixed by stretching the COMPOSITE
+  across the path's own 2nd–98th percentile, measured once per eclipse — the scoping note had
+  specified exactly this ("restretch the composite score once — never rescale C and D separately")
+  and the first cut did the opposite. **Palette also un-banded:** 5% classes are right for the cloud
+  layer, where a value is read off the map, but this is a RANK along one path and the classes broke
+  into soft lens-shaped blobs when MapLibre upscaled the canvas, which read as blur rather than as
+  bands.
+- **2026-09-08c** — **The favorability layer drew a band right round the planet — the ANTIPODAL
+  SHADOW.** `(u,v)` is the observer's offset from the shadow axis projected onto the fundamental
+  plane, and that projection cannot tell which SIDE of the Earth the observer is on: the axis
+  extended through the globe emerges on the far side, so the antipode passes `m < |L2'|` while
+  sitting in the middle of the night. Measured on 2026-08-12: 38N 40E (Armenia) passes the geometry
+  with the sun at **−20.5°**, where `computeEclipse` — which does its own horizon work via
+  `visibleWindow()` — correctly returns not visible. Fixed with an explicit `sun.alt > 0` test;
+  membership now agrees with the full engine on **99.8%** of cells, the residual being two cells
+  where the engine finds totality exactly at sunrise.
+  **Why it hid, and this is the transferable part:** such a cell scores exactly 0 (the A term is 0
+  below the horizon) and **0 is a legitimate colour** — the ramp's worst, dark red. So the bug
+  painted a confident dark-red ring through Turkey and Iran rather than showing as an obvious
+  glitch. *A score of zero and no eclipse at all are different answers and must look different.*
+  It also survived my own render review: the world PNG showed a closed loop and I read it as "the
+  polar corridor closes properly" instead of checking it against where the 2026 path actually goes.
+  **Rendering it is not enough — the render has to be checked against ground truth.** Guarded by
+  three assertions in `test_favorability.js`, including a whole-globe agreement check against
+  `computeEclipse`. Detail canvas also raised 288 → 384 px (146 → 175 ms) for crisper limb edges.
+- **2026-09-08b** — **Favorability overlay, build step 1** (TODO #F6). `js/favorability.js` — the
+  score layer: per-cell corridor membership, C×D×A, palette, `sampleAt`/`detailAt`, two canvases,
+  whole-path normalisation. Wired into `index.html` and `sw.js` CORE; `tools/checks/test_favorability.js`
+  added AND registered in `run.js` (26/26). No button yet — that is step 2; it is callable as
+  `Favorability.enable()`.
+  **The signed-off plan was wrong and was changed with the user's agreement.** Scoring by
+  `computeEclipse` per cell measured 1,043 ms for one viewport and 11,385 ms for the world canvas.
+  The score now uses `findMaximum` + `fundamentalArgs` and the Besselian semi-duration, at 1.10 µs
+  against 26.5 — **103 ms** and **1,522 ms** respectively, with duration error 0.00–0.18 s median.
+  Full derivation and validation in §9.0. Also corrected there: the `alt`-omitted failure mode,
+  which the previous entry got wrong.
+- **2026-09-08a** — **Favorability overlay, build step 0** (TODO #F6). `Cloud.ensureSlices()` added
+  to `cloud-average.js` — additive, one export, no existing path touched; `Cloud.version` bumped to
+  `2026-09-08a`. It loads the Besselian record as well as the slices, because `sampleAt()`'s
+  local-maximum timing reads `_lastRec` and `_render()` had been its only writer, so any consumer
+  sampling with the overlay off was silently timed to greatest eclipse (§10.7). Also filed this
+  session, all measured against the tree rather than carried over from the scoping note:
+  `computeEclipse`'s `alt` argument is not optional and returns a wrong TYPE when omitted (§9.0);
+  the shadow-layer archive folder documented, with `ORIGINAL` marked provenance-only because
+  restoring it deletes supersampling (§8.1a) — §5 and §8.1 had been pointing at
+  `js/shadow-layer.ORIGINAL.js`, which no longer exists; §3's deployed-BUILD line corrected after a
+  fortnight stale. `FAVORABILITY-HANDOFF.md` folded into `TODO.md` #F6 and deleted — it was the
+  third document THE FILING RULE forbids, and said so itself on line 3.
 - **2026-09-02b** — **KMZ export shipped** (§10B): globe button in the details panel writes one
   eclipse per file, `YYYYMMDD_TSE.kmz`, with a precomputed circumstances balloon every 100 km along
   the centreline so it works offline. No live NetworkLink — Bluehost has no Node, and the reasons

@@ -606,7 +606,62 @@
       column-gap:            1.2rem;
       font-family:           var(--mono);
     }
+    /* A value that carries an explanation. `title` was tried first and is not
+       fit for this: the browser delays it about a second, gives no hint that
+       anything is there, and never appears at all on touch. This shows
+       instantly, marks itself with a dotted underline, and is focusable so a tap
+       or the keyboard opens it too.
+
+       The row needs position:relative so the bubble anchors to it; that is set
+       on .circ-row's own block below, not in a second block here — test_hygiene
+       rejects a selector defined twice outside a media query, and rightly: two
+       blocks for one selector is how a rule ends up silently overridden.
+
+       Qualified on [data-tip] because these rows start as an ellipsis and fill
+       asynchronously, and a failed fill leaves a dash. Without it the underline
+       would promise an explanation that never arrives, and hovering would open
+       an empty bubble. */
+    .circ-tip[data-tip] {
+      border-bottom: 1px dotted var(--text-dim);
+      cursor:        help;
+      outline:       none;
+    }
+    .circ-tip[data-tip]::after {
+      content:       attr(data-tip);
+      position:      absolute;
+      right:         0;
+      bottom:        calc(100% + 0.35rem);
+      z-index:       40;
+      width:         min(17rem, 78vw);
+      white-space:   pre-line;      /* the \n in the text become line breaks */
+      text-align:    left;
+      font-family:   var(--mono);
+      font-size:     0.68rem;
+      line-height:   1.5;
+      color:         var(--text);
+      /* --bg3 and --border, the same pair every other raised surface uses.
+         An earlier draft invented var(--panel, #10161d): --panel does not exist,
+         so it would silently have used a hardcoded colour and ignored the theme
+         — the kind of thing that looks fine until the palette moves. */
+      background:    var(--bg3);
+      border:        1px solid var(--border2);
+      border-radius: 4px;
+      padding:       0.5rem 0.6rem;
+      box-shadow:    0 6px 18px rgba(0, 0, 0, 0.45);
+      opacity:       0;
+      visibility:    hidden;
+      transition:    opacity 0.12s ease;
+      pointer-events: none;
+    }
+    .circ-tip[data-tip]:hover::after,
+    .circ-tip[data-tip]:focus::after,
+    .circ-tip[data-tip]:focus-visible::after {
+      opacity:    1;
+      visibility: visible;
+    }
+
     .circ-row {
+      position:        relative;   /* anchors the .circ-tip bubble */
       display:         flex;
       justify-content: space-between;
       align-items:     baseline;
@@ -824,6 +879,24 @@
     }
 
     .about-text p  { margin-bottom: 0.75rem; }
+
+    /* Formula block in the Instructions. Monospace so the exponents line up and
+       the variable list reads as a key rather than prose. Scrolls sideways on
+       its own so a long line never widens the sidebar. */
+    .about-formula {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.72rem;
+      line-height: 1.55;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.035);
+      border-left: 2px solid var(--edge);
+      border-radius: 3px;
+      padding: 0.55rem 0.7rem;
+      margin: 0 0 0.75rem;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .about-formula .k { color: var(--text-dim); }
     .about-text a  { color: var(--text); text-decoration: underline;
                      text-underline-offset: 0.18em; }
     .about-text a:hover { color: var(--text-pale); }
@@ -1437,7 +1510,8 @@
        translucent slab, same border and blur — because it is the same KIND of
        thing: an on-map control panel. Widths are capped rather than fixed so a
        long satellite name wraps instead of pushing the strip off a phone. */
-    #cloudbar {
+    #cloudbar,
+    #favorbar {
       position:        absolute;
       top:             3.2rem;
       left:            0.6rem;
@@ -1459,7 +1533,7 @@
       backdrop-filter: blur(4px);
       pointer-events:  auto;
     }
-    #cloudbar[hidden] { display: none; }
+    #cloudbar[hidden], #favorbar[hidden] { display: none; }
 
     /* The mode switch. A segmented control, deliberately the same idiom as the
        basemap picker: one of N, mutually exclusive, current state shown by the

@@ -132,6 +132,15 @@
 
   function setMode(mode) {
     if (mode && blocked(mode)) return;
+    /* ONE OVERLAY AT A TIME. Favorability paints the same map and the two
+       composite into mush. Guarded, so deleting favorability-ui.js leaves this
+       file working exactly as it did — the same shape as cloud-average.js's own
+       `if (window.CloudBar)` delegation. Note the score still READS the cloud
+       climatology when it is not painted; only the drawn layer is exclusive. */
+    if (mode && window.FavorBar && window.Favorability &&
+        window.Favorability.isOn && window.Favorability.isOn()) {
+      try { window.FavorBar.disable(); } catch (e) {}
+    }
     _mode = mode;
     if (mode) _last = mode;
     apply(mode);
@@ -323,7 +332,7 @@
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. */
   window.CloudBar = {
-    version: '2026-08-22d',
+    version: '2026-09-08g',
     handleButton: handleButton,
     setMode: setMode,
     /* CALLED WHEN CONNECTIVITY CHANGES. Now and Photo are drawn `disabled` while

@@ -637,6 +637,40 @@
       .catch(function () { return null; });
   }
 
+  /* Load everything sampleAt() needs for the WHOLE selected eclipse, without
+     turning the overlay on. ensureAt() above does this for one point; a consumer
+     that samples thousands of points (the favorability score) would otherwise
+     make thousands of round trips through the same four-slice check.
+
+     Two things are loaded, and BOTH matter:
+       - the 16 slices (two bracketing months x eight local-solar-time steps),
+       - the Besselian record, into _lastRec.
+
+     The record is the easy one to miss. _slotFor() reads _lastRec to time each
+     point at its OWN local maximum, and _lastRec is otherwise written only by
+     _render() — so with the overlay off, sampleAt() silently falls back to
+     greatest-eclipse timing, which S10.2 measures at up to 90 minutes out at the
+     ends of a track. Half a slice, no error, a plausible wrong number.
+
+     Cheap: all 96 slices are precached by sw.js and loadChunk() caches both the
+     data and the in-flight promise, so this is ~16 cache reads and no download,
+     and it works offline. Resolves true/false rather than rejecting, and follows
+     _render()'s rule exactly - one month missing degrades to its neighbour, only
+     both missing is a failure. */
+  function ensureSlices() {
+    var rec = selectedEntry;
+    if (!rec) return Promise.resolve(false);
+    var mb = _monthBlend(rec.month, rec.day), need = [], s;
+    for (s = 0; s < NSLICE; s++) { need.push(_loadSlice(mb.m0, s)); }
+    for (s = 0; s < NSLICE; s++) { need.push(_loadSlice(mb.m1, s)); }
+    need.push(_loadRec(rec));
+    return Promise.all(need).then(function (arr) {
+      _lastRec = arr[arr.length - 1];
+      var a0 = arr.slice(0, NSLICE), a1 = arr.slice(NSLICE, NSLICE * 2);
+      return a0.every(Boolean) || a1.every(Boolean);
+    }).catch(function () { return false; });
+  }
+
   function _enable() {
     if (_on) return;
     if (!selectedEntry) return;
@@ -730,8 +764,9 @@
   /* Bump on every change. The script tags carry a hardcoded ?v= and the service
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. Check Cloud.version. */
-  window.Cloud = { version: '2026-08-25a',
+  window.Cloud = { version: '2026-09-08a',
                    toggle: toggle, sampleAt: sampleAt, ensureAt: ensureAt,
+                   ensureSlices: ensureSlices,
                    enable: _enable, disable: _disable,
                    /* The legend must be built from the same numbers the pixels
                       are, or the bar and the map drift apart silently. */

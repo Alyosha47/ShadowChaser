@@ -221,7 +221,24 @@ function renderData(rec, _tz, _lat, _lon) {
        is how a 90% gets read as good news when it means the opposite.
        Filled asynchronously, and last in the block because it is the one row
        that says nothing about the eclipse itself. */
-    +   row('Clear sky', '<span id="cloud-odds">\u2026</span>')
+    +   row('Clear sky',
+                '<span id="cloud-odds" class="circ-tip" tabindex="0">\u2026</span>')
+    /* FAVORABILITY last, because it summarises the rows above rather than adding
+       another measurement. Filled asynchronously like Clear sky and by the same
+       route: it works with the overlay switched OFF, so the number is there for
+       someone who has never pressed that button. The hover gives the three
+       inputs, because a bare percentage with no provenance invites more trust
+       than it has earned.
+
+       Gated on durCentral, exactly as the Duration row above is. The score only
+       means something inside the central path, and outside it the row is not a
+       dash worth reading — it is a row worth not drawing. Using the SAME test as
+       Duration matters: two different ideas of "is this point central" would let
+       the panel show a duration with no score, or the reverse. */
+    +   (res.durCentral
+          ? row('Favorability',
+                '<span id="favor-score" class="circ-tip" tabindex="0">\u2026</span>')
+          : '')
     + '</div>';
 
     html +=
@@ -281,6 +298,7 @@ function renderData(rec, _tz, _lat, _lon) {
                              + '(js/starmap-ui.js did not load).</div>';
     }
     fillCloudOdds(coords.lat, coords.lon);
+    if (res.durCentral) fillFavorability(coords.lat, coords.lon);
   }
 }
 
@@ -314,14 +332,95 @@ function fillCloudOdds(lat, lon) {
   Cloud.ensureAt(lon, lat).then(function (v) {
     var now = document.getElementById('cloud-odds');
     if (!now || now.getAttribute('data-for') !== want) return;   /* superseded */
-    if (v == null || !isFinite(v)) { now.textContent = '\u2013'; return; }
+    if (v == null || !isFinite(v)) {
+      now.textContent = '\u2013';
+      now.removeAttribute('data-tip');   /* no value, no explanation */
+      return;
+    }
     /* The climatology stores CLOUD fraction; the row shows its inverse. */
     now.textContent = Math.round((1 - v) * 100) + '%';
-    now.title = 'Historically clear sky here at this time of day and year, from '
-              + 'the satellite record \u2014 a long-run average, NOT a forecast.';
+    /* data-tip, matching the Favorability row below. `title` is delayed about a
+       second, unmarked, and invisible on touch, so the caveat that this is a
+       long-run average and NOT a forecast was the least likely part of the panel
+       to be read — which is exactly backwards. */
+    now.setAttribute('data-tip',
+                'Historically clear sky here at this time of day and year, from '
+              + 'the satellite record \u2014 a long-run average, NOT a forecast.');
   }).catch(function () {
     var now = document.getElementById('cloud-odds');
-    if (now && now.getAttribute('data-for') === want) now.textContent = '\u2013';
+    if (now && now.getAttribute('data-for') === want) {
+      now.textContent = '\u2013';
+      now.removeAttribute('data-tip');
+    }
+  });
+}
+
+
+/* Favorability row. Same shape and the same stale-fill guard as fillCloudOdds:
+ * the panel can re-render while the data loads (another eclipse, a moved pin),
+ * so the element is looked up AFTER the await and the coordinates re-checked.
+ * Without that an old request lands on the new panel and shows the wrong place's
+ * score — and this one is a single unitless number, so a wrong value is
+ * completely undetectable by eye.
+ *
+ * Shows a dash outside the central path, which is honest: the score only means
+ * something where totality or annularity is actually visible.
+ */
+function fillFavorability(lat, lon) {
+  var el = document.getElementById('favor-score');
+  if (!el) return;
+  if (typeof Favorability === 'undefined' || !Favorability.ensureAt) {
+    el.textContent = '\u2013'; return;
+  }
+
+  var want = lat.toFixed(4) + ',' + lon.toFixed(4);
+  el.setAttribute('data-for', want);
+
+  Favorability.ensureAt(lon, lat).then(function (d) {
+    var now = document.getElementById('favor-score');
+    if (!now || now.getAttribute('data-for') !== want) return;   /* superseded */
+    if (!d || d.score == null || !isFinite(d.score)) {
+      /* The row is only drawn when res.durCentral exists, so reaching here means
+         the panel and the score layer disagree about whether this point is
+         central — they agree on 99.8% of the globe, the rest being limb cells
+         where one finds a sliver of totality and the other does not. A dash is
+         the honest answer in that sliver. */
+      now.textContent = '\u2013';
+      now.setAttribute('data-tip', 'Right on the edge of the path \u2014 too marginal to score.');
+      return;
+    }
+    now.textContent = Math.round(d.score * 100) + '%';
+
+    /* The inputs, so the number can be argued with. Duration and altitude are
+       this point's own; pathMax is what the duration term is measured against;
+       cloud is shown as CLEAR sky to match the row above rather than flipping
+       direction halfway down a column of percentages. */
+    var bits = [];
+    if (d.duration != null && isFinite(d.duration)) {
+      bits.push('Totality ' + Math.round(d.duration) + 's, best on this path '
+                + Math.round(d.pathMax) + 's');
+    }
+    if (d.altitude != null && isFinite(d.altitude)) {
+      bits.push('Sun ' + d.altitude.toFixed(1) + '\u00b0 above the horizon');
+    }
+    if (d.cloud != null && isFinite(d.cloud)) {
+      bits.push('Clear sky ' + Math.round((1 - d.cloud) * 100) + '%');
+    }
+    /* data-tip, not title. The browser delays `title` about a second, gives no
+       hint that anything is there, and never shows it at all on touch — so the
+       explanation may as well not exist. The CSS bubble is instant, underlined
+       so it is visibly there, and focusable so a tap opens it. */
+    now.setAttribute('data-tip',
+                'How good this spot is for THIS eclipse, compared with the rest '
+              + 'of its path \u2014 not an absolute score.'
+              + (bits.length ? '\n\n' + bits.join('\n') : '')
+              + '\n\nNo terrain: a ridge blocking the sun is not counted here.');
+  }).catch(function () {
+    var now = document.getElementById('favor-score');
+    if (now && now.getAttribute('data-for') === want) {
+      now.textContent = '\u2013';
+      now.removeAttribute('data-tip');
+    }
   });
 }
 

@@ -28,6 +28,15 @@
 var SHADOW_MIN_ZOOM   = 6;                         /* below this zoom: keep globe, show hint */
 var SHADOW_PX_PER_MIN = 6;                         /* horizontal scale of the scrubber ruler */
 var SHADOW_TINT       = [0.02, 0.05, 0.16, 0.55];  /* deep navy; alpha (index 3) = strength  */
+
+/* VETO tint, for when the favorability layer borrows this engine (TODO #F6
+   step 3). It must NOT be the same red as the bottom of the score ramp: the
+   ramp's worst is a bad place, this is an impossible one, and the two would
+   otherwise change meaning silently at the zoom where the veto appears. Darker
+   and fully opaque against the ramp's lighter, translucent worst. */
+var VETO_TINT         = [0.30, 0.02, 0.04, 0.92];
+var _vetoMode         = false;   /* engine borrowed by the favorability layer  */
+var _vetoTime         = null;    /* pinned instant: the LOCAL maximum          */
                                                    /* A constant, not a setting: the slider that
                                                       drove it is gone and this value is the one
                                                       that looked right. Change it here.        */
@@ -51,7 +60,15 @@ function _p2(n) { return (n < 10 ? '0' : '') + n; }
    coverage) is on; the engine itself gates the cost to where speckle appears
    and to idle frames. */
 function _makeShadowLayer(timeMs) {
-  _shadowLayer = createShadowLayer({ time: timeMs, shadowColor: SHADOW_TINT, ss: true });
+  /* ss:false in veto mode is DELIBERATE and must stay explicit. The module
+     default is false but this call site passes true, and supersampling would
+     give the veto mask soft fractional edges where it has to be a hard binary:
+     a place either has the sun blocked or it does not. */
+  _shadowLayer = createShadowLayer({
+    time: timeMs,
+    shadowColor: _vetoMode ? VETO_TINT : SHADOW_TINT,
+    ss: _vetoMode ? false : true
+  });
   return _shadowLayer;
 }
 
@@ -236,8 +253,18 @@ function _shadowBtnEl()       { return document.getElementById('btn-shadow'); }
 /* Timeline has three modes: 'off' (hidden), 'show' (readout + ruler), and
    'hint' (armed but zoomed too far out — the .hint class swaps in a static
    "zoom in" prompt). */
+/* modes: 'off' hides it, 'hint' shows it greyed, anything else SHOWS it.
+   That last clause is a trap — a misspelt or invented mode name displays the
+   scrubber rather than failing — and it cost a release: veto mode passed 'hide',
+   which is not a mode, so the scrubber stayed up on an overlay whose time the
+   user is not allowed to choose. Unknown names are now treated as 'off' and
+   complain, because showing a control by accident is the worse direction. */
 function _renderTimeline(mode) {
   var tl = _shadowTimelineEl(); if (!tl) return;
+  if (mode !== 'off' && mode !== 'hint' && mode !== 'show') {
+    if (window.console && console.warn) console.warn('[shadow-ui] unknown timeline mode:', mode);
+    mode = 'off';
+  }
   if (mode === 'off') { tl.hidden = true; return; }
   tl.hidden = false;
   if (mode === 'hint') tl.classList.add('hint');
@@ -251,6 +278,16 @@ function enableShadows() {
   if (!map || !mapReady || !selectedEntry) return;
   if (typeof createShadowLayer !== 'function') return;
   if (isOffline()) { refreshShadowAvailability(); return; }
+
+  /* ONE OVERLAY AT A TIME. Favorability paints the same corridor and the two
+     composite into mush. Guarded, so this file works unchanged without the
+     favorability modules present. (Terrain will eventually feed the score as a
+     veto — TODO #F6 step 3 — but that is the score BORROWING this engine, not
+     the two layers being drawn at once.) */
+  if (window.FavorBar && window.Favorability &&
+      window.Favorability.isOn && window.Favorability.isOn()) {
+    try { window.FavorBar.disable(); } catch (e) {}
+  }
 
   _shadowArmed = true;
   _syncShadowButton();
@@ -267,10 +304,84 @@ function enableShadows() {
   updateShadowVisibility();      /* immediate: shadows if zoomed in, else hint */
 }
 
+/* ---- borrowed by the favorability layer (TODO #F6 step 3) ----------------
+   ONE entry point in each direction. The favorability modules must never call
+   this file's underscore internals; everything they need is here.
+
+   showShadowAsVeto(timeMs) arms the engine in veto dress: veto red, no
+   supersampling, no scrubber, and the time PINNED to the instant given rather
+   than driven by the scrubber. That time matters — see the caller. It is the
+   LOCAL maximum at the point of interest, not computeShadowWindow().maxms,
+   which is greatest eclipse: one instant for the whole planet, and up to 90
+   minutes wrong at the ends of a track.
+
+   Returns false when it cannot show — offline, or below the zoom threshold —
+   so the caller can say so rather than silently showing an incomplete score. */
+function showShadowAsVeto(timeMs) {
+  if (!map || !mapReady || !selectedEntry) return false;
+  if (typeof createShadowLayer !== 'function') return false;
+  if (isOffline()) return false;
+  if (map.getZoom() < SHADOW_MIN_ZOOM) return false;
+
+  _vetoMode = true;
+  _vetoTime = timeMs;
+
+  /* Rebuild rather than recolour: shadowColor and ss are constructor options,
+     and ss in particular is not a paint property that can be set later. */
+  try { if (map.getLayer('shadow')) map.removeLayer('shadow'); } catch (e) {}
+  _shadowLayer = null;
+
+  _shadowArmed = true;
+  _attachShadowZoom();
+  setMapProjection('mercator');
+  _makeShadowLayer(timeMs);
+  try {
+    if (!map.getLayer('shadow')) map.addLayer(_shadowLayer);
+  } catch (e2) { if (window.__scShowError) window.__scShowError('shadow-veto', String(e2)); }
+  _shadowShowing = true;
+  /* 'off', NOT 'hide'. _renderTimeline understands 'off' and 'hint' and treats
+     EVERY other value as show — so an invented mode name silently displays the
+     scrubber instead of hiding it, which is exactly what 'hide' did. */
+  _renderTimeline('off');             /* no scrubber: the time is not the user's */
+  setShadowTime(timeMs);
+  _syncShadowButton();
+  return true;
+}
+
+/* Repoint the veto at a new instant without tearing the layer down — the local
+   maximum moves as the map moves. Cheap; no rebuild. */
+function setVetoTime(timeMs) {
+  if (!_vetoMode || !_shadowShowing) return;
+  _vetoTime = timeMs;
+  setShadowTime(timeMs);
+}
+
+/* Hand the engine back. Always leaves it OFF rather than restoring whatever the
+   user had before: the two overlays are mutually exclusive, so there is nothing
+   to restore to, and silently re-arming normal shadows here would surprise. */
+function restoreShadowMode() {
+  _vetoMode = false;
+  _vetoTime = null;
+  disableShadows();
+}
+
+/* Is the veto actually DRAWING? Not the same as being armed. Zooming out below
+   SHADOW_MIN_ZOOM calls _hideShadowKeepArmed(), which drops the layer but keeps
+   the borrow alive so it resumes on the way back in — so `_vetoMode` alone stays
+   true with nothing on screen, and the legend went on saying "Dark red: terrain
+   blocks the sun" over a map that had none. */
+function isShadowVeto() { return _vetoMode && _shadowShowing; }
+
+/* Is the engine BORROWED, drawing or not? The handover needs this — the answer
+   to "should I hand it back" is yes even while it is hidden. */
+function isVetoArmed() { return _vetoMode; }
+
 /* Disarm: remove the layer, restore the globe, hide the scrubber. */
 function disableShadows() {
   _shadowArmed = false;
   _shadowShowing = false;
+  _vetoMode = false; _vetoTime = null;
+  _shadowLayer = null;   /* colour and ss are constructor options: force a rebuild */
   _detachShadowZoom();
   try { if (map && map.getLayer && map.getLayer('shadow')) map.removeLayer('shadow'); } catch (e) {}
   setMapProjection('globe');
@@ -303,15 +414,20 @@ function _showShadowNow() {
     });
     return;
   }
+  /* In veto mode the instant is PINNED by the borrower and the scrubber stays
+     hidden — the time is not the user's to choose. This path is reached when
+     zoom crosses back above the threshold, and without these two lines it would
+     quietly revert the veto to a scrubbable greatest-eclipse shadow. */
+  var t = _vetoMode && _vetoTime != null ? _vetoTime : _shadowWin.curms;
   if (!_shadowLayer) {
-    _makeShadowLayer(_shadowWin.curms);
+    _makeShadowLayer(t);
   }
   try {
     if (!map.getLayer('shadow')) map.addLayer(_shadowLayer);
   } catch (e) { if (window.__scShowError) window.__scShowError('shadow', String(e)); }
   _shadowShowing = true;
-  _renderTimeline('show');
-  setShadowTime(_shadowWin.curms);
+  _renderTimeline(_vetoMode ? 'off' : 'show');
+  setShadowTime(t);
 }
 
 /* Drop the layer + return to the globe, but stay ARMED so shadows resume when
@@ -338,9 +454,10 @@ function _attachShadowZoom() {
     map.on('style.load', function () {
       if (!_shadowShowing) return;
       setMapProjection('mercator');
-      _makeShadowLayer(_shadowWin ? _shadowWin.curms : Date.now());
+      var t = _vetoMode ? _vetoTime : (_shadowWin ? _shadowWin.curms : Date.now());
+      _makeShadowLayer(t);
       try { if (!map.getLayer('shadow')) map.addLayer(_shadowLayer); } catch (e) {}
-      if (_shadowWin) setShadowTime(_shadowWin.curms);
+      if (t != null) setShadowTime(t);
     });
   }
 }
@@ -351,6 +468,9 @@ function _detachShadowZoom() {
 
 function toggleShadows() {
   if (isOffline()) return;
+  /* If the favorability layer is holding the engine, its own button owns the
+     handover. Pressing Shadows here turns THAT off first, via the exclusivity
+     already wired in enableShadows(). */
   if (_shadowArmed) disableShadows(); else enableShadows();
 }
 
@@ -401,9 +521,15 @@ function refreshShadowAvailability() {
   if (off && _shadowArmed) disableShadows();
 }
 
+/* The Shadows button reflects the USER'S shadow mode, not whether the engine
+   happens to be drawing. While the favorability layer has borrowed it, the
+   button reads OFF — because pressing it does not turn that terrain off, it
+   switches to the other overlay entirely. Lighting it up invited exactly that
+   confusion: both buttons appeared on, and pressing Shadows twice evicted
+   favorability instead of toggling its terrain. */
 function _syncShadowButton() {
   var btn = _shadowBtnEl();
-  if (btn) btn.setAttribute('aria-pressed', _shadowArmed ? 'true' : 'false');
+  if (btn) btn.setAttribute('aria-pressed', (_shadowArmed && !_vetoMode) ? 'true' : 'false');
 }
 
 /* Wire DOM once it exists. */

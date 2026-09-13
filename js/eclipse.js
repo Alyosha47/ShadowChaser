@@ -101,12 +101,14 @@
   } else if (typeof module === 'object' && module.exports) {
     module.exports = factory();
   } else {
+    /* EVERY name in the exports object, copied wholesale. Listing them by hand
+       meant the browser saw a SMALLER api than Node did: refT0 was in the
+       exports and missing here, so favorability.js worked in every Node test and
+       threw "refT0 is not defined" the moment it ran in a browser. The checks
+       run under Node and take the module.exports branch above, so no suite could
+       ever have caught it. A loop cannot drift. */
     var api = factory();
-    root.computeEclipse   = api.computeEclipse;
-    root.fundamentalArgs  = api.fundamentalArgs;
-    root.sunAltAz         = api.sunAltAz;
-    root.findMaximum      = api.findMaximum;
-    root.sampleEclipseAt  = api.sampleEclipseAt;
+    for (var k in api) { if (Object.prototype.hasOwnProperty.call(api, k)) root[k] = api[k]; }
   }
 }(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
