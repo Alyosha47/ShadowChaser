@@ -2792,6 +2792,21 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-13h** — **`followtheshadow-manual.html` updated for the favorability overlay.** The
+  standalone manual is a THIRD documentation surface alongside the in-app Instructions and these two
+  files, and it had been missed for the whole feature — worth knowing, because nothing links it to
+  the code and no check covers it.
+  Added: a full entry under *Overlay buttons* (what it blends, that the three criteria are
+  multiplied rather than added and why, that the scale is relative to the path and blue means
+  "the best this eclipse has" not "good", Whole path vs This view, the terrain veto as a
+  disqualification rather than a low score, and what it does NOT know — roads, access, microclimate,
+  it will happily recommend mid-ocean); a paragraph on the new Details row; two rows in the offline
+  quick-reference (score yes, terrain veto no); and a tip about narrowing with Whole path then
+  switching to This view.
+  It uses plain Unicode characters throughout as a text document, so ☺ there is correct and does NOT
+  contradict 2026-09-13g, which is about the APP's buttons needing to match each other.
+  *Caught before shipping:* I invented a CSS class `icon-y` for the offline table; the document's
+  own class is `icon-check`. Tag balance re-checked after editing.
 - **2026-09-13g** — **All three map-overlay buttons converted to SVG; the Instructions quote the same
   path data. This reverses a mistake made earlier the same day.**
   SS11.9 already recorded that the PROSE icons were given real SVGs *"replacing the plain Unicode

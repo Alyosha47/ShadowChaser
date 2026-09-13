@@ -170,6 +170,31 @@
       <li><strong>Now:</strong> A live cloud mask, online-only, decoded from current infrared satellite data.</li>
       <li><strong>Photo:</strong> The actual live satellite picture, online-only, for more detailed cloud data on the day.</li>
     </ul>
+
+    <p><strong>☺ Favorability</strong> — the other two buttons each show you one ingredient. This one blends
+    them into a single answer to &ldquo;how good is this spot for watching <em>this</em> eclipse&rdquo;, painted
+    along the central path only, blue for better and red for worse. Total and annular eclipses only; the button
+    does nothing for a partial one, which has no central path.</p>
+    <ul>
+      <li><strong>Three criteria</strong> — how long totality lasts, how high the Sun sits, and the average
+      cloudiness, each measured at that spot&rsquo;s own local maximum rather than at greatest eclipse. They are
+      <em>multiplied</em>, not added, so one bad ingredient cannot be bought off by the other two: a cloud-locked
+      four-minute valley should not outrank a clear two-minute ridge.</li>
+      <li><strong>The scale is relative to the path, not absolute.</strong> Colours are stretched across the range
+      that particular eclipse offers, so blue means &ldquo;the best this eclipse has&rdquo; and not &ldquo;good&rdquo;.
+      2033 will almost certainly be cloudy along its whole track, and the map will still show you where the best
+      of it is. The same blue on two different eclipses does not mean the same thing.</li>
+      <li><strong>Whole path / This view.</strong> Whole path keeps that scale fixed wherever you pan. This view
+      restretches to what is on screen, so once you have chosen a country you can still see contrast within it —
+      the colours then change as you move, which is the point rather than a fault.</li>
+      <li><strong>Zoom in and terrain joins in</strong> — ground where a ridge blocks the Sun is painted dark red.
+      That is not a low score but a disqualification, which is why it has its own colour rather than the bottom of
+      the ramp. It streams elevation data, so it needs a connection, and it is drawn for one instant: the local
+      maximum at the centre of your view, which re-centres as you move.</li>
+      <li><strong>What it does not know:</strong> roads, access, or local microclimate. It will quite happily
+      recommend the middle of an ocean. It is a guide to the sky, not to the journey.</li>
+      <li>Precached apart from the terrain — the score itself works offline.</li>
+    </ul>
     <div class="backtotop"><a href="#top">↑ back to top</a></div>
   </section>
 
@@ -179,7 +204,11 @@
 
     <h3>Local Circumstances</h3>
     <p>Shown once you've set a location (search by coordinates, or click the map). A summary — duration, magnitude, obscuration, sun position at maximum — leads, because that's the question you opened the panel to answer.</p>
-    <p>The last row, <strong>Clear sky</strong>, is the odd one out: it says nothing about the eclipse, only about your chances of seeing it. It's the share of the time this spot is historically cloud-free at that time of day and that time of year, from the satellite record. Higher is better, like everything else in the block. <strong>It is not a forecast</strong> — for an eclipse in 2085 no such thing exists, and even for next month this is a long-run average rather than a prediction.</p>
+    <p><strong>Favorability</strong> closes the block, and it is a summary of the rows above rather than another
+    measurement — the same blended score the ☺ overlay paints, for the spot you have selected. Hover it (or tap
+    it) for the three numbers behind it. It appears only inside the central path, where the score means something.</p>
+
+    <p>The row above it, <strong>Clear sky</strong>, is the odd one out: it says nothing about the eclipse, only about your chances of seeing it. It's the share of the time this spot is historically cloud-free at that time of day and that time of year, from the satellite record. Higher is better, like everything else in the block. <strong>It is not a forecast</strong> — for an eclipse in 2085 no such thing exists, and even for next month this is a long-run average rather than a prediction.</p>
 
     <h4>Contact Times</h4>
     <p>C1 (partial begins) → C2 (totality/annularity begins, umbral events only) → <strong>MAX</strong> (greatest eclipse) → C3 → C4, each with sun altitude and azimuth. Click any row to jump the terrain-shadow scrubber to that instant.</p>
@@ -342,6 +371,8 @@
       <tr><td>Terrain shadows</td><td><span class="icon-x">✗ No</span></td></tr>
       <tr><td>Cloud — Average</td><td><span class="icon-check">✓ Yes</span></td></tr>
       <tr><td>Cloud — Now / Photo</td><td><span class="icon-x">✗ No</span></td></tr>
+      <tr><td>Favorability — the score</td><td><span class="icon-check">✓ Yes</span></td></tr>
+      <tr><td>Favorability — terrain veto</td><td><span class="icon-x">✗ No</span></td></tr>
       <tr><td>Log (save/seen/export/import)</td><td><span class="icon-check">✓ Yes</span></td></tr>
       <tr><td>Elevation lookup</td><td><span class="icon-x">✗ No</span> (falls back gracefully)</td></tr>
     </table>
@@ -355,6 +386,9 @@
       <li>A saved log entry keeps whatever location was set <em>when you saved it</em> — use the pencil icon if you decide on a different viewing spot later.</li>
       <li>The share text is plain, tab-formatted — pastes cleanly into notes apps or messages.</li>
       <li>If cloud "Now"/"Photo" look greyed out, check you're online and not above ~65°N — geostationary satellites don't see that far north.</li>
+      <li>Use <strong>Favorability</strong> to narrow a path down to a region, then switch it to
+      <em>This view</em> and zoom in to choose between spots inside that region. On <em>Whole path</em>
+      a good country can look uniformly blue, because it is being compared with the whole track.</li>
     </ul>
     <div class="backtotop"><a href="#top">↑ back to top</a></div>
   </section>
