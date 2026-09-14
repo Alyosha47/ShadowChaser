@@ -579,7 +579,14 @@
       try {
         var tt = findMaximum(_lastRec, lat, -lon, 0, _lastRec.dt);
         if (isFinite(tt)) {
-          var u = _lastRec.t0 + tt - _lastRec.dt / 3600;
+          /* refT0, NOT rec.t0 — same as line 245. For the 221 catalogue
+             records whose stored t0 sits a day from td_ge (2012-05-20 annular
+             among them), the raw value puts `u` 24 h from utGE, TCLAMP rejects
+             it, and the slot silently falls back to GREATEST ECLIPSE time
+             instead of the local maximum. Measured: Tokyo on 2012-05-20 read
+             the 09-12 slice for a 07:00 local eclipse, 66% against 69%. */
+          var u = ((typeof refT0 === 'function') ? refT0(_lastRec) : _lastRec.t0)
+                  + tt - _lastRec.dt / 3600;
           if (Math.abs(u - utGE) <= TCLAMP) ut = u;
         }
       } catch (e) {}

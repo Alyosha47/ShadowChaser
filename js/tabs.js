@@ -155,12 +155,31 @@ function getTzOffset() {
   return zone ? zone.off : 0;
 }
 
+/* The instant to resolve the zone AT. A zone's offset is not a constant: DST
+   moves it by an hour twice a year, and the rules themselves change (Kathmandu
+   went +5:30 -> +5:45 in 1986). Resolving at `new Date()` therefore showed the
+   offset in force TODAY for an eclipse centuries away — measured 2026-09-13:
+   Gander 2038-01-05 out by a full hour (today is in daylight time, January is
+   not), Kathmandu 1955-06-20 out by 15 minutes. Silent, and it lands in the
+   contact times someone sets an alarm by.
+   Year is set separately: the Date(y, ...) and Date.UTC(y, ...) forms map years
+   0-99 onto 1900-1999, and this catalogue runs to -1999. Falls back to now when
+   no eclipse is selected, which is what every caller used to get anyway. */
+function tzRefDate() {
+  var e = (typeof selectedEntry !== 'undefined') ? selectedEntry : null;
+  if (!e || e.year == null) return new Date();
+  var d = new Date(0);
+  d.setUTCFullYear(e.year, (e.month || 1) - 1, e.day || 1);
+  d.setUTCHours(12, 0, 0, 0);   /* midday: never straddles a DST changeover */
+  return isFinite(d.getTime()) ? d : new Date();
+}
+
 /** Derive UTC offset from the device timezone or fallback to longitude */
 function getAutoTzOffset() {
   /* If we have a device timezone string, use it */
   if (window._deviceTz) {
     try {
-      var now = new Date();
+      var now = tzRefDate();
       var fmt = new Intl.DateTimeFormat('en', {
         timeZone: window._deviceTz,
         timeZoneName: 'shortOffset'
@@ -264,5 +283,34 @@ document.addEventListener('click', function (ev) {
       ? '<span class="install-steps"> Tap the Share button, then <em>Add to Home Screen</em>.</span>'
       : '<span class="install-steps"> Open your browser menu and choose <em>Install app</em> / <em>Add to Home screen</em>.</span>');
     link.style.display = 'none';
+  });
+})();
+
+/* ── #R5: refuse page pinch-zoom OUTSIDE the map ──────────────────────────
+   css touch-action was not enough. iOS Safari ignores touch-action for the
+   VIEWPORT pinch, the same way it ignores user-scalable=no — deliberately, for
+   accessibility. It worked on .tab-panel only because that panel is a scroll
+   container, so the gesture had somewhere to be routed; the tab bar scrolls
+   nothing, so the pinch fell through to the viewport.
+
+   Safari does honour its own non-standard gesture* events, so refuse those.
+   MapLibre drives its pinch from touch events, not gesture events, so the map
+   is unaffected either way — but the #map guard is kept so that stays true if
+   the map library ever changes.
+
+   Wrapped in a capability check: gesturestart exists only on WebKit, so this
+   is inert everywhere else. */
+(function () {
+  if (!('ongesturestart' in window)) return;
+  var stop = function (e) {
+    var t = e.target;
+    while (t && t.nodeType === 1) {
+      if (t.id === 'map') return;          /* map keeps its own pinch */
+      t = t.parentNode;
+    }
+    e.preventDefault();
+  };
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) {
+    document.addEventListener(n, stop, { passive: false });
   });
 })();

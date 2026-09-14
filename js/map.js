@@ -51,12 +51,6 @@ var BASEMAPS = {
   esri_topo:    { name: 'Esri Topographic', attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}' },
   esri_terrain: { name: 'Esri Terrain',     attr: 'Esri', max: 13, dark: false, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}' },
   esri_gray:    { name: 'Esri Light Gray',  attr: 'Esri', max: 16, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}' },
-  /* Topographic is TWO sources with a handover at TOPO_SPLIT. OpenTopoMap is
-     really two maps in one: a saturated shaded-relief globe at low zoom, then an
-     abrupt switch to a classic paper topo sheet (white ground, green forest,
-     brown contours) higher up. The paper sheet is the beautiful part and the
-     reason to use it on the ground; the low-zoom relief clashes with everything
-     around it. So we fly over Esri Topographic and land on OpenTopoMap. */
   /* Topographic is TWO sources with a handover at `nearFrom`. OpenTopoMap is
      really two maps in one: a saturated shaded-relief globe at low zoom, then an
      abrupt switch to a classic paper topo sheet (white ground, green forest,
@@ -517,6 +511,11 @@ function buildLocalStyle(data) {
           capRing(0, 180, latFrom, latTo)
         ] } } };
       layers.push({ id: id, type: 'fill', source: id,
+        /* Opacity stays flat at 1. Fading these on the relief's curve was tried
+           2026-09-13 and REVERTED: by the zoom where the relief has faded the
+           caps are off screen, so there is nothing to look at, and it left two
+           opacity expressions that had to be kept in step for ever. See TODO,
+           DECIDED AGAINST. */
         paint: { 'fill-color': ICE, 'fill-opacity': 1, 'fill-antialias': false } });
     }
     cap('cap-n',  85.00,  89.999);

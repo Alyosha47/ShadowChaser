@@ -57,31 +57,31 @@ finished; offline works; terrain shadows are done and wired in.)*
      on every settle. Measured spread across a screen: 8 min at zoom 6, 2 at zoom 8, 30 s at zoom
      10. Fine as it stands; if it ever is not, the shadow engine paints per frame, so a wide view
      could be split into horizontal bands with their own times.
-   - **`cloud-average.js` uses raw `rec.t0` where the score uses `refT0(rec)`**, which corrects for
-     an eclipse straddling 0h UT. Flagged 2026-09-10, NOT investigated. For most eclipses they are
-     identical; for one crossing midnight the cloud slice could be picked for a time 24 h off while
-     duration and altitude are right. `TCLAMP` probably rejects it and falls back to greatest
-     eclipse — probably. Worth half an hour.
+   - **`cloud-average.js` raw `rec.t0` vs `refT0(rec)` — FIXED 2026-09-13, item closed.** Flagged
+     2026-09-10. It was real but mild: `_slotFor()` used the raw `t0`, so for the 221 catalogue
+     records whose stored `t0` sits a day from `td_ge`, `u` landed 24 h from `utGE`, `TCLAMP`
+     rejected it as suspected, and the slot fell back to GREATEST-ECLIPSE time instead of the local
+     maximum — never a 24 h error, but the wrong time of day by up to `TCLAMP`. Tokyo on the
+     2012-05-20 annular read the 09–12 slice for an eclipse at 07:00 local: 66% against 69%. Hong
+     Kong 76% against 79%. Now calls `refT0` with the same `typeof` guard as line 245. Verified
+     across 2001–2100 at Tokyo: exactly the 4 midnight-crossers in that century change slot, the
+     other 220 are byte-identical. Suite unchanged.
 2. **`Now` takes ~15 s on first load** — the only remaining defect a user in a field would notice.
    Measured, and the obvious fix has already been tried and reverted. Detail under **#F2c** below;
    read it before touching anything.
 3. **Evaluate a non-GIBS imagery source** — the single change that improves every complaint at once:
    freshness, resolution and reliability. Detail under **#F2c**.
-4. **#R5 iOS pinch-zoom not blocked** (detail under BUGS). Known cause, known fix —
-   `touch-action: pan-y` on the scrollable panels, LEAVING the map container alone. Small and
-   contained, but needs a real iPhone to confirm, so it is the user's to verify.
-5. **Scan ignores non-location filters** (detail under BUGS). Filter by date/type BEFORE loading
-   chunks instead of walking ~30 of them on every first scan. No user-visible change, no data
-   restructuring.
-6. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
+4. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
    Deliberately NOT first: least visible, most likely to consume a whole session. Read HANDOFF §11.4.
-7. **Search temporal tokens** — needs a design decision before any code. Not currently bothering him.
-8. Remaining open bugs → UX deliberations → Features.
+5. **Search temporal tokens** — needs a design decision before any code. Not currently bothering him.
+6. Remaining open bugs → UX deliberations → Features.
 
 ## MAP COSMETICS — mostly DONE (2026-07-12/13). What remains:
-- **Limb not perfectly round** — the globe silhouette shows slight facets at grazing angle
-  (ellipsoid tessellation). Only improvable with finer globe geometry (lower
-  `maximumScreenSpaceError`) at a memory cost. Low priority; decide if worth it.
+- ~~**Limb not perfectly round**~~ **NOT APPLICABLE TO THIS BRANCH — struck 2026-09-13.** It
+  described a faceted globe silhouette fixable by lowering `maximumScreenSpaceError`, which is
+  CESIUM's API. There is no Cesium here and no globe projection in `map.js` — the live map is flat
+  Web Mercator, so there is no limb to be faceted. `maximumScreenSpaceError` appears nowhere in the
+  tree. Only relevant if the dormant `cesium` branch is ever revived.
 - **Raster sharpness ceiling.** NE2 is now `ne2_mercator.jpg`, 4096x4096 (Web Mercator, not the
   old 4096x2048 equirect — see HANDOFF §7.2), so it's sharper than before but still soft at
   close-in views. 8192x8192 would be a large GPU-texture jump on the platform we fought an OOM
@@ -116,15 +116,14 @@ actually clears · landscape space reclaim · mobile install note · banner slim
 ---
 
 ## OPEN — UI / COPY
-- **Star on an already-saved eclipse should UPDATE its location, not just unsave.** Today the
-  star is a pure toggle: press it on a saved eclipse and the entry is deleted. If a location is
-  set and it differs from the saved one, saving over the top should overwrite the location —
-  that is what "save it again from here" plainly means. Unsaving then needs its own affordance
-  (the bin in the log row already exists, so possibly the star simply never unsaves).
-- **Share button output needs work.** The shared text/URL is thin. Decide what a shared eclipse
-  should actually carry — date, type, the recipient's local circumstances or the sender's,
-  duration, a map image? — before touching the code; this is a content decision, not a
-  formatting one.
+- **Share output — STYLING AND FORMAT, not content. Narrowed 2026-09-13.** The old item called the
+  output thin and asked what a shared eclipse should carry. `buildShareText` answers that: date,
+  type, greatest-eclipse duration/time/location/magnitude, path width, and the SENDER's full local
+  circumstances including all four contact times. **What the user wants explored is how it LOOKS** —
+  styling and the formatting of the shared information, which is currently tab-aligned plain text.
+  That ceiling is the transport, not the code: `navigator.share`/`mailto` carry plain text only, so
+  anything richer needs the server-side share page (see Polish queued), which also carries the one
+  piece of CONTENT still missing — a map image.
 
 - **Poster picks: none and all send the same instruction.** `tsOpen` reads an empty pick set as
   "use everything", so the log toolbar's tri-state checkbox has two states that mean the same
@@ -132,22 +131,30 @@ actually clears · landscape space reclaim · mobile install note · banner slim
   control now *shows* the distinction it does not have. Fix in `tsOpen` if it ever matters, not
   in the toolbar (HANDOFF §11.3).
 
-- **Polar ice caps do not participate in the relief fade.** They are opaque fills drawn ABOVE
+- ~~**Polar ice caps do not participate in the relief fade.**~~ **DECLINED 2026-09-13 — built,
+  tested, reverted as unobservable. See DECIDED AGAINST.** Original note: They are opaque fills drawn ABOVE
   `relief`, so past ±85° the map stays solid ice-white while everything else eases back to the
   flat vector fills at high zoom (HANDOFF §7.2). Defensible — it IS ice — and rarely visited,
   but it is an inconsistency in a deliberate visual rule.
 
-- **Where do map options belong? — MOSTLY DECIDED, shipped 2026-07-29.** On-map controls now
-  exist: basemap picker top-right (Street/Topo/Sat), shadow/cloud toggles top-left (HANDOFF
-  §13.3). Desktop Map sub-tab still holds only the force-offline toggle — decide if that's worth
-  folding into the on-map strip too, or leave it.
-
-- **Should HYBRID eclipses match a search for "total"?** They ARE total along part of their path
-  (569 of 11,898). Arguments: a chaser searching "total" near a location would want a hybrid that
-  is total *there*; against: it muddies a precise term, and hybrids are already their own type.
-  Middle path: include hybrids in "total" results but label them clearly as hybrid, OR make
-  totality-at-the-chosen-location the criterion when a location is set. **Needs a decision, not a
-  guess — it changes what the app claims.**
+- **Should HYBRID eclipses match a search for "total"? — DECIDED 2026-09-13: YES. Not yet built.**
+  569 of 11,898. **Half of this is already done and was not recorded:** with a LOCATION set the
+  match already runs on `e.local_type`, and `eclipse.js` (~line 410) deliberately promotes a
+  hybrid so the badge is right while `localPhase` keeps the real total/annular determination. So
+  "totality at the chosen location" — one of the middle paths the old item proposed — ships today.
+  **What is open is the NO-LOCATION case:** a global search for "total" excludes all 569, and the
+  user's decision is that it should not. Reasoning: a hybrid IS total along part of its path, so a
+  chaser shown nothing has been given a wrong answer, not a precise one. Label it hybrid and
+  nothing is muddied.
+  **The symmetric question is DECIDED TOO: "annular" matches hybrids as well.** The user's framing:
+  the term hybrid literally means total + annular, so it belongs in both lists. Matching one and
+  not the other would be indefensible.
+  **So the rule to build: with no location and no country, a hybrid satisfies a `total` filter AND
+  an `annular` filter, and is still labelled hybrid.** Watch the AND logic — `search-parser.js`
+  documents "total annular" as both-included-AND, which a hybrid would now satisfy on its own.
+  Decide whether that is wanted or whether the AND test needs to exclude the doubled match.
+  Touch point is the `filter.types` test in `search-parser.js` (~line 572), the `else` branch where
+  no country row and no location apply.
 
 - **Search temporal tokens — open-ended *backward* ranges are useless (the "1999-" / "now-"
   problem). NEEDS A DESIGN DECISION — do not code yet. Low priority.** Today a trailing-dash range
@@ -169,11 +176,19 @@ actually clears · landscape space reclaim · mobile install note · banner slim
 ---
 
 ## VERIFY (logic — handle with care; not pure copy)
-- **Offline timezone for odd zones (Gander −3:30, Nepal +5:45).** Timezones resolve offline
-  via the **tz-lookup** polygon DB, which DOES return the correct IANA zone (`America/St_Johns`,
-  `Asia/Kathmandu`). The open question is whether details.js applies the half/quarter-hour
-  offset (and historical/future DST for the eclipse date) correctly. Verify with a Gander and
-  a Kathmandu test case across a couple of eras before declaring it handled.
+- ~~**Offline timezone for odd zones (Gander −3:30, Nepal +5:45).**~~ **VERIFIED AND HALF OF IT WAS
+  BROKEN — FIXED 2026-09-13. Item closed.** `tz-lookup` returns the right IANA zone, and the
+  half/quarter-hour handling was fine: the `shortOffset` regex in `getAutoTzOffset` parses minutes,
+  so −3:30 and +5:45 came through correctly. **The DATE handling was wrong.** The function resolved
+  the zone at `new Date()`, so every eclipse got the offset in force TODAY. Measured: Gander
+  2038-01-05 showed −2:30 instead of −3:30 (a full hour — today is in daylight time, January is
+  not), and Kathmandu 1955-06-20 showed +5:45 instead of +5:30 (the zone moved in 1986). Silent,
+  and it landed in the contact times. Fixed with `tzRefDate()` in `tabs.js`, which resolves at the
+  selected eclipse's date at midday UTC — midday so a changeover is never straddled, and the year
+  set via `setUTCFullYear` because `Date.UTC(y,...)` maps years 0–99 onto 1900–1999 and this
+  catalogue runs to −1999. No call site changed; falls back to now when nothing is selected, which
+  is what all four callers got before. Verified against both eras for both zones plus Cornwall 1999
+  and a −1999 record.
 
 ---
 
@@ -250,11 +265,15 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   umbra limits arrive in different longitude conventions, so `un.concat(us.reversed())` made a
   polygon ringing the planet. Generator fixed (`bandWindows()`, both copies); shipped index
   repaired, central entries 1,918 → 367. Andorra now 60% not-central against a computed 59.8%.
-- **⚠ STILL WRONG: two eclipses claim 55 and 42 central countries.** Their central paths ENCIRCLE
-  A POLE. A corridor that wraps 360 deg of longitude around the pole cannot be represented as a
-  simple lon/lat polygon, so no amount of unwrapping fixes it — it needs a spherical containment
-  test (or an explicit polar cap case). 46 eclipses claim 26-40 central, down from 63; some of
-  those are probably the same thing in milder form.
+- **⚠ STILL WRONG: some eclipses claim absurdly many central countries.** Their central paths
+  ENCIRCLE A POLE. A corridor that wraps 360 deg of longitude around the pole cannot be represented
+  as a simple lon/lat polygon, so no amount of unwrapping fixes it — it needs a spherical
+  containment test (or an explicit polar cap case).
+  **Counts re-measured against the shipped `central_countries.json.gz`, 2026-09-13** (the old note
+  said "two eclipses claim 55 and 42" and "46 claim 26-40" — both have drifted, and nothing in the
+  change log says why, so trust these): worst is **cat 2190 at 42**, then 654 at 39, 790 at 38,
+  9157 at 35, 519 at 34. **One** record above 40, **44** above 25. No record claims 55 any more.
+  Some of the 25-40 band is probably the same bug in milder form.
 - **Two eclipses with a missing umbral sliver — WON'T FIX for now; documented so it isn't
   rediscovered.** `332-03-13` (cat 5554) and `2485-12-07` (cat 10668), both type `A+`, are the
   only two central eclipses in all 11,898 that produce NO umbral limb at all. Verified against
@@ -281,9 +300,6 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   implicit-contour penumbra prototype reaches ~9 km. Pursue only if chasing sub-km everywhere;
   otherwise "naturally fuzzy" is fine. Eventually migrate penumbra onto the implicit engine as
   {max magnitude = 0}.
-- **#R5 iOS pinch-zoom not blocked.** `user-scalable=no` is deliberately ignored by iOS Safari.
-  Real fix: `touch-action: pan-y` on the scrollable panels (allows scroll, blocks pinch) while
-  LEAVING the map container alone (the map needs pinch to zoom). Must test on a real iPhone.
 - **Safari geolocation fails; installed PWA works.** Check secure-context / permissions / Brave
   default block vs the code path.
 - **Slow first load from local-disk server** — minutes vs seconds. *(Partly explained: every asset
@@ -294,36 +310,35 @@ The data-key and safety-rail traps are renderer-agnostic.)*
 - ~~Scan's O(n²) index lookup~~ FIXED 2026-08-29p — 232 ms → 65 ms. It walked all 11,898 index
   entries per hit (10.2 M comparisons) to resolve a date; now a map. Result list proven identical
   at twelve locations. This was never in this file; the item below is the *other*, larger win.
-- **Scan ignores non-location filters** — always scans all 5 centuries regardless of other
-  *(This is the REAL scan win. Measured alternative — splitting partials into separate files —
-  saves only ~1% of payload and was rejected. Filtering by date/type BEFORE loading chunks would
-  cut far more, cost nothing in user confusion, and needs no data restructuring. First scan after a
-  map click walks ~30 chunks; subsequent scans are in-memory and free.)*
-  Original note:
-  active filters. Pre-existing; harmless offline (SW precaches all besselian centuries) but
-  inefficient.
+- **Scan ignores non-location filters** — **DECLINED 2026-09-13, see DECIDED AGAINST.** The scan
+  walks all 50 chunks whatever else is typed; a date filter could cut it to one. Left alone because
+  the win is unmeasurable and the downside is silent wrong answers.
 
 ---
 
 ---
 
 ## FEATURES — EASY
-- **Viewing conditions in the details panel.** With a location set, show two indicators:
-  **terrain-shadow visibility** (is the sun above the local horizon at max, or behind a
-  ridge — the terrain shadow engine already answers this, HANDOFF §4) and **cloud-cover
-  likelihood** (`Cloud.sampleAt(lon, lat)` returns the mean cloud fraction at that point,
-  timed to the local maximum — see HANDOFF §10). Both are already computed; this is presentation.
-  Answers "should I stand here?" without making the user read two overlays and interpolate
-  by eye. Notes for whoever builds it:
-  - `sampleAt` returns null until the cloud layer has been on once, since it reads the
-    slices that render loaded. Either fetch on demand or show the row only when populated —
-    do NOT silently render a zero.
-  - Mean cloud amount is **not** the probability of seeing totality (50% could be
-    half-covered daily or clear on half the days). Whatever wording is used must not
-    imply odds. One qualifying line, not a paragraph.
-  - 0.5 deg is ~55 km: it cannot see sea breezes, lee clearing or valley fog. The terrain
-    indicator is sharp, the cloud one is regional. Do not present them as equally precise.
-- Thumbnail path map per list row (small SVG) — MOBILE ONLY (not desktop).
+- ~~**Viewing conditions in the details panel.**~~ **CLOSED 2026-09-13. Cloud half SHIPPED, terrain
+  half DECLINED — do not re-propose either.**
+  The cloud indicator is live: `fillCloudOdds()` in `details.js` renders a "Typical cloud" row via
+  `Cloud.ensureAt`, shown as CLEAR SKY to match the other rows' direction, alongside the
+  Favorability row. The three cautions this item carried were all honoured — it fetches on demand
+  rather than rendering a silent zero, the wording avoids implying odds, and the tooltip states the
+  0.5 deg resolution.
+  **The terrain indicator was considered and rejected, 2026-09-13.** Not for difficulty: `occAt` in
+  the shader already returns exactly the wanted 1/0 per point, and `readPixels` of a 1x1 target is a
+  pattern the layer already uses for `terrainMax`. The blocker is the ATLAS. The march needs
+  elevation along the sun ray — tens of km at eclipse sun angles, capped at the grazing horizon
+  `sqrt(2*R*h)` — and the atlas is built from what the MAP has loaded, so a details-panel row would
+  be silent at exactly the wide zoom where someone is choosing where to go. Making it honest means a
+  standalone probe: own DEM fetch along the corridor, own small atlas, own 1x1 march. A few hours,
+  online-only, and **the user decided it is not wanted in the details panel.** `details.js` already
+  says so in the Favorability tooltip ("No terrain: a ridge blocking the sun is not counted here"),
+  which is the agreed answer.
+- Thumbnail path map per list row (small SVG) — MOBILE ONLY (not desktop). *(Was listed twice;
+  the PERFORMANCE copy was merged here 2026-09-13. Its question stands: check feasibility and
+  total size for tiny scaled flat-map paths across all 5 centuries before building.)*
 - Century scroller on the mobile right edge.
 - ~~KMZ download.~~ **DONE 2026-09-02b** — `js/kmz.js`, globe button in the details panel.
   One eclipse per file (`YYYYMMDD_TSE.kmz`), path + penumbral/terminator limits + horizon curve +
@@ -605,43 +620,134 @@ These were duplicated in both documents and had begun to disagree. They are verb
 belong under the headings above; folding them in is a five-minute job for whoever is next.
 
 ### Open, measured, not fixed
-- **`Now` takes ~15 s on first load.** Measured live: a full-size EUMETSAT render is 3.1 s at their
-  end plus ~4 s of Bluehost overhead = 7.3 s cold, 0.13 s cached, ×2 discs. The proxy cache only
-  helps when the URL repeats, and `Now` requests a **view-shaped bbox**, so every pan is a new URL.
-  **The obvious fix was TRIED AND IT FAILED — do not repeat it blindly.** Fetching EUMETSAT at a
-  fixed full-disc box makes one canonical cacheable URL, and `compose()` maps each frame by lat/lon
-  through `fr.box`, so a larger box composites fine — but **`background()` builds its clear-sky field
-  against the VIEW box**, so a frame on a different box is sampled against the wrong background and
-  the picture tears into smeared horizontal bands. Reverted. To attack it properly: move the
-  background field onto the frame's own box FIRST, *then* fix the fetch box, and verify with
-  `fullpreview.js` before shipping. This is the only remaining defect a user in a field would notice.
+- **`Now` takes ~15 s on first load.** This is the only remaining defect a user in a field would
+  notice. **THE BYTE BUDGET, measured 2026-09-13 — the fifteen seconds is the BACKGROUND, not the
+  picture.** A cold start over the Atlantic fetches ~2.6 MB of visible frames (4 satellites ×
+  ~650 kB at 1024 px) and **~13.5 MB of clear-sky reference** (`BG_FRAMES` = 10 past frames per
+  satellite × ~337 kB at the world box). ~16 MB total. Attack the 13.5 MB or do not bother.
+
+  **The August diagnosis was WRONG and has been corrected in place.** It said a fixed fetch box
+  tears the picture because `background()` builds its field against the VIEW box. `bgBox()` returns
+  a fixed world box and has since the world-grid change; the background was never the cause. The
+  real constraint was in `compose()`: it mapped **columns** by longitude but assumed **rows** line
+  up 1:1 with the view (`n2 = j * pw + srcX[i]`), so any frame not on the view's exact box was
+  vertically mis-registered. Proven with `mkframes.py` + `fullpreview.js`: a 10°-snapped fetch box
+  rendered at mean abs diff 29.0 against the shipped baseline; with rows mapped by latitude it
+  drops to 3.9 (residual = resample + minutes of cloud motion), and the patched `compose()` is
+  **byte-identical (0.0) on the current view-box path**. ~8 lines, mirrors the existing column code
+  and `bgTables()`. NOT YET APPLIED — it buys nothing until the fetch box changes, and on its own
+  it only converts *repeat* views into browser-cache hits (measured: GIBS answers a repeat URL no
+  faster than a shifted one, ~0.5–0.9 s either way from a datacentre, so the canonical-URL win is a
+  **client/proxy cache** win, not a server one).
+
+- **DEAD END, measured 2026-09-13 — do not retry: rounding the background timestamps.** The 13.5 MB
+  is re-fetched by every session because each frame is stamped `Date.now()` snapped to `sat.step`,
+  so the URLs churn every 10 minutes for imagery of ground that does not move. Rounding the stamps
+  to a coarse grid would make them stable across days and users and cut a warm cold-start from
+  ~16 MB to ~2.6 MB. **It destroys the measurement.** The reference is deliberately the same clock
+  time on each of 10 past days because clear-sky ground temperature is dominated by time of day, and
+  the method reads a few degrees of depression. Tested over Australian desert shortly after local
+  dawn (Himawari, 113–153E, 34S–14N, live frame 2026-09-13T22:40Z), against the shipped exact-stamp
+  reference, at the `>4 degC` depression threshold:
+
+  | stamp shift | reference differs (mean) | cloud, exact | cloud, shifted | pixels flipped |
+  |---|---|---|---|---|
+  | 30 min | 1.86 °C | 39.0% | 70.1% | 31.3% |
+  | 60 min | 3.65 °C | 39.0% | 79.7% | 40.8% |
+  | 90 min | 5.38 °C | 27.2% | 80.5% | 53.4% |
+
+  Ocean is far more forgiving (Philippine Sea, 90 min: 42.9% → 44.6%, 3.3% flipped) — **test over
+  land at dawn or the result will look safe and is not.** Harness: `tools/checks/bgtest.py`.
+
+  **The one route left that keeps the accuracy:** have the server build the reference field once per
+  satellite per stamp and serve the finished field, instead of every phone fetching 10 frames and
+  computing the second-warmest itself. That moves 13.5 MB of fetch into one small download. Not
+  scoped. Cheaper partial moves: fewer than 10 past frames, or a coarser background grid — both
+  trade accuracy for bytes and both need the same dawn-over-land test before shipping.
 
 ### Not done, by choice — in rough priority order
-1. **Scan ignores non-location filters.** Filter by date/type BEFORE loading chunks instead of
-   walking ~30 of them on every first scan. No user-visible change, no data restructuring.
-2. **Forecast half of #F2** — near-term, online, one eclipse. The climatology half shipped.
-3. **Cloud indicators in the details panel** — depends on `Cloud.sampleAt` (§10.7).
-4. **Search by country.** Requested 2026-08-13, not yet scoped. The pieces exist —
-   `countries.geojson.gz` is already precached, and `search_parser.js` already does
-   longest-match-first multi-word matching for cities — so it is plausible rather than easy. The real
-   question is semantics, and it is the same one #F5 asks: "total eclipses in Chile" means the path
-   crossed the country, which is a polygon test against path geometry, not a point lookup like a
-   city. Decide that before writing anything.
-5. **Greatest duration for all ~11,900 eclipses.** GE ≠ greatest duration even for ordinary eclipses
+1. **Forecast half of #F2** — near-term, online, one eclipse. The climatology half shipped.
+   **Scoped 2026-09-13, read #F2b before starting:** the quota objection was wrong arithmetic
+   (corridor ~300 points, not a 19,200-point bounding box), the shape is agreed, and the first job
+   is one curl of `api.open-meteo.com` — newly allowlisted, still untested.
+2. **Greatest duration for all ~11,900 eclipses.** GE ≠ greatest duration even for ordinary eclipses
    (median +0.07 s, max +49.8 s and 10,686 km away). Needs a trustworthy global search, not the hill
    climb used for the 94 non-central ones. Full handoff in **`GREATEST-DURATION.md`** (repo root) —
    read it before starting.
-6. **#F3 animated shadow with time slider** — scrub umbra/penumbra in real time; most on-brand.
-7. **#F5 global-vs-local eclipse-type search semantics** — "1960+ total St. Louis": total globally +
-   visible, vs total AS SEEN from STL. Four options in TODO. Settle this and #4 together.
-8. **Duplicate downloads** (§12.4) — measured, harmless, has a known real fix.
+3. **Duplicate downloads** (§12.4) — measured, harmless, has a known real fix.
+
+### DECIDED AGAINST — do not re-propose
+Each of these was live on a list above and was killed deliberately. The reason is recorded so the
+next session does not re-derive the idea and pitch it back. Re-open only if the reason changes.
+
+- **#F3 animated shadow with time slider.** Declined 2026-09-13. It was ranked "most on-brand" and
+  the machinery is largely in place — the umbra ovals are already computed and drawn as a string
+  along the path, and `shadow-ui.js` `setShadowTime` already owns "what instant are we showing".
+  **It is a demo, not a tool: nobody chooses where to stand by watching the shadow move.** The two
+  open design questions, recorded in case it is ever revived for its own sake: the ovals sit at
+  fixed intervals, so scrubbing between them either stutters or needs shapes computed live (that
+  choice is the difference between an afternoon and a session); and the existing slider is scoped
+  to a location and a narrow window around local maximum, while this one spans the hours-long
+  global eclipse, so it is one slider with two modes or two sliders that fight.
+- **Terrain-shadow indicator in the details panel.** Declined 2026-09-13 by the user — the panel
+  does not need it. Full reasoning under FEATURES — EASY: the shader's `occAt` already returns the
+  1/0, and the 1x1 `readPixels` pattern exists, but the atlas is tied to the map view, so an honest
+  version needs a standalone DEM probe. `details.js` already says out loud in the Favorability
+  tooltip that terrain is not counted, and that is the agreed answer.
+- **Star on a saved eclipse updating its location instead of unsaving.** Declined 2026-09-13 by
+  the user: the star is a plain toggle and should stay one. Off + click saves, with or without a
+  location; on + click removes from the log. Nothing further to design.
+  *A gap was raised and turned out not to exist:* an eclipse saved with NO location can be given one
+  later — the Log row's PENCIL sets a saved eclipse's location to the current map pin, and the
+  manual already documents it. Nothing outstanding.
+  *Done 2026-09-13:* the manual's log section now states the toggle explicitly (save / remove) and
+  points at the pencil for location changes.
+- **Fading the polar ice caps with the relief.** Built, tested and REVERTED 2026-09-13. The caps
+  sit at opacity 1 while the relief fades from 3.5 to 9, so past ±85° the map stays solid ice-white
+  while everything else eases back — a real inconsistency in a deliberate rule (HANDOFF §7.2), and
+  the fix was one expression copied from `relief`. **Reverted because it is not observable:** by the
+  zoom where the relief has faded, the caps are off screen, and at the 85° seam the online raster
+  basemap has taken over anyway. Against zero visible benefit it left two opacity expressions that
+  had to be kept in step for ever. Do not rebuild it; if the polar look is ever revisited, revisit
+  it as a *look* and not as consistency housekeeping.
+- **Splitting partial eclipses into separate on-request files.** Declined — MEASURED, not a
+  preference. Partials are 4,200 of 11,898 (35.3%) but only ~3.5 MB of the 10.1 MB besselian cache,
+  and having no central path they add ~nothing to the 263 MB of path data that dominates storage.
+  Net saving ~1% of payload, in exchange for a new loading mode, a UI affordance, and "why can't I
+  find my eclipse?" confusion — partials are exactly what a birthday or location search expects to
+  return. *(Its old closing line pointed at chunk-filtering as "the real scan win"; that was
+  declined 2026-09-13 too — see the entry below.)*
+- **Scan ignores non-location filters (filter chunks before loading).** Declined 2026-09-13.
+  `scanLocation` parses the filter into `f` and never uses it, so a location scan walks all 50
+  besselian chunks even for "2026-2030 total", which needs one. The fix is obvious and the code even
+  keeps `f` around for it. **Declined on payoff, not difficulty:** the chunks are precached by the
+  SW and stay parsed in `chunkCache` for the session, and the maths is ~90 ms for all 11,898
+  records, so there is nothing a user could notice. Against that, the comment at `local.js:155` is
+  right — a filter bug makes eclipses VANISH from results silently, and a slow right answer beats a
+  fast wrong one. If it is ever revived it needs its own build plus a result-set diff over a few
+  hundred query shapes, and the cache key must gain the chunk set or a widened filter will reuse a
+  partial scan.
+- **Rounding the `Now` background timestamps to make them cacheable.** Not a preference — MEASURED
+  to destroy the cloud reading. Table and method under "Open, measured, not fixed". A 30-minute
+  shift takes cloud from 39.0% to 70.1% over desert at dawn. Ocean hides it, so any retest must be
+  over land at dawn (`tools/checks/bgtest.py`).
+
+*(#F5, global-vs-local eclipse-type search semantics, was struck 2026-09-13: the shipped code
+answers it and the answer is the intended one. `search-parser.js` ~line 553 states the rule — a type
+word means what the SELECTED PLACE saw; a country, being an area, uses its own type without a range
+("total chile" = the central path crossed Chile) and the GLOBAL type with one ("chile total >50" = a
+total eclipse of which Chile got at least 50%). The central-path test is exact path-vs-border
+geometry, not the sampled grid. Confirmed as correct by the user. **Known limit, deliberate:** the
+country table drops anything under 20% obscuration to hold the file at ~650 KB, so "chile >10"
+cannot match.)*
 
 ### Polish queued (Sonnet-grade)
 Merge "Coordinates" + "City" into one "Location" section (caveat: the parser doesn't handle
 bracketed multi-word cities yet); move the eclipse date to an overlay on desktop and make it more
 visible on mobile; distinguish web vs app banner size; server-side share page
 `followtheshadow.com/share?e=XXXXX` (the only way past the plain-text ceiling of
-`navigator.share`/`mailto`); Global Circumstances panel is tall.
+`navigator.share`/`mailto`) — **this is where the two open share wants land: a MAP IMAGE, and
+styled/reformatted presentation of the shared information rather than tab-aligned plain text**; Global Circumstances panel is tall.
 
 ### Deferred infrastructure
 Production bundling (single JS/CSS). Offline city **labels**: MapLibre symbol layers need PBF glyphs
@@ -652,10 +758,13 @@ history of `data/paths/` (~274 MB) needs a destructive `git filter-repo` + force
 
 ### #F2c — live cloud, the two real jobs
 
-**1. `Now`'s ~15 s first load.** See "Open, measured, not fixed" immediately above for the measurement
-and the failed attempt. The route through is: move the background field onto the frame's own box
-FIRST, *then* fix the fetch box to a canonical cacheable one. Verify with `fullpreview.js` before
-shipping — build a fresh scene, change one thing, `cmp` the two PPMs (HANDOFF §10A.10).
+**1. `Now`'s ~15 s first load.** See "Open, measured, not fixed" immediately above — read it before
+touching this, the August diagnosis there was wrong and the byte budget has since been measured.
+Short version: 13.5 MB of the ~16 MB cold start is the clear-sky reference, the timestamp-rounding
+fix for it is a measured dead end, and the `compose()` row-mapping blocker is solved but unapplied.
+Verify anything here with `fullpreview.js` before shipping — build a fresh scene, change one thing,
+`cmp` the two PPMs (HANDOFF §10A.10) — and any change to the reference with `bgtest.py` over land
+at dawn.
 
 **2. Evaluate a non-GIBS imagery source.** GIBS is NASA's *archive and visualisation* service, not an
 operational weather feed — zoom.earth and AccuWeather do not use it. We do, because it was the only
@@ -753,15 +862,37 @@ In order, and **report what you measure before writing any code**:
      feeding the same renderer*, not an extension of the existing one, and should be scoped as
      its own feature. A hole reads as clear sky, so whatever ships must be checked against that
      rule too.
-- **#F2b Cloud-cover — the FORECAST half. STARTS FROM SCRATCH.** `js/forecast.js` and
-  `tools/checks/test_forecast.js` were written 2026-08-15, never wired into `index.html`, never
-  committed, and are **lost** — confirmed against git 2026-08-18. `test_forecast` has been
-  removed from `run.js`. What was learned before they vanished, and is worth not re-deriving:
+- **#F2b Cloud-cover — the FORECAST half. STARTS FROM SCRATCH.**
+  **SCOPED 2026-09-13. The quota objection below was the wrong arithmetic — read this first.**
+  The 19,200-point figure came from gridding the path's BOUNDING BOX (120°×40° at 0.5°). The
+  feature does not need a box, it needs a CORRIDOR: ~100 samples along a 10,000 km path × 3 across
+  the width ≈ **300 points**, ~60× cheaper. At 10,000/day that is ~3% of one render, and the quota
+  is **per user IP** — the calls run in the browser, so it is the chaser's allowance, not the site's.
+  Corridor sampling is what makes this fit; do not re-derive it from a bounding box.
+  **`api.open-meteo.com` was added to the container allowlist 2026-09-13 but AFTER that session's
+  network was fixed, so it is still untested from a container. First job next session: curl it.**
+  Two unknowns, both answerable in an hour with the host reachable:
+  1. Does the free tier permit a public site like followtheshadow.com, or is it non-commercial only?
+     Licensing, not technical, and it is the one that can kill the feature outright.
+  2. Does one request accept many coordinates, or does `calculateQueryWeight()` still charge per
+     location and sum? That decides 300 calls vs a handful.
+  **What it should look like (agreed with the user 2026-09-13) — build this shape or none:**
+  a third cell on the `Average | Now` strip, live only inside ~a week of the eclipse. It recolours
+  the **corridor only**, each point shaded for **its own local maximum**, so the far end of the path
+  shows its afternoon while the near end shows its morning. The details panel swaps climatology for
+  the forecast at that spot's actual totality time. And the line that justifies the whole feature:
+  **the clearest point on the path within a few hours' drive, and how far.** That is the chaser's
+  real decision and nothing else on the internet can answer it, because no weather service knows
+  where the path is.
+  **What NOT to build:** a single forecast number for the user's location. Every weather app does
+  that better, with radar and hourly detail and a brand the user already trusts. As a one-location
+  readout this feature is an inferior copy and should not ship at all.
+  *Prior history:* `js/forecast.js` and `tools/checks/test_forecast.js` were written 2026-08-15,
+  never wired into `index.html`, never committed, and are **lost** — confirmed against git
+  2026-08-18. `test_forecast` has been removed from `run.js`. What was learned before they vanished:
   Open-Meteo's own `calculateQueryWeight()` charges **at least one call per location, and
-  locations sum** — batching 400 points into one request is 400 calls, not one. 600/min,
-  5,000/hr, 10,000/day, per-user-IP because the calls run in the browser. Consequence: a
-  forecast field is **zoomed-in by construction** — 0.5° over a 120°×40° path is 19,200 points,
-  two days of quota for one render.
+  locations sum** — batching 400 points into one request was 400 calls, not one. 600/min,
+  5,000/hr, 10,000/day, per-user-IP because the calls run in the browser.
   The original framing, still correct: **Inside about a week of an eclipse, switch to live
   forecast data if a freely available source exists** — no key, no quota, cacheable for
   offline. That week is when a chaser commits to travel, and climatology is worthless at
@@ -773,8 +904,8 @@ In order, and **report what you measure before writing any code**:
   services with quotas, where ERA5 was a one-time static download. Do not start by writing
   code. Note the timing subtlety already solved for climatology (HANDOFF §10.2) applies here too —
   a forecast must be sampled at each point's own local maximum, not at greatest eclipse.
-- **#F3 Animated shadow on globe with time slider** — scrub the umbra/penumbra across the map in
-  real time. Most on-brand feature. Distinct from the terrain-shadow scrubber that shipped:
+- **#F3 Animated shadow on globe with time slider** — **DECLINED 2026-09-13, see DECIDED AGAINST.**
+  Scrub the umbra/penumbra across the map in real time. Distinct from the terrain-shadow scrubber that shipped:
   that scrubs *terrain* shadows at one place; #F3 animates the *umbra/penumbra footprint*
   sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
   clean precedent for the time-plumbing.
@@ -832,13 +963,7 @@ In order, and **report what you measure before writing any code**:
     recommended without checking how CLARA's monthly means are actually built from its overpasses —
     scaling a full day to match an average of two overpasses is not obviously meaningful.
 
-## PERFORMANCE / DATA## PERFORMANCE / DATA
-- **Splitting partial eclipses into separate on-request files: MEASURED, NOT WORTH IT.**
-  Partials are 4,200 of 11,898 (35.3%) — but only ~3.5 MB of the 10.1 MB besselian cache, and they
-  have NO central path, so they add ~nothing to the 274 MB of path data that dominates storage.
-  Net saving ≈ 1% of total payload, in exchange for a new loading mode, a UI affordance, and
-  "why can't I find my eclipse?" confusion (partials are exactly what a birthday/location search
-  expects to return). The real scan win is the item below — filter BEFORE loading chunks.
+## PERFORMANCE / DATA
 - **Every asset downloads TWICE on a build change (real, measured, PRE-EXISTING).** The page
   requests `js/map.js?v=BUILD`; `sw.js`'s precache lists say `js/map.js`. Different URLs → two
   network fetches, for scripts, basemap layers, and every besselian/path chunk. Confirmed in the
@@ -860,20 +985,11 @@ In order, and **report what you measure before writing any code**:
   below visible-at-max-zoom). Apply to centreline + umbra limits; penumbra + terminators are
   candidates. Expected 30–60% smaller, zero visible change. Verify post-thin curves stay within
   tolerance (re-check tip cusps). Secondary: delta-encode coords before gzip.
-- Path thumbnails for list rows — feasibility/size for 5 centuries of tiny scaled flat-map
-  paths.
 - Drop or make-optional pre-1000 CE eclipses — cost/benefit on load/data shed.
-- **Trim unused Cormorant Garamond weights** — re-check against the current (first-person)
-  About text before trimming.
 
 ---
 
 ## INFRA (durable; keystones of the offline goal)
-- **The test suites cannot run as checked out.** `tools/*.js` compute `ROOT` as
-  `__dirname/../..`, which assumes they live in `tools/checks/`; in the current tree they sit in
-  `tools/`, so `ROOT` lands one level above the repo and every suite dies on ENOENT. Every run
-  on 2026-08-09 was from a throwaway `tools/checks/` copy. Move the files or change the constant
-  — but do it once and deliberately, because `run.js` and all five suites share the assumption.
 - **Cache skew is a solved problem now, but only if the tool is used.** `node tools/set_build.js`
   rewrites `var BUILD` and all 20 `?v=` stamps together. Bumping BUILD by hand renames the SW
   cache while leaving every asset URL on the old string, and `sw.js` matches with
@@ -888,7 +1004,7 @@ In order, and **report what you measure before writing any code**:
 - **Production bundling** (single JS/CSS) — optimization, not a blocker (SW precaches
   individual files fine).
 - **"Download everything for the field" toggle** — a Settings option (while online) to precache
-  the *full* paths set (~274 MB) so any eclipse, any era draws offline. Today the SW caches the
+  the *full* paths set (~263 MB of paths; ~285 MB with the besselian data) so any eclipse, any era draws offline. Today the SW caches the
   1900–2100 range + all besselian; out-of-range eclipses draw offline only if viewed online
   first. Needs progress UI, quota handling, partial-failure recovery, clear-cache control.
   Build only if a real user asks.

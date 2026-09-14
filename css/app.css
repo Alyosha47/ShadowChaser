@@ -59,6 +59,10 @@
     /* ── Header ──────────────────────────────────────────────────────── */
 
     .app-header {
+      /* #R5 — neither the header nor the tab bar is a .tab-panel, so the
+         pan-y rule there never reached them and they still pinched. Nothing
+         here scrolls, so refuse touch gestures outright. */
+      touch-action:  none;
       flex-shrink:   0;
       display:       flex;
       align-items:   center;
@@ -123,6 +127,7 @@
     /* ── Tab bar ─────────────────────────────────────────────────────── */
 
     .tab-bar {
+      touch-action:  none;   /* #R5 — see .app-header */
       flex-shrink:   0;
       display:       flex;
       height:        var(--tab-h);
@@ -177,6 +182,12 @@
       position:  absolute;
       inset:     0;
       overflow-y: auto;
+      /* #R5 — iOS Safari ignores user-scalable=no on purpose (accessibility),
+         so page pinch-zoom has to be refused per element. pan-y keeps vertical
+         scrolling and drops the pinch. #tab-map RE-WIDENS this below: it is a
+         .tab-panel too, and touch-action intersects down the ancestor chain,
+         so leaving it at pan-y here would kill horizontal map panning. */
+      touch-action: pan-y;
       padding:   1.25rem 1.5rem 2rem;
       /* .detail-title reads this to bleed its sticky background edge-to-edge
          (see below) — kept in sync with the padding above so it never has to
@@ -197,6 +208,9 @@
     #tab-map {
       padding:  0;
       overflow: hidden;  /* map fills the panel; no outer scroll */
+      /* Undo the .tab-panel pan-y (#R5). An ancestor's touch-action narrows a
+         descendant's, so pan-y here would stop the map panning sideways. */
+      touch-action: pan-x pan-y;
     }
     #tab-map > * {
       max-width: none;

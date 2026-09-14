@@ -1060,13 +1060,16 @@
        against 1.0s parallel. */
     var out = new Array(jobs.length), runs = [];
 
-    /* THE FRAME BOX MUST MATCH THE VIEW BOX. Fetching EUMETSAT at a fixed
-       full-disc box was tried to make the proxy cache hit on every pan, and it
-       tore the picture into smeared horizontal bands: background() builds its
-       clear-sky field against the VIEW box, so a frame on a different box is
-       sampled against the wrong background and the rows disagree. Reverted
-       2026-08-20. If the cache-miss cost is worth attacking again, the
-       background field has to move to the frame's box FIRST. */
+    /* THE FRAME BOX MUST MATCH THE VIEW BOX — but NOT for the reason this
+       comment used to give. Fetching EUMETSAT at a fixed full-disc box was
+       tried 2026-08-20 to make the proxy cache hit on every pan; it tore the
+       picture into smeared horizontal bands and was blamed on background()
+       building its field against the VIEW box. That is false: bgBox() returns a
+       fixed world box. The real constraint is in compose(), which maps columns
+       by longitude but assumes rows line up 1:1 with the view — so a frame on
+       any other box is vertically mis-registered. Measured and solved
+       2026-09-13 (~8 lines, rows by latitude, byte-identical on this path);
+       see TODO "Open, measured, not fixed". Do not re-derive it. */
     function run(job, idx) {
       var pw = Math.max(64, Math.round((job.box.e - job.box.w) / (box.e - box.w) * w));
       return frameFor(job.sat, job.box, pw, h).then(function (fr) {

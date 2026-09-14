@@ -50,6 +50,13 @@ upload**; git does not deploy (§4).
 > **This person has been let down repeatedly and has spent weeks uploading files by hand.** Do not
 > tell them to stop, pause, cut the feature, or accept a workaround. Do not announce a breakthrough
 > until a render proves it. Say plainly what is fixed, what is not, and what you measured.
+>
+> **HE DOES NOT RUN NODE. Ever. Confirmed 2026-09-13.** He edits and uploads files; he does not have
+> a toolchain. So **"run `node tools/set_build.js` before you ship" is not an instruction you may
+> hand him — it is YOUR job.** Any session that touches a versioned asset runs `set_build.js` in the
+> container and hands back the resulting `index.html` and `sw.js` ALONGSIDE the changed files.
+> The same goes for every other tool in `tools/`: run it here, hand over the output. Telling him to
+> run something is the same as not doing it.
 
 
 **You are talking to someone who should not have to tell you any of this.** Being asked is a direct
@@ -2792,6 +2799,96 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-13m** — **Full audit of TODO.md against the code. The list was not trustworthy; it is
+  now.** Two items were already SHIPPED and still listed as open (country search, cloud indicators
+  in the details panel — the latter listed twice, in two sections, which is likely how it
+  survived). Two more were questions the code had already answered (#F5 search semantics; the
+  with-location half of the hybrid question). Two were STALE ENVIRONMENT CLAIMS — INFRA's "the test
+  suites cannot run as checked out" (they run; 13 suites, clean clone, all session) and MAP
+  COSMETICS' faceted-limb item, which describes CESIUM's `maximumScreenSpaceError` on a branch with
+  no Cesium and no globe projection. One was already done invisibly (Cormorant weights: only
+  `-Light` ships). One was a job written twice in two sections (path thumbnails). Two were
+  measured-and-rejected decisions filed as open work (partials split; #F7 cloud source) — the
+  second still awaiting the user's word on moving it.
+  **Numbers that had drifted, re-measured:** the polar-encircling country counts said "two eclipses
+  claim 55 and 42" and "46 claim 26-40"; the shipped index says worst is cat 2190 at **42**, one
+  record above 40, **44** above 25, and nothing claims 55. The "download everything" item said
+  274 MB; it is **263 MB** of paths, **285 MB** with besselian. Pre-1000 CE is **165 MB, 58%** of
+  that — the real argument for the drop-or-optional item.
+  **Code defect found while auditing:** `map.js` carried the topo-handover comment TWICE, the older
+  copy naming a constant `TOPO_SPLIT` that exists nowhere in the tree. Superseded copy removed.
+  **Process:** the ledger, BUGS and VERIFY sections were accurate wherever checkable — the rot was
+  concentrated in items that shipped without their entry being struck. The FILING RULE is the fix
+  and it was not being applied on completion.
+- **2026-09-13l** — **Timezone offsets were resolved at TODAY's date, not the eclipse's. Fixed.**
+  The VERIFY item asked whether odd zones were handled; the half/quarter-hour half was fine
+  (`shortOffset` parses minutes, Gander −3:30 and Kathmandu +5:45 both correct) but
+  `getAutoTzOffset` called `new Date()`, so every eclipse in the catalogue got the offset in force
+  now. Measured: **Gander 2038-01-05 out by a full hour** (September is daylight time, January is
+  not) and **Kathmandu 1955-06-20 out by 15 min** (the zone moved +5:30 → +5:45 in 1986). Silent,
+  and it lands in the contact times. New `tzRefDate()` in `tabs.js` resolves at the selected
+  eclipse's date, **midday UTC so a DST changeover is never straddled**, with the year set by
+  `setUTCFullYear` because `Date.UTC(y,…)` maps 0–99 onto 1900–1999 and the catalogue reaches −1999.
+  **No call site changed** — all four (`details.js`, `local.js`, `map.js`, `shadow-ui.js`) go
+  through `getTzOffset`, and with nothing selected it falls back to now, which is what they got
+  before. **Confirmed by the user in the app**, 2029-01-14 at Gander: 15:48 before, 14:48 after.
+  *Choosing a test case needs care* — the offset must actually DIFFER between the eclipse date and
+  the day you test on, so a March eclipse is useless against a September test (North American DST
+  starts the second Sunday in March). 2029-01-14 and 2038-01-05 over Gander both work.
+  Also this session: **polar cap fade BUILT AND REVERTED** — the §7.2 inconsistency (past ±85° the
+  map stays solid ice-white while the relief fades) is real and the fix was one copied expression,
+  but the user could not observe it at any zoom: by the time the relief has faded the caps are off
+  screen, and at the seam the online raster has taken over. Reverted rather than carry two opacity
+  expressions that must be kept in step for nothing. Filed under DECIDED AGAINST. And the
+  manual's log section now states the star is a plain save/remove toggle and points at the Log
+  row's pencil for changing a saved location. **`index.html` cache stamps NOT bumped** —
+  `node tools/set_build.js`.
+- **2026-09-13k** — **#R5 iOS pinch-zoom FIXED and confirmed on a real iPhone. Two parts, and the
+  TODO's "known fix" was only half of it.** `css/app.css`: `touch-action: pan-y` on `.tab-panel`,
+  with `#tab-map` re-widened to `pan-x pan-y` — **`#tab-map` carries the `.tab-panel` class and
+  touch-action intersects down the ancestor chain, so the blanket rule alone kills horizontal map
+  panning.** That stopped the panels. It did NOT stop the tab bar: **iOS Safari ignores
+  `touch-action` for the viewport pinch, exactly as it ignores `user-scalable=no`.** The panels only
+  worked because a scroll container gives the gesture somewhere to be routed; the tab bar scrolls
+  nothing. Part two, appended to `js/tabs.js`: refuse WebKit's `gesturestart`/`change`/`end` unless
+  the target is inside `#map`. Guarded by `'ongesturestart' in window`, so inert off WebKit;
+  MapLibre pinches from touch events, so the map is unaffected and the `#map` guard is belt-and-
+  braces. `.app-header`/`.tab-bar` also carry `touch-action: none` — harmless, and correct if the
+  gesture guard is ever removed. **`index.html` cache stamps NOT bumped** — `node tools/set_build.js`.
+- **2026-09-13j** — **`cloud-average.js` `_slotFor()` now uses `refT0()`, closing the item flagged
+  2026-09-10.** The suspicion was a 24 h-wrong cloud slice; the reality is milder and the guard
+  worked. With the raw `t0`, the 221 records whose stored `t0` is a day from `td_ge` put `u` 24 h
+  from `utGE`, `TCLAMP` threw it out, and `ut` fell back to greatest-eclipse time — so the slice was
+  never a day wrong, it was the wrong *time of day* by up to `TCLAMP`, silently losing the local-
+  maximum refinement for exactly the eclipses that need it. 2012-05-20 annular at Tokyo: 09–12
+  slice for an 07:00 local eclipse, 66% vs 69%; Hong Kong 76% vs 79%. Ten such records fall in
+  1900–2100. Fixed with the same `typeof refT0 === 'function'` guard line 245 already uses.
+  *Verified:* across 2001–2100 sampled at Tokyo, exactly the 4 midnight-crossers change slot and
+  the other 220 are identical. Full suite unchanged (13 suites, `test_tshirt`'s 3 as before).
+  **`index.html` cache stamps NOT bumped** — run `node tools/set_build.js` when this ships.
+- **2026-09-13i** — **`Now`'s 15 s first load: measured, and BOTH the standing diagnosis and the
+  obvious fix turned out to be wrong. No app behaviour changed; one comment corrected, one harness
+  added, TODO rewritten.**
+  *Where the 15 s is.* Not the visible picture — 2.6 MB of frames against **13.5 MB of clear-sky
+  reference** (`BG_FRAMES` = 10 × ~337 kB × 4 satellites). ~16 MB cold. Anything that does not
+  attack the 13.5 MB is not attacking the problem.
+  *The August blocker was misattributed.* "A fixed fetch box tears the picture because
+  `background()` builds its field against the VIEW box" is false — `bgBox()` returns a fixed world
+  box. The real constraint is `compose()` mapping columns by longitude while assuming rows line up
+  1:1 with the view. Fixed in ~8 lines (rows by latitude, mirroring the existing column code and
+  `bgTables()`); a 10°-snapped fetch box goes from mean abs diff 29.0 to 3.9 against baseline, and
+  the patch is **byte-identical (0.0) on the shipped view-box path**. **Deliberately NOT applied** —
+  it is inert until the fetch box changes, and the canonical-URL win is client/proxy-side only
+  (GIBS served repeat and shifted URLs equally fast, ~0.5–0.9 s, from the container).
+  *The timestamp fix is a measured dead end.* Rounding the background stamps to a coarse grid would
+  make the 13.5 MB cacheable across sessions and users. It also destroys the reading: over
+  Australian desert just after local dawn, a 30-minute shift takes cloud from 39.0% to 70.1% with
+  31.3% of pixels flipped; 90 minutes takes 27.2% to 80.5% with 53.4% flipped. Ocean hides it
+  entirely (3.3% flipped at 90 min), so **this class of change must be tested over land at dawn.**
+  New harness `tools/checks/bgtest.py` does exactly that. Numbers and the remaining route
+  (server-side pre-built reference field) are in TODO.
+  *Process note:* I spent the first part of this session working from a stale `maplibre` checkout
+  and advised off it. `main` is the live branch. §0's first instruction exists for this reason.
 - **2026-09-13h** — **`followtheshadow-manual.html` updated for the favorability overlay.** The
   standalone manual is a THIRD documentation surface alongside the in-app Instructions and these two
   files, and it had been missed for the whole feature — worth knowing, because nothing links it to
