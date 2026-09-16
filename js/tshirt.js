@@ -337,20 +337,8 @@ function splitEdge(pts){
    wrap the globe, cannot enclose a pole, cannot wind. Emitting every quad as a
    subpath of ONE path with nonzero fill unions them into the corridor, and the
    only case left to handle is a quad that straddles the seam — which is local
-   and trivial.
-
-   No thresholds. No special cases for poles. */
-
-/* Squared distance in a locally-flat frame — longitude compressed by latitude,
-   so "nearest" means nearest on the globe, not nearest in raw degrees. */
-function ptGap(a, b) {
-  var dLon = b[0] - a[0];
-  while (dLon >  180) dLon -= 360;
-  while (dLon < -180) dLon += 360;
-  var k = Math.cos((a[1] + b[1]) / 2 * DEG);
-  var x = dLon * k, y = b[1] - a[1];
-  return x * x + y * y;
-}
+   and trivial — and a cross-section that passes over a pole, which is local
+   too (see the great-circle note at emitQuad). */
 
 /* Pair the two limbs by TIME, not by proximity.
 
@@ -376,37 +364,6 @@ function limbAt(limb, f) {
   return [a[0] + dLon * t, a[1] + (b[1] - a[1]) * t];
 }
 
-/* ── Repairing the pole ────────────────────────────────────────────────
-   Cross-sections degenerate near a pole: for 2015-03-20 the last pair sits at
-   longitude -53 and +111 — 164 degrees apart, though only 3.7 degrees apart on
-   the globe. Any quad joining them is a long thin sliver, which is the notch at
-   the tip and the centreline escaping through it.
-
-   The CENTRELINE never degenerates: it is a smooth track all the way up. So
-   where the cross-section misbehaves, keep the centreline and rebuild the pair
-   as centre +- half the last good width, offset PERPENDICULAR to the track.
-
-   This is the cartoon part, and it is deliberate: the poster is a print, not a
-   navigation chart. Away from the pole the real limbs are used unchanged, so
-   the band is exact everywhere it can be. */
-
-/* Bearing from a to b, degrees clockwise from north. */
-function bearing(a, b) {
-  var la1 = a[1]*DEG, la2 = b[1]*DEG, dl = (b[0]-a[0])*DEG;
-  var y = Math.sin(dl)*Math.cos(la2);
-  var x = Math.cos(la1)*Math.sin(la2) - Math.sin(la1)*Math.cos(la2)*Math.cos(dl);
-  return Math.atan2(y, x) / DEG;
-}
-
-/* Point `d` degrees of great circle from `p` along `brg`. */
-function offsetPt(p, brg, d) {
-  var la = p[1]*DEG, lo = p[0]*DEG, ad = d*DEG, th = brg*DEG;
-  var la2 = Math.asin(Math.sin(la)*Math.cos(ad) + Math.cos(la)*Math.sin(ad)*Math.cos(th));
-  var lo2 = lo + Math.atan2(Math.sin(th)*Math.sin(ad)*Math.cos(la),
-                            Math.cos(ad) - Math.sin(la)*Math.sin(la2));
-  return [lo2/DEG, la2/DEG];
-}
-
 function pairWalk(nLimb, sLimb) {
   var steps = Math.max(nLimb.length, sLimb.length) - 1;
   if (steps < 1) return [];
@@ -415,67 +372,23 @@ function pairWalk(nLimb, sLimb) {
     var f = i / steps;
     pairs.push([limbAt(nLimb, f), limbAt(sLimb, f)]);
   }
-  pairs = repairDegenerate(pairs, centreOf(pairs));
-  /* Drop the final cross-section when it was reconstructed. It is the most
-     extreme one — the very tip of the track — and its outer corner is what
-     leaves a V-notch in the band's edge. One step is ~0.02 degrees of track;
-     losing it is invisible, keeping it is not. */
-  if (pairs.length > 3 && pairs[pairs.length - 1].rebuilt) pairs.pop();
   return pairs;
 }
 
-/* The track's own centreline, from the midpoint of each cross-section. Used
-   only where the cross-section is sane; that is exactly where the midpoint is
-   trustworthy. */
+/* The ribbon's midline: the midpoint of each cross-section AS DRAWN. That is
+   the lon/lat midpoint wherever the cross edge is drawn straight, and the
+   great-circle midpoint where it follows its great circle (see arc). Near a
+   pole the two differ completely — a cross-section over the pole has ends ~180
+   apart in longitude, and the flat average lands on the far side of the globe. */
 function centreOf(pairs) {
   return pairs.map(function (pr) {
-    var d = pr[1][0] - pr[0][0];
-    while (d >  180) d -= 360;
-    while (d < -180) d += 360;
-    return [pr[0][0] + d/2, (pr[0][1] + pr[1][1]) / 2];
+    var a = pr[0], b = pr[1];
+    if (!arc(a, b).length) return lerpPt(a, b, 0.5);
+    var m = slerp(a, b, 0.5), lon = m[0];
+    while (lon - a[0] >  180) lon -= 360;   /* stay in a's frame, as before */
+    while (lon - a[0] < -180) lon += 360;
+    return [lon, m[1]];
   });
-}
-
-/* A cross-section is degenerate when its two ends are far apart in longitude
-   while being close on the globe — the signature of straddling the pole. */
-function isDegenerate(pr) {
-  var d = Math.abs(pr[0][0] - pr[1][0]);
-  while (d > 180) d = 360 - d;
-  return d > 60 && angSep(pr[0], pr[1]) < MAX_CORRIDOR_DEG;
-}
-
-function repairDegenerate(pairs, centre) {
-  /* Rebuild a few steps BEFORE the first degenerate one as well. Switching
-     construction abruptly leaves a notch in the band's edge where the measured
-     cross-section and the reconstructed one don't line up; easing in over a few
-     steps hides the join. */
-  var bad = pairs.map(isDegenerate);
-  for (var i = 0; i < bad.length; i++) {
-    if (!bad[i]) continue;
-    for (var k = Math.max(0, i - 4); k < i; k++) bad[k] = true;
-    break;
-  }
-  /* Last width measured on a well-behaved cross-section, carried forward.
-     Width changes slowly along a track, so this is a good approximation
-     exactly where the measurement itself has broken down. */
-  var lastW = null, out = [];
-  for (var i = 0; i < pairs.length; i++) {
-    if (!bad[i]) {
-      lastW = angSep(pairs[i][0], pairs[i][1]);
-      out.push(pairs[i]);
-      continue;
-    }
-    if (lastW === null) { out.push(pairs[i]); continue; }  /* nothing to go on */
-
-    /* Rebuild as centre +- half the carried width, square to the track. */
-    var c  = centre[i];
-    var pv = centre[Math.max(0, i - 1)], nx = centre[Math.min(centre.length - 1, i + 1)];
-    var brg = bearing(pv, nx);
-    var pr2 = [offsetPt(c, brg - 90, lastW / 2), offsetPt(c, brg + 90, lastW / 2)];
-    pr2.rebuilt = true;      /* so the midline can stop before this section */
-    out.push(pr2);
-  }
-  return out;
 }
 
 /* Put a quad's longitudes in one local frame: no vertex more than 180 from the
@@ -508,10 +421,11 @@ function quadStrips(q) {
 }
 
 /* The ribbon: one quad per step of the paired walk. */
-function ribbonQuads(nLimb, sLimb, outPairs) {
+function ribbonQuads(nLimb, sLimb, outPairs, trusted) {
   var pairs = pairWalk(nLimb, sLimb);
   if (outPairs) pairs.forEach(function (pr) { outPairs.push(pr); });
   var quads = [];
+  quads.dropped = 0;
 
   for (var i = 1; i < pairs.length; i++) {
     var a = pairs[i - 1], b = pairs[i];
@@ -526,34 +440,23 @@ function ribbonQuads(nLimb, sLimb, outPairs) {
     var q0   = localFrame([a[0], b[0], b[1], a[1]]);
     var lons = q0.map(function (p) { return p[0]; });
     var span = Math.max.apply(null, lons) - Math.min.apply(null, lons);
-    var subs = Math.max(1, Math.ceil(span / 15));
+    var subs = Math.max(1, Math.ceil(span / SUB_DEG));
 
     /* Cap the subdivision: a step needing more than this is not a fast polar
        crossing, it is a pairing that genuinely went wrong, and drawing it would
        be worse than leaving it out. */
-    if (subs > 40) continue;
+    if (subs > 40) { quads.dropped++; continue; }
 
     for (var k = 0; k < subs; k++) {
       var t0 = k / subs, t1 = (k + 1) / subs;
       var nA = lerpPt(a[0], b[0], t0), nB = lerpPt(a[0], b[0], t1);
       var sA = lerpPt(a[1], b[1], t0), sB = lerpPt(a[1], b[1], t1);
-      emitQuad(nA, nB, sB, sA, quads);
+      if (!emitQuad(nA, nB, sB, sA, quads, trusted)) quads.dropped++;
     }
   }
   return quads;
 }
 
-/* One step of the ribbon.
-
-   Normally this is a single quad between the two limbs. The exception is when
-   the corridor SPANS A POLE: at the same instant the north and south limits are
-   then on opposite sides of it, so their longitudes differ by ~180 and a flat
-   quad joining them sweeps right across the map instead of passing over the
-   top. Detect it locally — wide in longitude, and both limbs at high latitude —
-   and emit two quads, each running from its own limb up to the pole. They meet
-   there, which is exactly how the corridor closes on the globe.
-
-   No global reasoning: this only ever looks at the four corners in hand. */
 /* The widest path in Espenak's catalogue is 1419 km — 12.8 degrees of great
    circle. So two limb points further apart than this CANNOT be opposite sides
    of the same corridor: the pairing has failed, usually because one limb only
@@ -563,29 +466,101 @@ function ribbonQuads(nLimb, sLimb, outPairs) {
    bound taken from the data, not a tuned threshold. */
 var MAX_CORRIDOR_DEG = 14;
 
-function emitQuad(nA, nB, sB, sA, out) {
-  var push = function (q) {
-    quadStrips(localFrame(q)).forEach(function (piece) { out.push(piece); });
-  };
+/* Longitude span above which a step or a cross edge is subdivided. */
+var SUB_DEG = 15;
 
-  /* Is the corridor spanning the pole here? Not a latitude threshold — ask the
-     geometry. An umbral corridor is at most a few hundred kilometres wide, so
-     if the two limits are CLOSE on the globe yet far apart in longitude, the
-     only way that can be true is that the pole lies between them. Anything
-     else — a wide longitude gap with a correspondingly large real distance —
-     is a bad pairing, not a polar crossing, and must not be capped. */
+/* `trusted`: the pair was built square across the centreline (centreEdges), so
+   it cannot be a failed pairing and the width bound does not apply. Returns
+   whether the quad was drawn. */
+function emitQuad(nA, nB, sB, sA, out, trusted) {
   var sep = angSep(nA, sA);          /* true angular separation, degrees */
-  if (sep > MAX_CORRIDOR_DEG) return;              /* not a corridor here */
+  if (!trusted && sep > MAX_CORRIDOR_DEG) return false;   /* not a corridor here */
 
-  /* The corridor is drawn only where the two limbs actually are. It is NOT
-     extended up to the pole, even on the steps where the umbra genuinely covers
-     it: filling to latitude 90 emits a quad per step at its own longitudes, and
-     consecutive steps don't abut, so the result is a striped bar across the top
-     of an equirectangular map — worse than showing nothing there.
-     This follows the precedent already set in map.js, which drops polar ovals
-     with the note "omitting is honest". The band is exact everywhere the limbs
-     exist; above them it simply stops. */
-  push([nA, nB, sB, sA]);
+  var ring = unwrapRing([nA, nB].concat(arc(nB, sB), [sB, sA], arc(sA, nA)));
+  /* Rebuilt edges are offsets from the centreline, and on the inside of a
+     sharp bend an offset wider than the bend folds back over itself. The folded
+     quads are wound the other way, and under nonzero fill they CANCEL the quads
+     they overlap — a hole or a crack through the band. Winding every rebuilt
+     quad the same way makes overlaps add instead. */
+  if (trusted && ringArea(ring) < 0) ring.reverse();
+  quadStrips(ring).forEach(function (piece) { out.push(piece); });
+  return true;
+}
+
+/* Signed lon/lat area of a ring (shoelace); the sign is its winding. */
+function ringArea(q) {
+  var a = 0;
+  for (var i = 0; i < q.length; i++) {
+    var k = (i + 1) % q.length;
+    a += q[i][0] * q[k][1] - q[k][0] * q[i][1];
+  }
+  return a / 2;
+}
+
+/* ── Cross-sections are GREAT CIRCLES ─────────────────────────────────
+   A quad's vertices are joined by straight lines in lon/lat. Across a
+   corridor that is the same as the great circle almost everywhere — but not
+   near a pole. There a cross-section can pass OVER the pole, its two ends ~180
+   apart in longitude, and the straight lon/lat line runs sideways along a
+   parallel instead. That is what left the band short of the pole with its own
+   midline hanging outside it, and what an earlier repair (rebuilding the
+   cross-section from the centreline) was patching.
+   So a cross edge that spans more than SUB_DEG of longitude follows its great
+   circle, sampled at the same density the ribbon already subdivides its steps
+   at. A corridor is at most 14 degrees across, so this only happens close to a
+   pole; everywhere else the quad is left exactly as it was. */
+function arc(p, q) {
+  var dLon = Math.abs(q[0] - p[0]) % 360;
+  if (dLon > 180) dLon = 360 - dLon;
+  var n = Math.ceil(dLon / SUB_DEG);
+  if (n > 1) n += n % 2;                           /* even: the midpoint is a vertex */
+  var out = [];
+  for (var k = 1; k < n; k++) out.push(slerp(p, q, k / n));
+  return out;
+}
+
+/* Point a fraction t of the way along the great circle from a to b. */
+function slerp(a, b, t) {
+  var w = angSep(a, b) * DEG;
+  if (w < 1e-9) return [a[0], a[1]];
+  var va = vec(a), vb = vec(b), sa = Math.sin((1 - t) * w), sb = Math.sin(t * w), sw = Math.sin(w);
+  var x = (sa * va[0] + sb * vb[0]) / sw, y = (sa * va[1] + sb * vb[1]) / sw, z = (sa * va[2] + sb * vb[2]) / sw;
+  return [Math.atan2(y, x) / DEG, Math.atan2(z, Math.sqrt(x * x + y * y)) / DEG];
+}
+
+function vec(p) {
+  var la = p[1] * DEG, lo = p[0] * DEG;
+  return [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)];
+}
+
+/* Unwrap a ring's longitudes so each vertex is within 180 of the one before —
+   the same as localFrame for an ordinary quad. Two things only happen at a pole:
+   - A step that turns more than 90 degrees of longitude passes over the pole, so
+     it goes there: up to the pole, along it, and down. Along the pole has no
+     height in lon/lat, so which way round that goes cannot change the area.
+   - A ring that then fails to close by a whole turn encloses the pole; close it
+     along the pole, which is the top (or bottom) edge of the map.
+   quadStrips then places the piece in every strip it spans. */
+function unwrapRing(ring) {
+  var out = [[ring[0][0], ring[0][1]]];
+  var step = function (p) {
+    var prev = out[out.length - 1], lon = p[0];
+    while (lon - prev[0] >  180) lon -= 360;
+    while (lon - prev[0] < -180) lon += 360;
+    if (Math.abs(lon - prev[0]) > 90) {
+      var pole = p[1] > 0 ? 90 : -90;
+      out.push([prev[0], pole], [lon, pole]);
+    }
+    out.push([lon, p[1]]);
+  };
+  for (var i = 1; i < ring.length; i++) step(ring[i]);
+  step(ring[0]);
+  var first = out[0][0], close = out.pop()[0];
+  if (close !== first) {
+    var pole = out[0][1] > 0 ? 90 : -90;
+    out.push([close, out[0][1]], [close, pole], [first, pole]);
+  }
+  return out;
 }
 
 /* Angular separation between two lon/lat points, in degrees. */
@@ -605,48 +580,174 @@ function lerpPt(a, b, t) {
   return [a[0] + dLon * t, a[1] + (b[1] - a[1]) * t];
 }
 
+/* A limb arrives as a list of segments, and the generator starts a new one
+   wherever the limit reaches a pole: -1790-09-08's north limit is 91 points up
+   to latitude 90 and 436 more down the far side. Using only the first segment
+   paired a limb that stops at the pole with a partner that carries on, so the
+   band ended there while its midline did not. Segments that continue one
+   another (end meets start — at a pole within 0.13 degrees across the whole
+   catalogue) are one limb. What remains separate is a genuine branch — a
+   sunrise cusp, its segments 4.6 degrees or more apart — and the longest chain
+   is the limit itself. */
+var JOIN_DEG = 1;
+
+function joinLimb(segs) {
+  var chains = [];
+  segs.forEach(function (seg) {
+    if (!seg || !seg.length) return;
+    var last = chains[chains.length - 1];
+    if (last && angSep(last[last.length - 1], seg[0]) < JOIN_DEG) chains[chains.length - 1] = last.concat(seg);
+    else chains.push(seg);
+  });
+  return chains.reduce(function (a, b) { return b.length > a.length ? b : a; }, []);
+}
+
+/* ── Bands the limb data cannot carry ─────────────────────────────────
+   Two kinds, 46 eclipses, found by the ribbon failing rather than by a list:
+   - A limb with a straight chord in it. The generator bridges the stretch where
+     its method loses the limit with one straight step of 300-1200 km (HANDOFF
+     §9.5, open). 1979-08-22's south limit starts with a 10.6 degree one.
+   - A corridor whose edge is not a limb. On a grazing eclipse one side of the
+     path is bounded by the horizon — the green line — and the "limb" on that
+     side is only a short hook between two green-line points (807-02-11,
+     1547-11-12). Pairing that hook against the full far limb drops most steps.
+   The poster is an illustration, not a chart, so these are rebuilt from the
+   CENTRELINE, which is clean in all of them. At each centreline point a ray is
+   cast square to the track on each side; that side's edge is where it first
+   crosses its own limb or the green line. A ray is used rather than the
+   nearest vertex because the green line runs obliquely to the track, so its
+   nearest vertex is rarely the one alongside. Chord steps are not boundary, so
+   a ray through a chord finds nothing, and those stretches are interpolated.
+   The pairs are square across the track by construction, so the ribbon draws
+   them without the pairing guards. */
+var CHORD_DEG = 300 / 111.2;      /* §9.5's lower bound for a chord, in degrees */
+var EDGE_REACH_DEG = 20;          /* horizon-bounded sides reach ~14 degrees */
+
+function hasChord(r) {
+  return [r.umbra_n, r.umbra_s].some(function (segs) {
+    return (segs || []).some(function (seg) {
+      for (var i = 1; i < (seg || []).length; i++) if (angSep(seg[i - 1], seg[i]) > CHORD_DEG) return true;
+      return false;
+    });
+  });
+}
+
+function centreEdges(r) {
+  var cl = joinLimb(r.centreline || []);
+  if (cl.length < 5) return null;
+  var dot = function (u, v) { return u[0] * v[0] + u[1] * v[1] + u[2] * v[2]; };
+  var cross = function (u, v) { return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]; };
+  var unit = function (u) { var m = Math.hypot(u[0], u[1], u[2]) || 1; return [u[0] / m, u[1] / m, u[2] / m]; };
+
+  /* A frame at each centreline point: position c, unit tangent t, normal n = c x t. */
+  var P = cl.map(vec);
+  var F = P.map(function (c, i) {
+    var a = P[Math.max(0, i - 1)], b = P[Math.min(P.length - 1, i + 1)];
+    var t = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], k = dot(t, c);
+    t = unit([t[0] - k * c[0], t[1] - k * c[1], t[2] - k * c[2]]);
+    return { c: c, n: cross(c, t) };
+  });
+
+  /* Boundary segments as unit-vector pairs, chord steps left out. Polylines are
+     split at nulls (the green line uses them as separators). */
+  var segments = function (lines) {
+    var out = [];
+    lines.forEach(function (line) {
+      for (var i = 1; i < line.length; i++) {
+        var p = line[i - 1], q = line[i];
+        if (!p || !q || p.length !== 2 || q.length !== 2) continue;
+        if (angSep(p, q) > CHORD_DEG) continue;
+        out.push([vec(p), vec(q)]);
+      }
+    });
+    return out;
+  };
+
+  /* Angle along the ray from f.c toward side * f.n to its first boundary crossing. */
+  var hit = function (f, side, S) {
+    var dir = [f.n[0] * side, f.n[1] * side, f.n[2] * side], plane = cross(f.c, dir), best = Infinity;
+    S.forEach(function (sg) {
+      var sa = dot(sg[0], plane), sb = dot(sg[1], plane);
+      if (sa * sb > 0 || sa === sb) return;
+      var t = sa / (sa - sb), a = sg[0], b = sg[1];
+      var x = unit([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+      var ang = Math.atan2(dot(x, dir), dot(x, f.c)) / DEG;
+      if (ang > 0 && ang <= EDGE_REACH_DEG && ang < best) best = ang;
+    });
+    return best;
+  };
+
+  var Sn = segments(r.umbra_n || []), Ss = segments(r.umbra_s || []), Sg = segments([r.green_curve || []]);
+
+  /* Which side of the track the north limit is on, by a vote along it — a
+     sharply curved track turns the normal round, so one sample would not do. */
+  var vote = 0;
+  F.forEach(function (f) { var p = hit(f, 1, Sn), m = hit(f, -1, Sn); if (p < m) vote++; else if (m < p) vote--; });
+  var side = vote < 0 ? -1 : 1;
+
+  var fill = function (w) {                         /* interpolate across Infinity runs */
+    var idx = [];
+    w.forEach(function (x, i) { if (isFinite(x)) idx.push(i); });
+    if (!idx.length) return null;
+    return w.map(function (x, i) {
+      if (isFinite(x)) return x;
+      var lo = -1, hi = -1;
+      for (var j = 0; j < idx.length; j++) { if (idx[j] < i) lo = idx[j]; else { hi = idx[j]; break; } }
+      return lo < 0 ? w[hi] : hi < 0 ? w[lo] : w[lo] + (w[hi] - w[lo]) * (i - lo) / (hi - lo);
+    });
+  };
+  var smooth = function (w) {                       /* median of 7: removes single-ray spikes */
+    return w.map(function (_, i) {
+      var win = w.slice(Math.max(0, i - 3), i + 4).sort(function (a, b) { return a - b; });
+      return win[win.length >> 1];
+    });
+  };
+  var edge = function (S, sd) {
+    var w = fill(F.map(function (f) { return hit(f, sd, S); }));
+    if (!w) return null;
+    return smooth(w.map(function (x, i) { return Math.min(x, hit(F[i], sd, Sg)); }));
+  };
+  var En = edge(Sn, side), Es = edge(Ss, -side);
+  if (!En || !Es) return null;
+
+  var offset = function (f, d) {
+    var th = d * DEG, cs = Math.cos(th), sn = Math.sin(th);
+    var v = [f.c[0] * cs + f.n[0] * sn, f.c[1] * cs + f.n[1] * sn, f.c[2] * cs + f.n[2] * sn];
+    return [Math.atan2(v[1], v[0]) / DEG, Math.asin(Math.max(-1, Math.min(1, v[2]))) / DEG];
+  };
+  return { n: F.map(function (f, i) { return offset(f,  side * En[i]); }),
+           s: F.map(function (f, i) { return offset(f, -side * Es[i]); }) };
+}
+
 function buildBands(records){
   const typeMap={T:'total',A:'annular',H:'hybrid'};
   return records
-    .filter(r=>'TAH'.includes((r.type||'')[0])&&
-               r.umbra_n&&r.umbra_s&&r.umbra_n[0]&&r.umbra_s[0])
+    .filter(r=>'TAH'.includes((r.type||'')[0])&&r.umbra_n&&r.umbra_s)
     .map(r=>{
-      const nRaw=r.umbra_n[0], sRaw=r.umbra_s[0];
+      const nRaw=joinLimb(r.umbra_n), sRaw=joinLimb(r.umbra_s);
       if(nRaw.length<2||sRaw.length<2)return null;
-      /* Where the CENTRELINE runs closer to the pole than either limb, the limb
-         data has simply stopped — both limbs end at their own poleward extreme
-         and the corridor carries on past them. Left alone, the map shows a
-         centreline reaching the top with no band around it. Extend each limb
-         along its own final longitude to the pole so the ribbon closes the gap;
-         the quads stay contiguous, so no striping. */
-      /* NOT extended to the pole. Appending points along each limb's final
-         longitude was tried (both limbs run to latitude 90): in projections
-         where the pole is a point the two extensions converge, leaving a ragged
-         notch at the tip and a pinch the centreline shows through. The band is
-         drawn only where the limb data actually is; the centreline is trimmed
-         to match, below, so nothing is left hanging. */
-      /* One quad per time step. No unwrapping, no ring assembly, no polar caps,
-         no annulus, no thresholds — see the ribbon note above. */
-      const pairs=[];
-      const pieces=ribbonQuads(rotRing(nRaw), rotRing(sRaw), pairs);
+      /* NOT extended to the pole along each limb's final longitude. That was
+         tried: in projections where the pole is a point the two extensions
+         converge, leaving a ragged notch and a pinch the centreline shows
+         through. A band reaches the pole only where a cross-section genuinely
+         passes over it (emitQuad). */
+      let pairs=[];
+      let pieces=ribbonQuads(rotRing(nRaw), rotRing(sRaw), pairs);
+      /* Where the limb data cannot carry a continuous ribbon — steps dropped,
+         or a limb with a §9.5 chord in it — draw the band from the centreline
+         instead (centreEdges). 46 records; every other band is built as above. */
+      if(pieces.dropped||hasChord(r)){
+        const e=centreEdges(r);
+        if(e){ pairs=[]; pieces=ribbonQuads(rotRing(e.n), rotRing(e.s), pairs, true); }
+      }
       if(!pieces.length)return null;
       const date=`${r.year}-${String(r.month).padStart(2,'0')}-${String(r.day).padStart(2,'0')}`;
-      /* The centreline is the RIBBON'S OWN midline — the midpoint of each
-         cross-section — not the separately-supplied centreline track. Drawn
-         from the same pairs that build the band, it is inside it by
-         construction, so it can never poke out at the tip. (It coincides with
-         the supplied centreline wherever the cross-sections are real, which is
-         everywhere except the polar tail.) The two end points are dropped so
-         the line stops just short of the band's blunt end rather than touching
-         it. */
-      /* Stop the midline before the rebuilt section. Through the polar tail the
-         cross-sections are reconstructed rather than measured, and the midline
-         there swings as the construction takes over — a visible hook at the
-         tip. The band still runs to the end; the line just doesn't chase it
-         into the part that is drawn rather than computed. */
-      let lastReal=pairs.length;
-      while(lastReal>0 && pairs[lastReal-1].rebuilt) lastReal--;
-      const mid=centreOf(pairs.slice(0,lastReal));
+      /* The centreline is the RIBBON'S OWN midline — the great-circle midpoint
+         of each cross-section — not the separately-supplied centreline track.
+         Drawn from the same pairs that build the band, it is inside it by
+         construction. The two end points are dropped so the line stops just
+         short of the band's blunt end rather than touching it. */
+      const mid=centreOf(pairs);
       const clSegs=mid.length>4
         ? splitEdge(mid.slice(1,-1)).filter(x=>x.length>1)
         : null;

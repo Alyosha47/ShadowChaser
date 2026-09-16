@@ -71,7 +71,11 @@ finished; offline works; terrain shadows are done and wired in.)*
    read it before touching anything.
 3. **Evaluate a non-GIBS imagery source** — the single change that improves every complaint at once:
    freshness, resolution and reliability. Detail under **#F2c**.
-4. **#F1b — DIAGNOSED 2026-09-13. IT IS TWO BUGS WITH OPPOSITE SIGNS. Do not write one fix.**
+4. ~~**#F1b**~~ **FIXED 2026-09-16a — see HANDOFF §11.4.** The diagnosis below was built on the
+  test's truncated 5-item output and is WRONG about the causes; kept only as history.
+  #F1c (the last 46 broken bands) **also FIXED 2026-09-16b.** What remains is the generator itself:
+  **§9.5 chords in the path data** — see #F1d.
+  ~~DIAGNOSED 2026-09-13. IT IS TWO BUGS WITH OPPOSITE SIGNS.~~
   Measured by running `buildBands` over the 11 named failures and comparing the limb data, the drawn
   band and the drawn midline (all as max |latitude|):
 
@@ -947,7 +951,17 @@ In order, and **report what you measure before writing any code**:
   that scrubs *terrain* shadows at one place; #F3 animates the *umbra/penumbra footprint*
   sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
   clean precedent for the time-plumbing.
-- **#F1b T-shirt poster — finish the geometry.** SHIPPED and usable (HANDOFF §11.4), but
+- ~~**#F1c Poster — last broken bands.**~~ **FIXED 2026-09-16b** (HANDOFF §11.4).
+- **#F1d Path data — §9.5 chords (generator). The user wants this fixed.** ~30 eclipses have a limb
+  bridged by one straight step of 300 km+ (1979-08-22 south limit: 10.6°); it shows on the MAIN MAP
+  too. Scan: any step >300 km in `umbra_n`/`umbra_s`. **First job: reconcile the contradictory notes**
+  — HANDOFF §9 says `gen_eclipse_paths_13f.py` holds an unfinished cone tracer fix blocked on the N/S
+  splitter; the LEGACY notes in this file say the cone approach was removed. Size the work only after
+  that. **Safety plan the user agreed to in principle:** regenerate ONLY the affected eclipses in a
+  sandbox, audit (`audit_paths.py`, `validate_paths.py`, Jubier where available), splice just those
+  records into the chunks — every other record stays byte-identical. He is wary: weeks went into the
+  generator. Note ~16 horizon-bounded grazers (807-02-11, 1547-11-12…) are real geometry, not chords.
+- ~~**#F1b T-shirt poster — finish the geometry.**~~ **FIXED 2026-09-16a.** SHIPPED and usable (HANDOFF §11.4), but
   `tools/checks/test_tshirt.js` **fails 3 catalogue-wide assertions**: one band over 8% of the
   map, some bands drawn past their own limbs, some centrelines drawn where the band doesn't
   reach. All in the polar tail, all from the same root: near a pole the corridor's

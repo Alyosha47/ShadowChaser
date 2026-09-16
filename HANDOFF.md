@@ -64,8 +64,8 @@ cost to him.
 
 1. **Clone fresh from `main`, deep.** He applies changes by hand, so the repo may lag what he is
    actually running — and the *live site* may lag both. Check all three before believing any of them.
-2. **`npm i jsdom`, then `node tools/checks/run.js`.** Expect exactly one failing suite:
-   `test_tshirt`, with exactly 3 assertions (§11.4). Everything else passes. The runner separates
+2. **`npm i jsdom`, then `node tools/checks/run.js`.** Expect **all 13 suites to pass** (since
+   2026-09-16a — `test_tshirt`'s 3 long-standing failures are fixed, §11.4). Any FAIL is a regression. The runner separates
    `CANNOT RUN` (setup) from `FAIL` (regression) — **if you see CANNOT RUN, fix that first.** Three
    suites were reported as failing for a week when they were only missing `jsdom`.
 3. **`node --check` on any JS you touch.** There is no bundler; a syntax error ships.
@@ -233,10 +233,6 @@ temperature; Photo only displays them, and inherited a compositor by being writt
 `cloud-now.js`. Removing it removed every symptom it had been causing.
 
 ### Known-limited — none of these are bugs, and none are new
-- **`test_tshirt` fails exactly 3 catalogue-wide assertions** — one band over 8% of the map, some
-  bands extended past their limbs without cause, some centrelines drawn where the band doesn't reach.
-  All in the polar tail, all dating from the polar work (§11.4). **That is the baseline; treat
-  anything else as a regression.**
 - **`Now` finds only ~49% of the cloud** an operational mask finds, ~30% of it over sea, at 1–2%
   false alarms (§10A.8). **The map reads CLEARER than reality** — the dangerous direction for a tool
   that tells someone where to stand. Two candidate fixes, a visible channel and a sea-surface-
@@ -2318,8 +2314,43 @@ through map.js's existing `loadPathChunk`.
 **The geometry took days and is still not perfect.** The corridor is built as a ribbon of per-timestep
 quads (not one closed polygon — that flooded polar caps and tore at the seam). Limbs are paired by TIME,
 not proximity. Steps wider than Espenak's maximum path width (1419 km = 12.8°) are dropped as failed
-pairings. Degenerate cross-sections near a pole are rebuilt from the centreline. Three assertions still
-fail (§3).
+pairings. **Fixed 2026-09-16a — all assertions pass.** Two root causes, neither where the 2026-09-13
+diagnosis put them (that was read off the test's 5-item truncated output; the real counts were 32
+overshoots, 8 bare centrelines, 1 flood):
+- *`repairDegenerate` WAS the overshoot and the polar blobs.* Near a pole a cross-section can pass
+  OVER the pole (ends ~180° apart in longitude, a degree or two apart on the globe). That is real
+  geometry, not degeneracy; rebuilding it from the centreline invented kinks in 117 records.
+  Deleted. Instead a cross edge spanning more than `SUB_DEG` (15°) of longitude follows its great
+  circle (`arc`/`slerp`), and `unwrapRing` takes a step that turns >90° of longitude up to the pole
+  and along it, and closes a ring that winds round the pole along the pole edge. Ordinary quads are
+  untouched.
+- *Limbs arrive as SEGMENTS, split where the limit reaches a pole, and only `[0]` was used* — so the
+  band stopped at the pole while the midline carried on. `joinLimb` chains segments whose end meets
+  the next start (all such joins in the catalogue are ≤0.13°); a real branch (sunrise cusp, ≥4.6°
+  apart) keeps the longest chain.
+- The midline is the midpoint of each cross-section *as drawn* (great-circle where the edge is).
+- Blast radius: 569 of 7,517 bands change; the other 6,948 are identical to 1e-6. All 569 were
+  rasterised and reviewed; the ones whose area "shrank" were the old wedges being removed.
+- Two assertions were corrected, not loosened: the named "plausible area" checks now measure share
+  of the EARTH (lon/lat inflates polar area; 2753-07-22 is 3.9% of the map, 0.8% of the Earth,
+  unchanged by the fix), and "past its limbs" now tests that every such vertex lies INSIDE THE
+  CORRIDOR (from the record's own centreline and limbs). The old form failed whenever the pole sat
+  inside the corridor, e.g. -1180-06-16. The new test still fails against the old code.
+- **2026-09-16b — the last 46 broken bands, and they were NOT a pairing problem.** Rendering the raw
+  path data showed two causes. (1) *§9.5 chords in the DATA* — a limb bridged by one straight step
+  of 300 km+ (1979-08-22's south limit opens with 10.6°). (2) *Real geometry the ribbon can't hold* —
+  on a grazing eclipse one side of the path is the horizon (green line), with the "limb" only a short
+  hook between two green-line points (807-02-11, 1547-11-12). The wedge was (1); "align limb spans to
+  the centreline" would NOT have fixed it, and would have moved ~4,400 bands for nothing.
+  Fix, poster only: a band whose ribbon drops any step, or whose limbs contain a >300 km step, is
+  rebuilt by `centreEdges` — rays cast square to the centreline find each side's edge (its own limb,
+  or the green line if nearer; chord steps are not boundary and get interpolated), median-smoothed,
+  fed to the ribbon as trusted pairs (no width bound; winding normalised so offsets folding on a
+  sharp bend don't cancel under nonzero fill). Rays, not nearest vertex — the green line runs
+  obliquely, and nearest-vertex gave spiky edges. Exactly 46 bands change; all rendered old/new.
+  **Illustration grade, not a chart.** Two (-916-04-09, 361-02-21) now show a hole where the
+  path hooks — truer than the old solid band, arguably odder to look at. **When §9.5 is fixed in the
+  generator, the chord cases stop triggering this on their own; the horizon-bounded ones still need it.**
 
 **Two approaches tried and REJECTED, do not re-attempt without reading why:**
 - *One closed polygon, fill it.* Looks obviously right; produces a huge wrong wedge with the centreline
@@ -2633,7 +2664,7 @@ decisions in this document were made, silently undone, and re-litigated.
 - `test_userlog.js` — store semantics, `[lon,lat]` order, the explicit-commit gate, row vs goto
   separation, escaping, corrupt-storage resilience.
 - `test_picker.js` — the collapsible basemap picker's two-tap behaviour, offline, desktop.
-- `test_tshirt.js` — **expect exactly 3 failures** (§3). Anything else failing is new and worth reporting
+- `test_tshirt.js` — **passes in full since 2026-09-16a.** Any failure is new and worth reporting
   before doing any work.
 - `test_satellite.js` — the live-cloud module: exports, enumerated layer names, EPSG:3857 on both
   services, stamp formats, the red ramp, the five deleted patches, coverage geometry, the contract
@@ -2799,6 +2830,16 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-16b** — **Poster: the remaining 46 broken bands rebuilt from the centreline.** Cause was
+  the path DATA (§9.5 chords) and horizon-bounded grazing paths, not limb pairing. `js/tshirt.js`
+  only: `hasChord`, `centreEdges`, `ringArea`; `ribbonQuads`/`emitQuad` take a `trusted` flag and
+  count dropped steps. Other 7,471 bands byte-identical. Detail §11.4. Build 2026-09-16b.
+- **2026-09-16a** — **Poster polar geometry fixed; `test_tshirt` passes; whole suite green.**
+  `js/tshirt.js`: `repairDegenerate`/`isDegenerate`/`bearing`/`offsetPt` and the dead `ptGap`
+  deleted; great-circle cross edges + pole closure (`arc`, `slerp`, `unwrapRing`, `SUB_DEG`);
+  `joinLimb` chains limb segments; midline = drawn midpoint; stale contradictory comments removed.
+  `tools/checks/test_tshirt.js`: named area checks on Earth share, "past its limbs" as corridor
+  membership. Details and what remains in §11.4. Build 2026-09-16a.
 - **2026-09-13o** — **Hybrids now match `total` and `annular` searches.** One branch in
   `search-parser.js`'s `filter.types` test: a global type of `hybrid` satisfies either word, still
   labelled hybrid. Only the global-type path — with a location set, `e.local_type` already decided

@@ -156,6 +156,7 @@ const angSpan = q => {
   return m;
 };
 
+/* Share of the MAP a band covers — lon/lat area, as drawn in plate carree. */
 const areaPct = b => {
   let A = 0;
   for (const q of b.pieces) {
@@ -165,6 +166,22 @@ const areaPct = b => {
     A += Math.abs(a/2);
   }
   return A / (360*180) * 100;
+};
+/* Share of the EARTH a band covers — the same sum with sin(latitude), which is
+   equal-area. The lon/lat measure inflates area near a pole without limit: a band
+   that crosses the pole covers every longitude there, so it reads several times
+   larger in lon/lat than it is. 2753-07-22 is 3.9% of the map and 0.8% of the
+   Earth. Physical plausibility is a question about the Earth. */
+const earthPct = b => {
+  const D = Math.PI / 180;
+  let A = 0;
+  for (const q of b.pieces) {
+    let a = 0;
+    for (let i = 0; i < q.length; i++) { const k = (i+1) % q.length;
+      a += q[i][0]*Math.sin(q[k][1]*D) - q[k][0]*Math.sin(q[i][1]*D); }
+    A += Math.abs(a/2);
+  }
+  return A / 720 * 100;
 };
 const allRecs = Object.keys(chunk).filter(k => k !== '__meta').map(k => chunk[k]);
 const byDate = (recs, y, m, d) => recs.find(r => r.year===y && r.month===m && r.day===d);
@@ -179,7 +196,7 @@ ok('every piece is a quad', I.buildBands([byDate(allRecs, 2017, 8, 21)])[0]
    degrees wide. The walk pairs by position instead. */
 const b109 = I.buildBands([byDate(Object.keys(load('paths_101_200'))
   .filter(k => k !== '__meta').map(k => load('paths_101_200')[k]), 109, 2, 17)])[0];
-ok('109-02-17 (564 vs 90 points) is sane', areaPct(b109) < 3, areaPct(b109).toFixed(2) + '%');
+ok('109-02-17 (564 vs 90 points) is sane', earthPct(b109) < 3, earthPct(b109).toFixed(2) + '%');
 
 /* The three cases reported broken, in order. */
 for (const [file, y, m, d, label] of [
@@ -190,7 +207,7 @@ for (const [file, y, m, d, label] of [
   const rec = Object.keys(ch).filter(k => k !== '__meta').map(k => ch[k])
     .find(r => r.year===y && r.month===m && r.day===d);
   const b = I.buildBands([rec])[0];
-  ok(`${b.date} (${label}) covers a plausible area`, areaPct(b) < 3, areaPct(b).toFixed(2) + '%');
+  ok(`${b.date} (${label}) covers a plausible area`, earthPct(b) < 3, earthPct(b).toFixed(2) + '%');
   /* Longitude width is meaningless at a pole, where every longitude is the
      same place — a legitimate polar quad spans a wide lon range. The real test
      is ANGULAR size: Espenak's widest path is 1419 km (12.8 deg), so no quad
@@ -224,10 +241,22 @@ for (const f of fs.readdirSync(`${ROOT}/data/paths`)
 ok('NO band in the whole catalogue covers over 8% of the map',
    over.length === 0, over.slice(0, 5).join(', '));
 
-/* The band may be extended to the pole, but ONLY where the centreline runs
-   past the limbs (the limb data has stopped and the corridor carries on), and
-   only as far as the pole. Anywhere else, drawing past the limbs is inventing
-   geometry — which is what produced a striped bar across the top of the map. */
+/* The band may reach past its limbs, but only INTO THE CORRIDOR. Two real cases
+   do that: a cross-section that passes over the pole (the pole is inside the
+   corridor, so the band reaches latitude 90), and a wide cross-section whose
+   great circle bows poleward of both its ends. Anything else past the limbs is
+   invented geometry — the striped bar, the polar overshoot. So test the
+   definition, from the RECORD, not from the module: every band vertex poleward
+   of the limbs must lie within the corridor's half-width of the supplied
+   centreline, and a vertex ON the pole needs the pole itself within it.
+   (An earlier version asked instead whether the supplied centreline also ran
+   past the limbs. That is false whenever the pole sits between the centreline
+   and a limb, which it does for -1180-06-16.) */
+const D2R = Math.PI / 180;
+const angSepR = (a, b) => Math.acos(Math.max(-1, Math.min(1,
+  Math.sin(a[1]*D2R)*Math.sin(b[1]*D2R) + Math.cos(a[1]*D2R)*Math.cos(b[1]*D2R)*Math.cos((b[0]-a[0])*D2R)))) / D2R;
+const nearest = (p, line) => { let bi = 0, bd = Infinity;
+  line.forEach((q, i) => { const d = angSepR(p, q); if (d < bd) { bd = d; bi = i; } }); return [bi, bd]; };
 let invented = [], bare = [];
 for (const f of fs.readdirSync(`${ROOT}/data/paths`)
                   .filter(x => x.endsWith('.gz') && !x.includes('kinked'))) {
@@ -235,20 +264,29 @@ for (const f of fs.readdirSync(`${ROOT}/data/paths`)
   for (const r of Object.keys(ch).filter(k => k !== '__meta').map(k => ch[k])) {
     const b = I.buildBands([r])[0];
     if (!b) continue;
-    const bandMax = Math.max(...b.pieces.flat().map(x => Math.abs(x[1])));
-    const limbMax = Math.max(...r.umbra_n[0].concat(r.umbra_s[0]).map(x => Math.abs(x[1])));
-    const cl = (r.centreline && r.centreline[0]) || [];
-    const clMax = cl.length ? Math.max(...cl.map(x => Math.abs(x[1]))) : 0;
-    if (bandMax > limbMax + 0.02 && !(clMax > limbMax + 0.05)) invented.push(b.date);
+    const bandMax = Math.max(...b.pieces.map(q => Math.max(...q.map(x => Math.abs(x[1])))));
+    const n = r.umbra_n.flat(), s = r.umbra_s.flat(), cl = (r.centreline || []).flat();
+    const limbMax = Math.max(...n.concat(s).map(x => Math.abs(x[1])));
     if (bandMax > 90.001) invented.push(b.date + ' (past the pole)');
+    if (bandMax > limbMax + 0.02 && cl.length > 1) {
+      const outside = b.pieces.some(q => q.some(v => {
+        if (Math.abs(v[1]) <= limbMax + 0.02) return false;
+        const p = Math.abs(v[1]) === 90 ? [0, v[1]] : v;
+        const [i, d] = nearest(p, cl);
+        const half = Math.max(nearest(cl[i], n)[1], nearest(cl[i], s)[1]);
+        const gap = angSepR(cl[Math.max(0, i-1)], cl[Math.min(cl.length-1, i+1)]) / 2;  /* sampling slack */
+        return d > half + gap + 0.05;
+      }));
+      if (outside) invented.push(b.date);
+    }
     /* And the inverse: never a centreline hanging in space with no band. */
     if (b.clSegs) {
-      const drawn = Math.max(...b.clSegs.flat().map(x => Math.abs(x[1])));
+      const drawn = Math.max(...b.clSegs.map(sg => Math.max(...sg.map(x => Math.abs(x[1])))));
       if (drawn > bandMax + 0.05) bare.push(b.date);
     }
   }
 }
-ok('a band is extended past its limbs ONLY toward the pole, and only when the centreline goes there',
+ok('a band reaches past its limbs ONLY into the corridor',
    invented.length === 0, invented.slice(0, 5).join(', '));
 ok('no centreline is drawn where there is no band',
    bare.length === 0, bare.slice(0, 5).join(', '));
