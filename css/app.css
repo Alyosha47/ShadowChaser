@@ -980,6 +980,19 @@
       line-height: 1.65;
     }
 
+    /* A qualifying aside inside a syntax dd — smaller, dimmed, and in the body
+       face rather than the mono, so it reads as a note about the tokens above
+       and not as another token you could type. */
+    .syntax-entry dd .syntax-note {
+      display:     inline-block;
+      margin-top:  0.15rem;
+      font-family: inherit;
+      font-size:   0.68rem;
+      color:       var(--text-dim, var(--text));
+      opacity:     0.75;
+      line-height: 1.5;
+    }
+
 
     /* Tolerances table (reuses syntax-table class) */
     .syntax-table {

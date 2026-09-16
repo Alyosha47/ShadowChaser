@@ -2799,6 +2799,35 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-13o** — **Hybrids now match `total` and `annular` searches.** One branch in
+  `search-parser.js`'s `filter.types` test: a global type of `hybrid` satisfies either word, still
+  labelled hybrid. Only the global-type path — with a location set, `e.local_type` already decided
+  it and `eclipse.js` promotes hybrids there deliberately. Measured over the catalogue: `total`
+  3173 -> 3742, `annular` 3956 -> 4525, both +569 = every hybrid, once; `hybrid` and `partial`
+  unchanged. *The AND concern raised when this was scoped was unfounded* — `total annular` returned
+  7129 = 3173 + 3956 before the change, so two type words were always a union. Documented in both
+  places in `index.html`: a dimmed aside under the Type entry in the syntax list (new
+  `.syntax-note` rule in `app.css`, body face not mono, so it does not read as a typeable token)
+  and a full sentence in the Search prose. Build 2026-09-15b.
+- **2026-09-13n** — **The double-download is fixed for the shell. `sw.js` changed — read before
+  touching it again.** The page requests `js/map.js?v=BUILD`; `CORE` listed `js/map.js`. Two URLs,
+  two fetches — and `cache: 'reload'` forced a network hit regardless. **30 of 53 CORE entries
+  overlapped, measured against the LIVE site**, not the repo: every `js/` file, `css/app.css`,
+  `icons/mark-dark-512.png`.
+  Install now stamps exactly those (`STAMPED` regex) and precaches them with `default`; the
+  remaining 22 keep `reload`. **Both conditions are load-bearing:** `CACHE` carries `VERSION`, so a
+  stamped entry can never be served to a later build; and `default` is safe ONLY because the URL is
+  unique per build — relaxing the stamp while keeping the mode reintroduces a stale shell.
+  `CORE` is untouched (`test_hygiene` checks it by bare name) and `index.html` stays bare (the shell
+  fallback matches it literally at `caches.match('index.html')`). 13 suites unchanged, `test_sw`
+  included.
+  **SHIPPED AND VERIFIED LIVE** the same day: build 2026-09-14c, 31 of 53 entries stamped, **0
+  files fetched twice against the deployed site, was 30**. The user also confirmed offline still
+  works after the swap (load, wait, wifi off, reload).
+  **Not fixed:** the `DATA` besselian/path chunks, part of the original 22 MB measurement.
+  **Method note worth keeping:** my first count of this said "only 2 files" — wrong, because the
+  regex I used missed the `js/` entries, which are built with a template literal rather than quoted.
+  Evaluating the `CORE` array gave 30. Do not regex a JS array you can just eval.
 - **2026-09-13m** — **Full audit of TODO.md against the code. The list was not trustworthy; it is
   now.** Two items were already SHIPPED and still listed as open (country search, cloud indicators
   in the details panel — the latter listed twice, in two sections, which is likely how it

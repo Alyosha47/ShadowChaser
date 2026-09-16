@@ -71,7 +71,52 @@ finished; offline works; terrain shadows are done and wired in.)*
    read it before touching anything.
 3. **Evaluate a non-GIBS imagery source** — the single change that improves every complaint at once:
    freshness, resolution and reliability. Detail under **#F2c**.
-4. **#F1b finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
+4. **#F1b — DIAGNOSED 2026-09-13. IT IS TWO BUGS WITH OPPOSITE SIGNS. Do not write one fix.**
+  Measured by running `buildBands` over the 11 named failures and comparing the limb data, the drawn
+  band and the drawn midline (all as max |latitude|):
+
+  | eclipse | limbs | band | midline |
+  |---|---|---|---|
+  | 691-05-03 | 89.99 | 89.73 | 83.81 |
+  | -1180-06-16 | 89.49 | **89.78** | 88.19 |
+  | -1444-08-23 | 88.85 | **89.74** | 86.49 |
+  | -1678-08-31 | 89.68 | **89.86** | 88.91 |
+  | -1877-05-15 | 88.96 | **89.46** | 87.22 |
+  | -1831-06-14 | 89.47 | **89.75** | 87.78 |
+  | -1361-03-12 | 76.95 | 52.20 | **64.35** |
+  | -1850-12-09 | 89.99 | 72.40 | **80.95** |
+  | -1962-12-16 | 89.99 | 77.57 | **82.20** |
+  | 1769-06-04 | 89.99 | 78.57 | **79.98** |
+  | 1979-08-22 | 77.33 | 63.43 | **69.38** |
+
+  **BUG 1 — the band OVERSHOOTS (5 records, the "extended past its limbs" failure).** The band runs
+  up to 0.9 deg PAST the poleward limit of any measured limb. `repairDegenerate` rebuilds a
+  cross-section as `centre +- lastW/2` square to the track; near the pole that places points beyond
+  where any limb was measured, so the band invents corridor. Fix: clamp the rebuilt cross-section so
+  it cannot exceed the measured limb extent.
+
+  **BUG 2 — the band UNDERSHOOTS (5 records, the "centreline with no band" failure).** Opposite
+  sign: the band stops far short of the limbs (-1361-03-12 at 52.20 against limbs at 76.95) while
+  the midline carries on past it — which is exactly what "centreline drawn where there is no band"
+  means. The midline comes from the `pairs` list; the band comes from the QUADS; quads are being
+  DROPPED somewhere the cross-sections survive. The midline trim at the end of `buildBands` only
+  walks back over `.rebuilt` sections, so it has no idea a quad was discarded. Fix: trim the midline
+  to the band that was actually DRAWN, not to the cross-sections that were computed.
+
+  **691-05-03 is the >8% coverage failure and sits in group 1** — treat it as the same bug and
+  re-check coverage after, rather than as a third thing.
+
+  **Do NOT "extend the limbs to the pole".** `tshirt.js` (~line 618) carries two contradictory
+  comments — one proposing it, one recording that it was tried and reverted because in a projection
+  where the pole is a point the two extensions converge into a ragged notch the centreline pokes
+  through. Someone went back and forth and left both. Delete the stale one when this is fixed.
+
+  **Safety property that makes this tractable:** the three assertions are pure consistency checks
+  over the whole catalogue, so any change that fixes these 11 without altering the other 11,887 is
+  provably safe — diff the drawn geometry across every record before and after.
+
+  Original note:
+   finish the t-shirt geometry** — 3 failing catalogue assertions in the polar tail.
    Deliberately NOT first: least visible, most likely to consume a whole session. Read HANDOFF §11.4.
 5. **Search temporal tokens** — needs a design decision before any code. Not currently bothering him.
 6. Remaining open bugs → UX deliberations → Features.
@@ -137,25 +182,16 @@ actually clears · landscape space reclaim · mobile install note · banner slim
   flat vector fills at high zoom (HANDOFF §7.2). Defensible — it IS ice — and rarely visited,
   but it is an inconsistency in a deliberate visual rule.
 
-- **Should HYBRID eclipses match a search for "total"? — DECIDED 2026-09-13: YES. Not yet built.**
-  569 of 11,898. **Half of this is already done and was not recorded:** with a LOCATION set the
-  match already runs on `e.local_type`, and `eclipse.js` (~line 410) deliberately promotes a
-  hybrid so the badge is right while `localPhase` keeps the real total/annular determination. So
-  "totality at the chosen location" — one of the middle paths the old item proposed — ships today.
-  **What is open is the NO-LOCATION case:** a global search for "total" excludes all 569, and the
-  user's decision is that it should not. Reasoning: a hybrid IS total along part of its path, so a
-  chaser shown nothing has been given a wrong answer, not a precise one. Label it hybrid and
-  nothing is muddied.
-  **The symmetric question is DECIDED TOO: "annular" matches hybrids as well.** The user's framing:
-  the term hybrid literally means total + annular, so it belongs in both lists. Matching one and
-  not the other would be indefensible.
-  **So the rule to build: with no location and no country, a hybrid satisfies a `total` filter AND
-  an `annular` filter, and is still labelled hybrid.** Watch the AND logic — `search-parser.js`
-  documents "total annular" as both-included-AND, which a hybrid would now satisfy on its own.
-  Decide whether that is wanted or whether the AND test needs to exclude the doubled match.
-  Touch point is the `filter.types` test in `search-parser.js` (~line 572), the `else` branch where
-  no country row and no location apply.
-
+- ~~**Should HYBRID eclipses match a search for "total"?**~~ **DECIDED AND BUILT 2026-09-13.**
+  Yes, and for `annular` too — hybrid literally means total along part of the path and annular
+  along the rest, so a chaser shown nothing has had a wrong answer, not a precise one. One branch in
+  `search-parser.js`'s `filter.types` test; hybrids are still LABELLED hybrid, only what they MATCH
+  widened. Only the global-type path changed — with a location set, `e.local_type` already decided
+  it at the point and `eclipse.js` promotes a hybrid there deliberately.
+  Measured over the full catalogue: `total` 3173 -> 3742, `annular` 3956 -> 4525, `hybrid` and
+  `partial` unchanged, all +569 = every hybrid, counted once.
+  *The AND worry flagged when this was scoped was unfounded:* `total annular` returned 7129 before
+  the change, exactly 3173 + 3956, so two type words were always a UNION. Nothing to settle.
 - **Search temporal tokens — open-ended *backward* ranges are useless (the "1999-" / "now-"
   problem). NEEDS A DESIGN DECISION — do not code yet. Low priority.** Today a trailing-dash range
   like `1999-` lists ascending from the catalog's START (year ~1 or earlier), so the user drowns
@@ -674,7 +710,9 @@ belong under the headings above; folding them in is a five-minute job for whoeve
    (median +0.07 s, max +49.8 s and 10,686 km away). Needs a trustworthy global search, not the hill
    climb used for the 94 non-central ones. Full handoff in **`GREATEST-DURATION.md`** (repo root) —
    read it before starting.
-3. **Duplicate downloads** (§12.4) — measured, harmless, has a known real fix.
+3. **Duplicate downloads** (§12.4) — **shell half FIXED, SHIPPED AND VERIFIED LIVE 2026-09-13**
+   (0 duplicated, was 30). Only the DATA (besselian/path) chunks remain, and they have never been
+   measured separately. Re-measure before assuming there is anything left to fix.
 
 ### DECIDED AGAINST — do not re-propose
 Each of these was live on a list above and was killed deliberately. The reason is recorded so the
@@ -964,22 +1002,27 @@ In order, and **report what you measure before writing any code**:
     scaling a full day to match an average of two overpasses is not obviously meaningful.
 
 ## PERFORMANCE / DATA
-- **Every asset downloads TWICE on a build change (real, measured, PRE-EXISTING).** The page
-  requests `js/map.js?v=BUILD`; `sw.js`'s precache lists say `js/map.js`. Different URLs → two
-  network fetches, for scripts, basemap layers, and every besselian/path chunk. Confirmed in the
-  network panel (~317 requests, 22 MB). It has ALWAYS been there — it was present throughout the
-  successful offline milestone — so it is wasteful, not breaking.
-  **Two failed attempts (do not repeat):** (a) deferring the DATA precache to a post-load "warm"
-  pass — fixed nothing for the shell/scripts; (b) a single-flight `fetchOnce()` in the SW keyed on
-  the tag-free URL — CANNOT work, because on a build change the page is controlled by the OLD
-  service worker while the NEW one installs and precaches in a separate scope: the two never share
-  an in-flight map.
-  **The actual fix (for a dedicated session):** stop precaching anything the PAGE fetches for
-  itself. The fetch handler already caches on demand, so the shell scripts/CSS don't need to be in
-  the install list at all; precache only what the page never requests (the MapLibre CSP **worker**
-  + vendor assets, out-of-range besselian/paths). Then measure the network panel again. Do this
-  calmly, on a
-  branch, with an offline test after — `sw.js` is the most fragile file in the project.
+- ~~**Every asset downloads TWICE on a build change.**~~ **FIXED, SHIPPED AND VERIFIED ON THE LIVE
+  SITE 2026-09-13 for the SHELL** (build 2026-09-14c: 31 of 53 CORE entries stamped, **0 files
+  fetched twice, was 30**). The DATA half is untouched and unmeasured — see the end of this entry.
+  The page requested `js/map.js?v=BUILD` while `CORE` listed `js/map.js` — different URLs, two
+  network fetches — and `cache: 'reload'` forced a network hit even when the browser had the bytes
+  a moment earlier. **Measured against the LIVE site: 30 of 53 CORE entries overlapped** (every
+  `js/` file, `css/app.css`, `icons/mark-dark-512.png`).
+  **The fix:** stamp exactly those at INSTALL time and precache them with `default`; everything else
+  keeps `reload`. Two things make it safe and both must hold — `CACHE` carries `VERSION`, so each
+  build has its own store and a stamped entry can never reach a later build; and `default` is only
+  safe BECAUSE the URL is unique per build. **Do not relax the stamp while keeping the mode.**
+  `CORE` itself is deliberately NOT rewritten (`test_hygiene` checks it by bare name) and
+  `index.html` stays bare, because the shell fallback matches it literally.
+  *The old note proposed dropping shell files from the install list altogether, relying on the
+  fetch handler. Rejected: that trades a duplicate download for a first-visit offline hole.*
+  **Two earlier attempts, still worth not repeating:** deferring the DATA precache to a post-load
+  warm pass (fixed nothing for the shell); and a single-flight `fetchOnce()` keyed on the tag-free
+  URL (cannot work — on a build change the page is controlled by the OLD worker while the NEW one
+  installs in a separate scope, so they never share an in-flight map).
+  **Still open:** the besselian/path chunks in `DATA`. Those were part of the original ~317-request,
+  22 MB measurement and this change does not touch them. Re-measure before striking this item.
 - **Path JSON size — curve thinning (RDP).** Full-loop traces + pole tips added points. Reduce
   size WITHOUT losing accuracy via Douglas–Peucker decimation per curve at ~200–500 m (far
   below visible-at-max-zoom). Apply to centreline + umbra limits; penumbra + terminators are

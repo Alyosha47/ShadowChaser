@@ -578,7 +578,19 @@
           raw = (e.local_type || e.eclipse_type) || '';
         }
         var full = TYPE_MAP[raw.charAt(0).toUpperCase()] || raw.toLowerCase();
-        if (filter.types.indexOf(full) < 0) return false;
+        /* A HYBRID SATISFIES BOTH `total` AND `annular`. Decided 2026-09-13.
+           Hybrid literally means total along part of the path and annular along
+           the rest, so a chaser who searches "total" and is shown nothing has
+           been given a wrong answer, not a precise one — and matching one but
+           not the other would be indefensible. It is still LABELLED hybrid
+           everywhere; this only widens what it matches.
+           Only reached when the type is the GLOBAL one. With a location set,
+           `e.local_type` already decides it at the point, and eclipse.js
+           promotes a hybrid there deliberately so the badge stays right. */
+        var ok = filter.types.indexOf(full) >= 0
+              || (full === 'hybrid' && (filter.types.indexOf('total') >= 0
+                                     || filter.types.indexOf('annular') >= 0));
+        if (!ok) return false;
       }
 
       /* Duration (central duration only — partials have dur=0 or null) */

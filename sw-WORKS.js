@@ -131,32 +131,11 @@ async function precache(cache, urls, cacheMode, concurrency) {
   return ok;
 }
 
-/* THE SAME FILE WAS BEING DOWNLOADED TWICE ON EVERY INSTALL. index.html requests
-   every script and the stylesheet as `foo.js?v=BUILD`; CORE listed them bare, so
-   the page's copy and the worker's copy were two different URLs — and `reload`
-   forced a network hit even when the browser had just fetched the bytes. 30 of
-   the 53 CORE entries overlapped this way (measured against the live site,
-   2026-09-13): every js/ file, css/app.css, icons/mark-dark-512.png.
-
-   Fixed by stamping exactly those at install time and precaching them with
-   `default` so the HTTP cache can answer. Two things make this safe:
-     - CACHE carries VERSION, so each build has its OWN store. A stamped entry
-       can never be served to a later build — the whole cache is replaced.
-     - `default` is only safe BECAUSE the URL is unique per build. Do not relax
-       the stamp and keep the mode, or a stale shell becomes possible.
-   CORE itself is deliberately NOT rewritten: test_hygiene checks that list
-   against index.html by bare name. Stamp here, not there.
-   index.html stays bare — it is the navigation target and the shell fallback
-   matches it by literal name (see caches.match('index.html') below). */
-const STAMPED = /^js\/|^css\/app\.css$|^icons\/mark-dark-512\.png$/;
-
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
-    // 1) The shell. Stamped entries first, reusing what the page already pulled;
-    //    the rest forced fresh, since a bare URL could otherwise be stale.
-    await precache(c, CORE.filter(u =>  STAMPED.test(u)).map(u => `${u}?v=${VERSION}`), 'default', 6);
-    await precache(c, CORE.filter(u => !STAMPED.test(u)), 'reload', 6);
+    // 1) The shell, forced fresh. Small, and nothing runs without it.
+    await precache(c, CORE, 'reload', 6);
 
     /* 2) TAKE OVER NOW — as soon as the shell is complete and BEFORE the 20 MB
        of field data below. skipWaiting used to be the last line of this block,
