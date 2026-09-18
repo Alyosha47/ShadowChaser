@@ -963,6 +963,8 @@ In order, and **report what you measure before writing any code**:
      the hybrid work (the user wants one engine, no piecemeal regeneration).
   3. **Delete** `splice_umbral_limits.py` (only patches `13j`) and `gen_eclipse_paths_13f.py` (dead code).
   4. Check whether the 33 former chord records still route through the poster's `centreEdges`.
+- **Grazing eclipses lose an umbral limb to seeding** (6 records incl. both `A+` ONELIMB ones) —
+  Jubier's limbs lie on our own contour; fix the seeding first. HANDOFF §9.5.
 - **Hybrids and corridors under 20 km (655 records) still take the old route — do before the final
   regeneration.** Design notes, the rejected attempts and the too-slow prototype: HANDOFF §9.5
   "NEXT (open)". Start with warm-starting `_umb_depth`'s time search, or time-stepping.

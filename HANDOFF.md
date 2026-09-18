@@ -1227,6 +1227,37 @@ inventory, structure (only issues NEW has that BASE lacks), per-curve shift buck
 movers and N/S swaps, and every reference KMZ with ΔT removed. Loads both catalogues whole: needs
 ~3 GB free (the sandbox's 3 GB is not enough for 50 + 50 chunks — run it per century there).
 
+**The user's full test regeneration (commit 96414d5, NOT deployed) was compared with the deployed
+data by `check_regen.py`, all 50 chunks, 2026-09-17.** Result: the engine is sound.
+- No structural issue present in the new data that the deployed data does not already have.
+- Umbral limits vs Jubier (37 reference KMZs, ΔT removed), median: old 93 m–3,089 m → new 3–26 m
+  (1598-08-31 3,089 → 11; 2061-10-13 1,463 → 5; 1533-08-20 1,079 → 8; 2024-04-08 134 → 19).
+  Unchanged where the old route is used: the six hybrids and 1526-01-13.
+- Centreline, penumbra and terminators unchanged or slightly better. 152 N/S naming corrections
+  (polar; §9.5 above). One curve appeared. The largest movers (up to 616 km: 1583-12-14,
+  -1610-12-25, 2571-05-25, and the green line on 827-01-31) are all deployed-data faults being
+  fixed — split, truncated or chorded limbs now continuous and ending on the green line.
+- So the remaining work before the FINAL regeneration is only what is listed below.
+
+**Six more Jubier references (2026-09-17, in `reference kmz` once saved: 1948-05-09, 1927-01-03,
+305-02-10, -297-11-29, 332-03-13, 1965-05-30) settled three things:**
+- **The field is right; the extraction is what fails.** Jubier's umbral limits for -297-11-29 and
+  332-03-13 lie ON our zero contour (|D| ≤ 70 m) and in daylight (sun 0.4–1.8° up at their own
+  maximum). So for grazers the limit exists in our field and the tracer simply never reaches it.
+- **Grazers lose a limb through SEEDING.** `umbral_pts` returns a point on one side only at these
+  geometries (for -297-11-29, one seed in 49 time samples, north only), so the other side's contour
+  component is never traced. Fix the seeding — e.g. march out perpendicular from centreline points
+  until D changes sign and bisect, or seed off the green line — before touching the gate.
+  332-03-13 is the same story: it is one of the two `A+` records with NO umbral limb in the
+  catalogue at all, yet its limb sits on our contour.
+- **N/S naming needs deciding with evidence, not assumed.** On 332-03-13 the curve Jubier calls
+  "Northern Umbra Limit" is what `_umb_side` calls south; on the polar totals (2003-11-23,
+  2021-12-04) his naming matched `_umb_side` exactly. Settle this before the final run.
+- **The narrow-corridor fallback costs less than feared:** old route vs Jubier, median/worst —
+  1948-05-09 (0.2 km wide) 44 m / 299 m, 1927-01-03 (2.1 km) 69 m / 407 m, 305-02-10 (20.8 km)
+  92 m / 5.2 km. Priority below the grazers.
+- **And the new engine on an ordinary total, 1965-05-30:** 209 m / 9.1 km → 5 m / 47 m.
+
 **NEXT (open): hybrids and corridors under 20 km.** 655 central eclipses (502 hybrids + 153 thin
 two-limit), 40–900 m median from Jubier on the old route vs 4–25 m for the field method elsewhere.
 - *Why the field tracer fails there:* where the corridor is narrower than the 10 km step, the Newton
