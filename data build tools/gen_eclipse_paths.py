@@ -23,10 +23,12 @@ import argparse, datetime as _dt, gzip as _gz, glob, json, math, os, time
 # ── Constants ──────────────────────────────────────────────────────────────
 DEG           = math.pi / 180.0
 E2            = 2.0/298.257223563 - (1.0/298.257223563)**2
+_B_A          = math.sqrt(1.0 - E2)   # polar/equatorial axis ratio, 0.99664719
 R_EARTH_M     = 6378137.0  # WGS84 equatorial radius (metres)
 R             = 6371.0    # km
 STEP_MIN      = 1         # minutes between path samples
-GEN_VERSION   = '2026-07-13j'  # generator code version; stamped into each chunk's __meta
+GEN_VERSION   = '2026-09-17a'  # generator code version; stamped into each chunk's __meta
+FIELD_FALLBACKS = []           # totals/annulars where umbral_limits_field returned nothing
                               # (bump when the generation math changes)
 TERM_STEP_MIN = 0.1       # finer step for terminator curves (was 0.5; gave ~80 km median vertex spacing → 6 km cross-track error)
 PEN_N         = 720       # L1-circle sample points (penumbra sweep)
@@ -159,6 +161,33 @@ def _geo_to_fund(lat_gd_deg, lon_deg, d_r, mu, dt_s):
     eta1 = sin_lat_gc * cos_d1 - cos_lat_gc * cos_H * sin_d1
     zeta1 = sin_lat_gc * sin_d1 + cos_lat_gc * cos_H * cos_d1
     return xi, eta1 * rho1, zeta1, rho1
+
+
+def _fund_true(lat_gd_deg, lon_deg, d_r, mu, dt_s):
+    """Exact observer coordinates (xi, eta, zeta) in the fundamental plane, in
+    Earth equatorial radii, for a sea-level point at geodetic (lat, lon) on the
+    WGS84 ellipsoid (Meeus ch. 54; the same transform as eclipse.js).
+
+    Use THIS for anything measured in the shadow: the axis distance and the
+    shadow radii L1' = L1 - zeta*tan_f1, L2' = L2 - zeta*tan_f2.
+    _geo_to_fund's third value is zeta1 of the reduced (spherical) Earth, not
+    zeta: up to ~5 km off, which moves the limits 10-20 m, ~250 m at low sun
+    (found 2026-09-17 against Jubier; HANDOFF sec. 9.5)."""
+    H = (mu + lon_deg - 0.00417807 * dt_s) * DEG
+    u = math.atan(_B_A * math.tan(lat_gd_deg * DEG))
+    rsp = _B_A * math.sin(u); rcp = math.cos(u)
+    sin_d = math.sin(d_r); cos_d = math.cos(d_r); cos_H = math.cos(H)
+    return (rcp * math.sin(H),
+            rsp * cos_d - rcp * cos_H * sin_d,
+            rsp * sin_d + rcp * cos_H * cos_d)
+
+
+def _sun_sin_alt(lat_gd_deg, lon_deg, d_r, mu, dt_s):
+    """sin(altitude) of the shadow-axis direction above the geodetic horizon at
+    (lat, lon). The one horizon test: > 0 means the sun is up."""
+    H = (mu + lon_deg - 0.00417807 * dt_s) * DEG
+    ph = lat_gd_deg * DEG
+    return math.sin(ph) * math.sin(d_r) + math.cos(ph) * math.cos(H) * math.cos(d_r)
 
 
 def _magnitude_at(rec, lat, lon, t):
@@ -1539,9 +1568,8 @@ def green_curve(rec):
         # (sun altitude deg at max eclipse, min axis distance) at this point.
         def adz(t):
             X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
-            xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
-            if zeta is None: return 1e18, -1.0
-            return math.hypot(xi - X, (eta - Y)/rho1), zeta
+            xi, eta, _zeta = _fund_true(lat, lon, d_r, mu, dt_s)
+            return math.hypot(xi - X, eta - Y), _sun_sin_alt(lat, lon, d_r, mu, dt_s)
         N = 44; bt = tmin; bd = 1e18
         for i in range(N + 1):
             t = tmin + (tmax - tmin)*i/N
@@ -1743,8 +1771,9 @@ def _pen_g(rec, lat, lon, t):
     field (_pen_depth: max over t) and the terminator field (_horizon_depth:
     value at the point's own sunrise/sunset)."""
     X, _, Y, _, d_r, mu, dt_s, L1, _ = bstate(rec, t)
-    xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
-    return (L1 - zeta * rec['tan_f1']) - math.hypot(xi - X, eta - Y), zeta
+    xi, eta, zeta = _fund_true(lat, lon, d_r, mu, dt_s)
+    return ((L1 - zeta * rec['tan_f1']) - math.hypot(xi - X, eta - Y),
+            _sun_sin_alt(lat, lon, d_r, mu, dt_s))
 
 
 def _pen_depth(rec, lat, lon):
@@ -2023,6 +2052,196 @@ def _cone_sun_alt(rec, lat, lon):
     return math.degrees(math.asin(max(-1.0, min(1.0, bz))))
 
 
+# ── Umbral limits on the implicit-field engine ───────────────────────────────
+# The same method as the penumbra and the green line: a limit IS the zero contour
+# of the ever-central depth field, so it is traced rather than reconstructed from
+# the centreline. Replaces perpendicular_limits for totals and annulars; that march
+# could not reach the inner edge of a tightly curved path and left 300-2,000 km
+# chords (HANDOFF sec. 9.5). Hybrids stay on the old route (see umbral_limits_field).
+
+def _umb_g(rec, lat, lon, t):
+    X, _, Y, _, d_r, mu, dt_s, _, L2 = bstate(rec, t)
+    xi, eta, zeta = _fund_true(lat, lon, d_r, mu, dt_s)
+    return abs(L2 - zeta * rec['tan_f2']) - math.hypot(xi - X, eta - Y)
+
+
+def _umb_depth(rec, lat, lon, N=96):
+    """(D, t*, sin_alt): D = max over t of (|L2'| - axis distance), >0 where the
+    point is ever inside the umbra/antumbra, 0 on the limit. Ungated by the
+    horizon; sin_alt is the sun's altitude at the point's own maximum t*."""
+    tmin, tmax = rec['tmin'], rec['tmax']
+    bt = tmin; bg = -1e9
+    for i in range(N + 1):
+        t = tmin + (tmax - tmin) * i / N
+        g = _umb_g(rec, lat, lon, t)
+        if g > bg: bg, bt = g, t
+    a = max(tmin, bt - (tmax - tmin) / N); b = min(tmax, bt + (tmax - tmin) / N)
+    for _ in range(40):
+        m1 = a + (b - a) / 3; m2 = b - (b - a) / 3
+        if _umb_g(rec, lat, lon, m1) < _umb_g(rec, lat, lon, m2): a = m1
+        else: b = m2
+    ts = (a + b) / 2
+    _, _, _, _, d_r, mu, dt_s, _, _ = bstate(rec, ts)
+    return _umb_g(rec, lat, lon, ts), ts, _sun_sin_alt(lat, lon, d_r, mu, dt_s)
+
+
+def _umb_side(rec, lat, lon, ts):
+    """> 0 left of the shadow's motion (north limit), < 0 right (south)."""
+    X, Xp, Y, Yp, d_r, mu, dt_s, _, _ = bstate(rec, ts)
+    xi, eta, _ = _fund_true(lat, lon, d_r, mu, dt_s)
+    return ((xi - X) * (-Yp) + (eta - Y) * Xp) / (math.hypot(Xp, Yp) or 1e-12)
+
+
+def _umb_correct(rec, lat, lon, iters=20):
+    """Newton onto D = 0 along the local geodesic gradient."""
+    f = lambda la, lo: _umb_depth(rec, la, lo)[0]
+    H = 2000.0
+    for _ in range(iters):
+        v = f(lat, lon)
+        if abs(v) < 1e-8: return lat, lon
+        gN = (f(*_gc_step(lat, lon, 0.0, H)) - f(*_gc_step(lat, lon, math.pi, H))) / (2 * H)
+        gE = (f(*_gc_step(lat, lon, math.pi / 2, H)) - f(*_gc_step(lat, lon, -math.pi / 2, H))) / (2 * H)
+        g2 = gN * gN + gE * gE
+        if g2 < 1e-30: return None
+        dist = -v / math.sqrt(g2)
+        if abs(dist) > 500e3: return None
+        lat, lon = _gc_step(lat, lon, math.atan2(gE, gN), dist)
+    return (lat, lon) if abs(f(lat, lon)) < 2e-6 else None
+
+
+NIGHT_SIN_ALT = -0.2     # sun ~11.5 deg below the horizon: umbral tracing stops here
+UMB_STEP_KM = 10.0       # tracer step for umbral limits
+UMB_MIN_WIDTH_KM = 2 * UMB_STEP_KM   # narrower two-limit corridors keep the old route: with
+                         # the step wider than the corridor, Newton lands on the other limb
+                         # (1948-05-09 0.2 km, 1927-01-03 2.1 km, 1966-05-20 3.2 km)
+UMB_MAX_STEP_KM = 30.0   # a traced limb with a longer step is malformed (the tracer jumped)
+
+
+def umbral_limits_valid(north, south, two_limit):
+    """A traced result is trusted only if every step is a tracer step. A longer
+    one means the tracer jumped between limbs -- which happens when the corridor
+    is narrower than the step (1948-05-09, 0.2 km wide). build_path then uses the
+    old route and logs a FIELD FALLBACK."""
+    if two_limit and not (north and south):
+        return False                      # a two-limit eclipse must yield both limbs
+    for arc in north + south:
+        for p, q in zip(arc, arc[1:]):
+            if _gc_dist((p[1], p[0]), (q[1], q[0])) > UMB_MAX_STEP_KM * 1e3:
+                return False
+    return True
+
+
+def _drop_retraced(arcs, tol_km=1.0, frac=0.9):
+    """Same-side arcs that are one curve traced twice (1927-06-29's south limb):
+    drop the shorter when >= frac of its vertices lie within tol_km of the longer
+    arc's segments. Only ever given arcs of ONE side, so a narrow corridor's two
+    real limbs are never compared with each other."""
+    def v(lon, lat):
+        return (math.cos(lat * DEG) * math.cos(lon * DEG),
+                math.cos(lat * DEG) * math.sin(lon * DEG), math.sin(lat * DEG))
+    def dot(a, b): return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    def ang(a, b): return math.acos(max(-1.0, min(1.0, dot(a, b))))
+    def seg_km(P, A, B):
+        n = (A[1] * B[2] - A[2] * B[1], A[2] * B[0] - A[0] * B[2], A[0] * B[1] - A[1] * B[0])
+        nn = math.sqrt(dot(n, n))
+        if nn < 1e-15: return 6371.0 * min(ang(P, A), ang(P, B))
+        xt = math.asin(max(-1.0, min(1.0, dot(P, n) / nn)))
+        ab = ang(A, B); c = max(1e-15, math.cos(xt))
+        if (math.acos(max(-1.0, min(1.0, math.cos(ang(P, A)) / c))) <= ab and
+                math.acos(max(-1.0, min(1.0, math.cos(ang(P, B)) / c))) <= ab):
+            return 6371.0 * abs(xt)
+        return 6371.0 * min(ang(P, A), ang(P, B))
+    keep = []
+    for a in sorted(arcs, key=len, reverse=True):
+        smp = [v(*p) for p in a[::max(1, len(a) // 30)]]
+        dup = False
+        for k in keep:
+            kv = [v(*p) for p in k]
+            near = sum(1 for P in smp
+                       if min(seg_km(P, kv[m], kv[m + 1]) for m in range(len(kv) - 1)) < tol_km)
+            if near >= frac * len(smp): dup = True; break
+        if not dup: keep.append(a)
+    return keep
+
+
+def umbral_limits_field(rec, step_km=UMB_STEP_KM, n_seed_times=48):
+    """Umbral N/S limits for a total or annular eclipse (two-limit or one-limit).
+
+    Seeds come from the analytic envelope points (umbral_pts), which lie on or
+    near the limit; each is Newton-corrected onto D = 0 and traced with
+    _trace_zero. The traced contour is kept where the sun is up at the point's
+    own maximum (so every limb ends on the green line), cut into limbs wherever
+    visibility or the side of the shadow's motion changes, and labelled N/S by
+    that side. Every cut is bisected onto the exact break.
+
+    NOT for hybrids. Where L2' changes sign the corridor pinches to a point, and
+    the traced limbs fragment and mislabel -- tried 2026-09-17 both on |L2'| and
+    as separate umbral/antumbral parts (worst points 60-1,300 km off Jubier).
+
+    Returns (north_segs, south_segs) of [(lon, lat), ...] in time order."""
+    tmin, tmax = rec['tmin'], rec['tmax']
+    seeds = []
+    for i in range(n_seed_times + 1):
+        n_pt, s_pt = umbral_pts(rec, tmin + (tmax - tmin) * i / n_seed_times)
+        for p in (n_pt, s_pt):
+            if p is not None: seeds.append(p)
+    def field(la, lo):
+        # The limbs end on the horizon, so the contour is only needed on the day
+        # side. Without this cut it wraps round the night side, overruns maxpts
+        # and retraces the same limb (1984-11-22: one limb three times).
+        D, _, sa = _umb_depth(rec, la, lo)
+        return D if sa > NIGHT_SIN_ALT else None
+    comps = []
+    for (la, lo) in seeds:
+        if any(_gc_dist((la, lo), (q[1], q[0])) < 60e3 for c, _ in comps for q in c):
+            continue
+        c = _umb_correct(rec, la, lo)
+        if c is None: continue
+        if any(_gc_dist(c, (q[1], q[0])) < 3 * step_km * 1e3 for cc, _ in comps for q in cc):
+            continue
+        pts, closed = _trace_zero(field, c, step_km=step_km, min_km=1.0, maxpts=6000)
+        if len(pts) >= 3: comps.append((pts, closed))
+
+    north, south = [], []
+    for pts, closed in comps:
+        n = len(pts)
+        info = [_umb_depth(rec, lat, lon) for lon, lat in pts]
+        lab = [(sa > 0, _umb_side(rec, lat, lon, ts) > 0)
+               for (lon, lat), (_, ts, sa) in zip(pts, info)]
+        brk = [i for i in range(n) if (closed or i > 0) and lab[i] != lab[i - 1]]
+        if not brk:
+            runs = [list(range(n))]
+        elif closed:
+            runs = [[j % n for j in range(a, b)] for a, b in zip(brk, brk[1:] + [brk[0] + n])]
+        else:
+            cuts = [0] + brk + [n]
+            runs = [list(range(a, b)) for a, b in zip(cuts, cuts[1:])]
+
+        def lab_at(lat, lon):
+            _, ts, sa = _umb_depth(rec, lat, lon)
+            return (sa > 0, _umb_side(rec, lat, lon, ts) > 0)
+
+        def refine(j_in, j_out):
+            A = (pts[j_in][1], pts[j_in][0]); B = (pts[j_out][1], pts[j_out][0]); L = lab[j_in]
+            for _ in range(30):
+                d = _gc_dist(A, B)
+                if d < 1.0: break
+                m = _gc_step(A[0], A[1], _gc_bearing(A, B), d / 2)
+                m = _umb_correct(rec, m[0], m[1]) or m
+                if lab_at(*m) == L: A = m
+                else: B = m
+            return (A[1], A[0])
+
+        for r in runs:
+            if len(r) < 3 or not lab[r[0]][0]: continue
+            arc = [pts[j] for j in r]
+            if brk and (closed or r[0] > 0): arc = [refine(r[0], (r[0] - 1) % n)] + arc
+            if brk and (closed or r[-1] < n - 1): arc = arc + [refine(r[-1], (r[-1] + 1) % n)]
+            if info[r[0]][1] > info[r[-1]][1]: arc = arc[::-1]
+            (north if lab[r[0]][1] else south).append(arc)
+    return _drop_retraced(north), _drop_retraced(south)
+
+
 def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     tmin=rec['tmin']; tmax=rec['tmax']; step=step_min/60.0
     # Central eclipses include all T (total), A (annular), H (hybrid)
@@ -2244,9 +2463,8 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
             # every limit and the centreline there (visible-totality).
             def adz(t):
                 X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
-                xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
-                if zeta is None: return 1e18, -1.0
-                return math.hypot(xi - X, (eta - Y)/rho1), zeta
+                xi, eta, _zeta = _fund_true(lat, lon, d_r, mu, dt_s)
+                return math.hypot(xi - X, eta - Y), _sun_sin_alt(lat, lon, d_r, mu, dt_s)
             N = 48; bt = tmin; bd = 1e18
             for i in range(N+1):
                 t = tmin + (tmax - tmin)*i/N
@@ -2424,12 +2642,33 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     # envelope walk and the cone-contour split. The envelope walk above is
     # retained only as a fallback when the perpendicular method returns nothing.
     one_limit = is_central and len(et) > 1 and et[1] in ('n', 's', '-', '+')
-    if is_central and not one_limit and len(cl) >= 7:
+    # 2026-09-17a: every central eclipse's limits come from umbral_limits_field.
+    # The perpendicular march and the analytic walk below now run ONLY when the
+    # field returns no limb at all; FIELD_FALLBACKS counts it so it can be retired.
+    _field_ok = False
+    _use_field = (is_central and et[0] != 'H'                     # hybrids: old route
+                  and (one_limit or (rec.get('path_width') or 0.0) >= UMB_MIN_WIDTH_KM))
+    if _use_field:
         try:
-            _cl_times = [w[0] for w in walk]
-            _n_segs, _s_segs = perpendicular_limits(rec, cl, _cl_times)
+            _fn, _fs = umbral_limits_field(rec)
+            _field_ok = bool(_fn or _fs) and umbral_limits_valid(_fn, _fs, not one_limit)
         except Exception:
-            _n_segs, _s_segs = [], []
+            _field_ok = False
+        if _field_ok:
+            un_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _fn]
+            us_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _fs]
+            _n_segs, _s_segs = _fn, _fs
+        if not _field_ok:
+            _tag = f"{rec.get('year')}-{rec.get('month')}-{rec.get('day')}"
+            FIELD_FALLBACKS.append(_tag)
+            print(f"  FIELD FALLBACK {_tag} {et}: umbral_limits_field gave no valid limb; old route used", flush=True)
+    if is_central and not one_limit and len(cl) >= 7:
+        if not _field_ok:
+            try:
+                _cl_times = [w[0] for w in walk]
+                _n_segs, _s_segs = perpendicular_limits(rec, cl, _cl_times)
+            except Exception:
+                _n_segs, _s_segs = [], []
         # Narrow-band densification. On near-grazing eclipses the umbral
         # band can be narrower than the chord sagitta of the standard
         # 1-minute sampling (~15 km spacing): 1986-10-03's band thins to
@@ -2477,11 +2716,12 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
                 walk = walk2
                 cl = [[round(lon, 5), round(lat, 5)] for (_t, lat, lon) in walk]
                 cl_segs = [cl]
-                try:
-                    _n_segs, _s_segs = perpendicular_limits(rec, cl, [w[0] for w in walk])
-                except Exception:
-                    pass
-        if _n_segs or _s_segs:
+                if not _field_ok:
+                    try:
+                        _n_segs, _s_segs = perpendicular_limits(rec, cl, [w[0] for w in walk])
+                    except Exception:
+                        pass
+        if (_n_segs or _s_segs) and not _field_ok:
             un_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _n_segs]
             us_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _s_segs]
             un_segs = _terminate_on_green(un_segs, _GREEN_TERMINI)
@@ -2495,7 +2735,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     _present = lambda segs: sum(len(s) for s in segs) >= 3
     _dropped = is_central and not one_limit and (_present(un_segs) != _present(us_segs))
 
-    if is_central and (one_limit or _dropped or (not un_segs and not us_segs)):
+    if is_central and not _field_ok and (one_limit or _dropped or (not un_segs and not us_segs)):
         # One-limit eclipse — exactly one umbral/antumbral edge meets Earth. Two
         # kinds: a non-central grazer (axis misses Earth: A-/A+/An/As — no centre-
         # line to march from), or a central one-limit (Tn/Ts: axis hits Earth but
@@ -2736,9 +2976,8 @@ def _round_path(path):
     High-accuracy curves (centreline, umbra) keep 5 dp (~1 m).
     Ovals keep 4 dp (~11 m).
     ge keeps 4 dp.
-    Low-accuracy curves (penumbra) use 2 dp (~1 km) since
-    they're already 20-100 km off — extra precision is wasted bytes.
-    Terminators keep 4 dp.
+    Penumbra and terminators keep 4 dp (~10 m). (Penumbra was 2 dp, ~1 km,
+    when it came from the walker, 20-100 km off; the field engine is sub-km.)
     All other fields (scalars, metadata) are passed through unchanged.
     """
     PREC = {
@@ -2749,8 +2988,8 @@ def _round_path(path):
         'ge':               4,
         'terminator_first': 4,
         'terminator_last':  4,
-        'penumbra_n':       2,
-        'penumbra_s':       2,
+        'penumbra_n':       4,
+        'penumbra_s':       4,
     }
     def round_segs(segs, dp):
         return [[[round(lon, dp), round(lat, dp)] for lon, lat in seg]

@@ -33,6 +33,14 @@ upload**; git does not deploy (§4).
 
 ## 0. START HERE — the ten lines a new session needs
 
+> **PATH GENERATOR, as of 2026-09-17 (full story §9.5).** Generator `2026-09-17a` is with the user and
+> a full regeneration is running on his Mac **as a TEST, not a release**: he wants ONE engine and ONE
+> final regeneration, no piecemeal patching. Before that final run: (1) hybrids and corridors under
+> 20 km still take the old route — make the field method handle them (§9.5 "Next"); (2) move the last
+> old-frame helpers onto `_fund_true` (§9.5 "Next"). When his test output is pushed, run
+> `check_regen.py` against the deployed data (a copy is NOT in git: the deployed set = git's 08-04
+> `13j` chunks + the 22 spliced chunks; download from the live site if the sandbox copy is gone).
+
 > **The cloud feature is CLOSED as of 2026-08-22c.** Photo's repeating tiles — the bug that ran for
 > six threads — were the SERVICE WORKER, not the map (§10A.8d, §12.1). What remains in `Photo` and
 > `Now` are SOURCE limits, listed in §3, and none of them is a code fix.
@@ -979,20 +987,27 @@ Generator: `data build tools/gen_eclipse_paths.py` — **exactly one generator f
 reintroduce a `_v2`/`_v3` suffix; version history is git's job. (A duplicate old copy once cost a
 whole session chasing the wrong baseline.)
 
-**`gen_eclipse_paths_13f.py` sits beside it. KEEP IT — it is not a stray copy.** Checked 2026-08-13:
-- As a *generator* it is superseded. `GEN_VERSION = '2026-07-13f'` against the shipped `13j`, which
-  is what every built chunk is stamped with. Never generate from it. (File dates agree: the shipped
-  generator is Jul 16 2026, `_13f` is Jul 14. But **settle it on `GEN_VERSION`, which is inside the
-  file, not on mtime** — mtime records the last write to that path, so a copied or restored file
-  carries a date that says nothing about its contents.)
-- But it is **not a subset**. It carries five functions the shipped generator does not:
-  `_cone_seed`, `_cone_trace`, `_cone_gc`, `_cone_clip_horizon`, `_cone_worst_turn` — the
-  cone–spheroid contour tracer, i.e. **the proven fix for the umbral grazing-tip zigzag (§9.5)**.
-  This file IS the "WIP saved in sandbox, not shipped" that §9.5 refers to. Deleting it as chaff
-  throws away the hard half of an open bug.
+**`gen_eclipse_paths_13f.py` sits beside it — superseded, and no longer the fix for anything.**
+Checked 2026-09-17 by reading both files and the history, correcting the 2026-08-13 note here that
+called it "the WIP §9.5 is blocked on":
+- `GEN_VERSION = '2026-07-13f'` against the shipped `13j`. Never generate from it.
+- Its five extra `_cone_*` functions (`_cone_seed`, `_cone_trace`, `_cone_gc`, `_cone_clip_horizon`,
+  `_cone_worst_turn`) are **never called**, in that file or any other. They are leftover parts.
+- The cone splitter they fed WAS finished and integrated in June (ledger: `SPLITTER_PROGRESS.md`,
+  in git history at `d4f23db`), then **replaced** on 2026-06-23 (`c576e25`) by `perpendicular_limits`.
+- The §9.5 fix is `umbral_limits_field` in the generator (`17a`), built on `_trace_zero`. Nothing in `_13f` is needed.
 
-Not yet checked: whether the WIP is complete apart from the N/S splitter §9.5 is blocked on. Do that
-before starting §9.5 from scratch.
+**What builds each curve** (read from `build_path`, confirmed by regenerating 2024-04-08). Every shadow
+measurement in the field methods uses `_fund_true` (exact observer coordinates) and every horizon test
+`_sun_sin_alt` (§9.5):
+
+| curve | method |
+|---|---|
+| centreline | shadow axis at each time step (`centreline_pt`) |
+| umbral limits | **from `2026-09-17a`:** `umbral_limits_field` (contour tracer) for totals and annulars; hybrids keep `perpendicular_limits` + the analytic walk (§9.5) |
+| penumbral limits | `penumbral_limits_field` (contour tracer); the walker is its seed and per-side fallback |
+| green line | `green_curve` (contour tracer) |
+| terminators | `_terminator_curves`: analytic circle intersection per time step |
 
 ### 9.0 `computeEclipse`'s `alt` argument is NOT optional — and it is EXPENSIVE
 
@@ -1049,7 +1064,7 @@ the geometry (`m < |L2'|`), not the string.
 ### 9.1 Validation vs Jubier
 | Curve | vs Jubier | Verdict |
 |---|---|---|
-| Umbra limits | sub-km | good except grazing-tip zigzag (§9.5) |
+| Umbra limits | sub-km | good; the 33 chorded records re-traced 2026-09-17 (§9.5) |
 | Green line (Max-on-Horizon) | 0.4–1.8 km | good |
 | Terminator (Sun Rise/Set) | 3–5 km | good |
 | Penumbra | ~9 km | close; user accepts (naturally fuzzy) |
@@ -1163,23 +1178,190 @@ Two paths now:
 
 "Obscuration" is the canonical term throughout the UI.
 
-### 9.5 OPEN: umbral grazing-tip zigzag (generator)
-On grazing eclipses (~half of all) the umbral N/S limit shows a 300–1200 km gap plus a ~150–177° fold
-at one or both ends. **Root cause PROVEN:** the envelope-of-moving-shadow method stops where the
-shadow axis leaves Earth's disk (|C|→1); totality continues to the terminator, and the straight chord
-bridging that real stretch is the zigzag.
-**Fix PROVEN:** trace the umbral limit as the cone–spheroid intersection contour — the zero level set
-of h(lat,lon) = max_t(|L2 − ζ·tan_f2| − m), the same engine as the green line. Sub-km vs Jubier
-(2017 N 0.28 / S 0.15) and it reaches the tips (1144 BCE: max gap 25 km = the tracer step, vs the old
-950 km chord).
-**One blocker:** splitting the traced closed contour loop into clean N/S polylines. Simple eclipses
-(2033) split perfectly (worst turn 2°); corridor-shaped ones do not yet. Four splitter approaches
-tried and rejected; next idea is maximum-curvature tip detection. Full ledger in TODO. WIP saved in
-sandbox, NOT shipped — the v9 envelope remains the shipped umbra.
-*(For the record, corridor vertices are themselves accurate: every one evaluates to magnitude 1.0000
-via `_max_magnitude`. The visible tip protrusions and kinks are sampling artifacts of the
-perpendicular bisect, and the user's physical principle — a shadow on a sphere is always smooth, so
-any kink is method, not geometry — is the right frame.)*
+### 9.5 Umbral limits — generator `2026-09-17a` (chords fixed; exact observer height)
+**Status.** Two stages, same day. (1) The 33 chorded records were patched in the shipped `13j` data by
+`splice_umbral_limits.py` (deployed, build 2026-09-17a). (2) The method went into the generator itself
+as `2026-09-17a`, together with a real bug it exposed (below). **A full regeneration with `17a` is
+pending on the user's machine; after it, delete `splice_umbral_limits.py`** — it only patches `13j`.
+
+**The observer-height bug (found 2026-09-17, fixed in `17a`).** `_geo_to_fund` returns ζ₁ of the
+reduced (spherical) Earth, not ζ: up to ~5 km off. Every shadow radius `L' = L − ζ·tan f` used it,
+moving the limits 10–20 m, ~250 m at low sun. Fixed by `_fund_true` (the standard transform, as in
+`eclipse.js`). The horizon is a DIFFERENT quantity — the sun's altitude above the local vertical — and
+now has its own function, `_sun_sin_alt`. Using true ζ for the horizon made limb ends 4 km wrong;
+using each quantity for its own job fixed both. Applied to: umbral limits, `_pen_g` (penumbra and the
+terminator refinement that shares it), `green_curve`, and the centreline's `_max_sun_alt`.
+`perpendicular_limits`/`dep_local` (hybrids only now) still use the old frame.
+
+**Two failure modes found by regenerating 1901–2000, both handled in `17a`.**
+- *Retraced limbs* (1959-10-02, 1984-11-22: one limb stored 2–3 times). The ungated contour wraps
+  round the night side, overruns `maxpts` without closing, and the two-way trace repeats the limb.
+  Fixed: the field returns None once the sun is below `NIGHT_SIN_ALT` (−0.2, ~11.5°), so only the
+  day side is traced. Also halved the time per eclipse.
+- *Corridor narrower than the step* (1948-05-09 0.2 km, 1927-01-03 2.1 km, 1966-05-20 3.2 km): Newton
+  lands on the other limb, so limbs shred or one vanishes. Two-limit eclipses narrower than
+  `UMB_MIN_WIDTH_KM` (2 × the 10 km step = 20 km; catalogue `path_width`) keep the old route by rule —
+  153 of 7,129 two-limit totals/annulars, none of them the former chord records.
+- *Backstop:* `umbral_limits_valid` rejects a traced result with a step > 30 km, or with a limb
+  missing on a two-limit eclipse; build_path then prints `FIELD FALLBACK` and takes the old route.
+- *Same limb traced twice* (1927-06-29): `_drop_retraced` removes a same-side arc lying within 1 km
+  of a longer one. Only ever compares arcs of one side.
+
+**1901–2000 regenerated as the gate:** 228 eclipses, 0 fallbacks, structural audit unchanged (the two
+`A+` only), no umbral step over 200 km (DP's cap), no duplicate or extra segments, every eclipse keeps
+the limbs it had in `13j`; `test_country` and `test_favorability` pass.
+
+**N/S naming follows the side of the shadow's travel, as Jubier's does.** `13j` named some polar
+limits the other way round (the perpendicular march labelled by latitude): on 2003-11-23 and
+2021-12-04 its "north" limit is Jubier's southern one. `17a` matches Jubier on both (4–6 m per limit).
+In 1901–2000 five eclipses change name this way (1914-02-25, 1954-01-05, 1972-01-16, 1985-11-12,
+1990-01-26); the curves themselves are the same. `validate_paths.py` cannot see a swap — it measures
+against both limits together.
+
+**The green line improved too** (true axis distance + sun altitude): median vs Jubier's Maximum-on-
+Horizon curves 2024-04-08 984 → 208 m, 2017-08-21 645 → 97 m, 1999-08-11 422 → 93 m, 2023-10-14
+1,233 → 314 m, 2003-11-23 193 → 122 m. Worst points (the tips) unchanged at up to ~16 km.
+
+**`data build tools/check_regen.py`** compares a regenerated catalogue with the deployed one:
+inventory, structure (only issues NEW has that BASE lacks), per-curve shift buckets with the largest
+movers and N/S swaps, and every reference KMZ with ΔT removed. Loads both catalogues whole: needs
+~3 GB free (the sandbox's 3 GB is not enough for 50 + 50 chunks — run it per century there).
+
+**NEXT (open): hybrids and corridors under 20 km.** 655 central eclipses (502 hybrids + 153 thin
+two-limit), 40–900 m median from Jubier on the old route vs 4–25 m for the field method elsewhere.
+- *Why the field tracer fails there:* where the corridor is narrower than the 10 km step, the Newton
+  corrector lands on the opposite limb; at a hybrid's pinch (L2' = 0) the width is zero.
+  Tried and rejected 2026-09-17: tracing |L2'| as-is; tracing the umbral (−L2') and antumbral (+L2')
+  parts separately with same-side de-duplication (limbs fragmented and mislabelled, worst 60 km to
+  1,300 km off).
+- *Tried, works in principle, far too slow:* cap the step at 0.3 × local half-width, where half-width
+  (metres) = |L2'(t*)| / |∇D| (both already computed), floor 0.05 km, `maxpts` 60,000; plus seed
+  de-duplication that only compares seeds with traced points ON THE SAME SIDE (a side-blind distance
+  test skips the other limb of a narrow corridor entirely — that, not only the step, is why
+  1927-01-03 lost its south limb). 1986-10-03 ran > 13 min unfinished (old route: 6 s). The cost is
+  `_umb_depth`: every field evaluation re-scans the whole eclipse window (96 samples + 40 ternary
+  steps) although t* barely moves between neighbouring contour points.
+- *Two ways forward, not yet tried:* (a) warm-start the time search from the previous point's t*
+  (local ternary/Newton, ~10× fewer evaluations) with a periodic full scan as a guard against missing
+  the global maximum on near-pole loops; (b) step in TIME instead of distance: for each t take the
+  envelope point (instantaneous D = 0 and ∂D/∂t = 0 — umbral_pts already solves this) and accept it
+  only if the global field agrees (max_t D ≈ 0 there). Same definition of the limit, and a time step
+  cannot jump across a narrow corridor; the inner-edge cases that made chords are exactly where the
+  global check rejects envelope points, so the contour tracer would still be needed there.
+- *The prototype's code is not kept* (it lived in the sandbox); everything needed is described here.
+
+**NEXT: the fallbacks from the user's full test run (2026-09-17).** 23 of ~7,600 central eclipses
+(0.3%); each used the old route, so no data is damaged. They are the list of what the field method
+still cannot do. Complete, each diagnosed by re-running `umbral_limits_field` on the record:
+
+```
+end-pinning (13)  -1590-12-14  -1803-06-05  -1902-03-23  -166-11-20  161-11-05  1358-01-10
+                  1695-12-06   31-11-03     2068-05-31   2518-03-12  667-08-25  826-08-07  985-07-20
+narrow (4)        -1707-03-27 (21.6 km)  305-02-10 (20.8)  1722-12-08 (21.4)  1498-06-19 (23.4)
+grazing (6)       -297-11-29  -839-07-26  -1784-06-05  332-03-13  890-02-23  2485-12-07
+```
+332-03-13 and 2485-12-07 are the two `A+` records the audit has always reported as having no umbral
+limb at all (§9.7): same grazing class, so the geometry-based gate below is their best chance.
+
+
+1. *End-pinning jump* — -1590-12-14, -1803-06-05, -1902-03-23, -166-11-20, 161-11-05, 1358-01-10
+   (ordinary 60–65 km totals). Every step is a proper tracer step except the FIRST or LAST, 36–245 km,
+   i.e. the point `refine()` adds. Its bisection calls `_umb_correct` on each midpoint and that Newton
+   step may move up to 500 km, so a midpoint can snap to a distant stretch of contour. **Fix:** reject
+   a correction landing outside the current bisection interval and keep the uncorrected midpoint.
+   (161-11-05 also leaves two 5-point fragments, which the same jump explains.)
+2. *Grazing one-limit eclipses* — -839-07-26 (T+), -1784-06-05 (A-): no limb traced at all. Catalogue
+   `path_width` is 0 for these, so the width rule does not apply and they reach the tracer. The
+   umbral edge barely clips the Earth; seeding (`umbral_pts`) or the Newton correction presumably
+   fails. Not yet diagnosed further.
+3. *The gate is wrong, not the trace* — -297-11-29 (T, gamma -0.989, 815 km "wide"): an extreme
+   grazer near Antarctica. The traced boundary is ONE closed loop entirely on the north side of the
+   shadow's travel (365 points sunlit, 387 not); there is no south limit on Earth. The field result
+   is right and `13j`'s south limb — 9 points, and its north limb has a 193 km step — is spurious,
+   missed by the audit (over the 3-point threshold) and by the chord scan (under 300 km).
+   **Fix:** decide one-limb vs two from the geometry, not the catalogue type: accept a single limb
+   when the traced contour has no sunlit points on the other side. Likely the same for class 2.
+   Also: the shipped catalogue probably holds more stub limbs like this — the `check_regen.py`
+   comparison after the full run will list them.
+
+4. *The 20 km width rule is too generous* — -1707-03-27 (21.6 km), 1498-06-19 (23.4 km),
+   1722-12-08 (21.4 km): ordinary annulars, gamma 0.68-0.75, each returning only a north limb. A
+   10 km step needs far more than 20 km of corridor to stay on its own limb. Raising
+   `UMB_MIN_WIDTH_KM` would be a stopgap and an expensive one — of 6,948 two-limit totals/annulars,
+   153 are under 20 km, 312 under 40, 461 under 60, 1,172 under 100 — so the real answer is the
+   width-limited step (NEXT open, above), which removes the rule instead of widening it.
+
+**NEXT (small): old-frame helpers still in the generator.** `_magnitude_at` (→ `_max_magnitude` →
+the green-line terminus polish), `_cone_depth`, `_cone_sun_alt`, `_gt_inst` (perpendicular-march
+support) still take ζ from `_geo_to_fund`. ξ and η from `_geo_to_fund` equal the true ones; only ζ
+(and the η/ρ₁ "scaled" distance some of them use) is the approximation. Move them to `_fund_true` /
+`_sun_sin_alt`, delete whichever become unused once hybrids leave the old route.
+
+**Hybrids stay on the old route, by design (for now).** Where L2' changes sign the corridor pinches to a
+point; traced limbs fragmented and mislabelled (worst points 60–1,300 km off Jubier on 1986-10-03,
+2005-04-08, 2023-04-20), tried both on |L2'| and as separate umbral/antumbral parts. 502 records.
+
+**Final generator vs `13j`, against Jubier, ΔT removed, umbral limits (median / worst):**
+```
+1979-08-22   1,580 m / 181 km   ->   7 m / 214 m      2003-11-23   788 m / 9.8 km  ->  4 m / 701 m
+2654-12-01   2,575 m / 430 km   ->   4 m / 386 m      2021-12-04   647 m / 1.6 km  ->  4 m / 929 m
+-797-11-07   1,598 m / 323 km   ->   9 m / 216 m      1533-08-20   1.1 km / 6.8 km ->  8 m / 219 m
+2024-04-08     134 m / 9.0 km   ->  19 m / 43 m       1547-11-12   1.3 km / 10.9 km->  8 m / 1.2 km
+2023-10-14     167 m / 14.2 km  ->  25 m / 247 m      2017-02-26    93 m / 13.2 km ->  6 m / 71 m
+2017-08-21     110 m / 7.1 km   ->  14 m / 39 m       hybrids 1986, 2005, 2023-04-20: unchanged
+```
+Centreline and terminators unchanged (±10 m). Penumbra unchanged within ±50 m.
+
+**Penumbra vs Jubier — investigated 2026-09-17, OURS IS THE STANDARD DEFINITION; no fix.** Ours sits
+150–2,000 m outside Jubier's (2024-04-08: median 550 m). Established:
+- Not storage: the raw field output is already off by the same amount. Not `17a`: `13j` was the same.
+- In the shadow plane Jubier's penumbra is SMALLER than ours by an amount growing roughly with ζ²
+  (sun height squared): ~20 m at low sun, ~1.2 km with the sun overhead, same on both limits.
+  Not a lunar-radius difference (that would be constant), not the timing definition (evaluating at
+  closest approach instead of deepest eclipse changes it by < 10 m), not the lunar limb (his umbral
+  limits match ours to 4–20 m, and a limb effect would not be this smooth).
+- **`eclipse.js`, separately written, agrees with the generator:** magnitude 0 / no eclipse on our
+  limit; partial (magnitude 0.00001–0.00038) at every Jubier limit point. Our limit is where the
+  maximum magnitude reaches zero, the standard definition; his line sits just inside it. Why is
+  not known without his code. Invisible in practice (magnitude ≤ 0.0004).
+
+**Open:** 2023-10-14 and 2024-04-08 are ~20 m NARROWER than Jubier on both limbs (every other
+reference is within 4–9 m); limb ends near the horizon can be ~1 km off (a horizon-definition
+question). Cost: 6–22 s per eclipse, ~2× `13j`.
+
+**The defect.** 33 of 11,898 records (28 plain `A`) had an umbral limit bridged by one straight step
+of 300 km or more — worst 2654-12-01 at 1,958 km, 1979-08-22 at 1,178 km. Rendered, each chord
+bridges a stretch of limb that `perpendicular_limits` did not reach, typically the inner edge of a
+tightly curved path; the exact failure inside the march was not diagnosed, because the field method
+does not use it. Three chords ran via a false pole transit (-1038-10-03, 936-09-18, -1801-04-15
+went up to ±89.99; the true limit stops 2.5–4° short). Seen on the
+main map and as the poster's wedges (§11.4).
+
+**Why no check caught it.** The generator's in-run AUDIT skips the FIRST and LAST gap of every open
+polyline (`skip_gap`), and every chord sat at a limb end. `audit_paths.py` checks structure, not steps.
+
+**The method (`umbral_limits_field`; first shipped as the splice).**
+```
+limit = zero contour of  D(lat,lon) = max_t ( |L2 − ζ·tan f2| − axis distance )    true frame, ungated
+```
+Seed from the analytic envelope points, trace, keep the contour where the sun is up at the point's own
+maximum (so every limb ends on the green line), cut it into limbs wherever the side of the shadow's
+motion changes, label N/S by that side, bisect each cut onto the exact break. **That labelling rule is
+the penumbra's, and it is what the June cone work lacked** — its splitter was the blocker, and it was
+solved for the penumbra in July without anyone carrying it back. Output goes through the generator's
+usual umbral post-processing (unwrap, pole split, despur, DP 10 m, 5 dp).
+
+`*` **Remove the ΔT difference before comparing ANY eclipse with Jubier** — even modern ones differ by
+seconds (2023: 69.2 s vs 71.1 s; 2024: 69.2 s vs 74.0 s). His value is in the KMZ description. His
+ΔT differs from ours (2654: 2239 s vs 2379 s; -797: 21,783 s vs 20,756 s), which slides his whole
+map in longitude: add `(ΔT_ours − ΔT_his) × 0.0041781 °/s` to his longitudes to land on ours (ours
+sits WEST of his when our ΔT is smaller). Uncorrected, limbs read 20–130 km off, including
+limbs the chord never touched. The sign was got wrong once: the wrong sign DOUBLES the error,
+which is itself a useful check.
+
+Also: structural audit unchanged (the two `A+` ONELIMB only); all 33 ends within 0.94 km of the
+green line; longest stored step 170 km (DP's 200 km cap); `test_tshirt` output identical, and
+`test_country`/`test_favorability` pass. All 33 were rendered and looked at.
 
 ### 9.6 Non-central eclipse durations — SHIPPED
 `data build tools/noncentral_durations.py` (stdlib only; run from the repo root). **Already run with `--write`;
@@ -1216,10 +1398,10 @@ below ~99%, the maths broke.
 All 50 chunks were regenerated on generator `2026-07-13j`, then swept by **`data build
 tools/audit_paths.py`** — a read-only pass over the built `.json.gz` chunks (seconds, no rebuild).
 
-**⚠ `audit_paths.py` IS NOT IN THE REPO** (checked 2026-08-13 — no file, no git history on this
-branch). The gate below was genuinely run and passed, but the script that ran it is gone, so it
-cannot be re-run after the next generator change. Recover it from wherever it was written, or
-rebuild it to the spec in this section. **The spec below is now the only surviving copy.**
+**`audit_paths.py` is back in `data build tools/` (2026-09-17).** It was never committed; it was
+recovered verbatim from the 2026-08-10 chat that wrote it, and on the current data reproduces the
+recorded result exactly (the same two `A+` hits). It now counts 7,698 central eclipses where the
+note below says 7,851 — not reconciled.
 
 **Result: 11,898 eclipses, 7,851 central. Zero stub or missing limbs on two-limit eclipses, zero
 gross N/S asymmetry, no stale chunks.** The 2028/2041 failure mode is confirmed absent
@@ -2349,8 +2531,9 @@ overshoots, 8 bare centrelines, 1 flood):
   sharp bend don't cancel under nonzero fill). Rays, not nearest vertex — the green line runs
   obliquely, and nearest-vertex gave spiky edges. Exactly 46 bands change; all rendered old/new.
   **Illustration grade, not a chart.** Two (-916-04-09, 361-02-21) now show a hole where the
-  path hooks — truer than the old solid band, arguably odder to look at. **When §9.5 is fixed in the
-  generator, the chord cases stop triggering this on their own; the horizon-bounded ones still need it.**
+  path hooks — truer than the old solid band, arguably odder to look at. **The chord cases are fixed in the
+  data (§9.5, 2026-09-17); whether they now skip `centreEdges` has not been checked. The
+  horizon-bounded ones still need it.**
 
 **Two approaches tried and REJECTED, do not re-attempt without reading why:**
 - *One closed polygon, fill it.* Looks obviously right; produces a huge wrong wedge with the centreline
@@ -2732,6 +2915,10 @@ evidence — do not keep investigating the part they share.**
   curve in the path record (which are arrays of segments). Mixing them up draws NOTHING,
   silently (§10B).
 - Jubier's printed **V** is a clock position (0–12); degrees = clock × 30 (§9.3).
+- Comparing with Jubier far from the present: remove the ΔT difference first, or every curve reads
+  tens of km off (§9.5).
+- The generator's in-run AUDIT skips the first and last step of each limb — a chord at a limb end
+  passes it silently (§9.5).
 - `isOffline()` in `map.js` is the single connectivity owner (§7.3).
 - Strict-mode pure modules: `tz_lookup.js`, `search-parser.js`, `eclipse.js`.
 - MapLibre globe ≠ Mercator; antimeridian/polar bugs differ. GeoJSON symbol layers were abandoned
@@ -2830,6 +3017,18 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-17b** — **Generator `2026-09-17a`** (§9.5): umbral limits for totals and annulars traced by
+  `umbral_limits_field`; exact observer height (`_fund_true`) for every shadow radius and a separate
+  sun-altitude horizon test (`_sun_sin_alt`), fixing a 10–250 m error in the limits. Hybrids, two-limit
+  corridors under 20 km, and any traced result failing `umbral_limits_valid` keep the old route. Penumbral limits now stored at 4 dp (were 2 dp, ~1 km). Regeneration pending on the
+  user's machine; delete `splice_umbral_limits.py` after it.
+  Build 2026-09-17b ships with the regenerated data.
+- **2026-09-17a** — **Umbral-limit chords fixed in the data (§9.5).** 33 records re-traced on the
+  field engine by the new `data build tools/splice_umbral_limits.py`; 22 chunks change, every other
+  record byte-identical. Worst Jubier error on the three checked falls from 181–430 km to under
+  0.4 km. `audit_paths.py` recovered from chat history. §9 corrected: `_13f`'s cone functions are
+  dead code, not a blocked WIP. Generator unchanged — a full regen reintroduces the chords.
+  Build 2026-09-17a.
 - **2026-09-16b** — **Poster: the remaining 46 broken bands rebuilt from the centreline.** Cause was
   the path DATA (§9.5 chords) and horizon-bounded grazing paths, not limb pairing. `js/tshirt.js`
   only: `hasChord`, `centreEdges`, `ringArea`; `ribbonQuads`/`emitQuad` take a `trusted` flag and

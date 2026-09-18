@@ -16,7 +16,7 @@
 2. Don't restate narrative status here; keep the task + its detail. HANDOFF holds the story.
 3. One coherent change at a time; bump BUILD on every deploy AND every path rebuild.
 
-Last touched: 2026-08-24 — Photo's repeating tiles deleted from the priority list (closed 2026-08-22c, HANDOFF §10A.8d); this list had said OPEN for two days. Previously: 2026-08-20 — **`Photo` rebuilt on MapLibre raster tiles and all three cloud modes
+Last touched: 2026-09-17 — generator `2026-09-17a` (HANDOFF §9.5): #F1d is now the regeneration and clean-up; hybrids/thin paths, old-frame helpers and the unexplained Jubier residuals added; penumbra vs Jubier investigated and closed, no fix (HANDOFF §9.5). Previously: 2026-08-24 — Photo's repeating tiles deleted from the priority list (closed 2026-08-22c, HANDOFF §10A.8d); this list had said OPEN for two days. Previously: 2026-08-20 — **`Photo` rebuilt on MapLibre raster tiles and all three cloud modes
 working** (HANDOFF §10A.8c). Also this session: `START-HERE.md` was folded into HANDOFF and deleted —
 it had become a third home for facts that already had two, and within a day it and HANDOFF §6
 disagreed about which branch was live. **There are two documents: `HANDOFF.md` and this one.**
@@ -73,8 +73,8 @@ finished; offline works; terrain shadows are done and wired in.)*
    freshness, resolution and reliability. Detail under **#F2c**.
 4. ~~**#F1b**~~ **FIXED 2026-09-16a — see HANDOFF §11.4.** The diagnosis below was built on the
   test's truncated 5-item output and is WRONG about the causes; kept only as history.
-  #F1c (the last 46 broken bands) **also FIXED 2026-09-16b.** What remains is the generator itself:
-  **§9.5 chords in the path data** — see #F1d.
+  #F1c (the last 46 broken bands) **also FIXED 2026-09-16b.** The §9.5 chords are fixed in the
+  data and in generator `2026-09-17a` (HANDOFF §9.5); the regeneration is #F1d.
   ~~DIAGNOSED 2026-09-13. IT IS TWO BUGS WITH OPPOSITE SIGNS.~~
   Measured by running `buildBands` over the 11 named failures and comparing the limb data, the drawn
   band and the drawn midline (all as max |latitude|):
@@ -952,15 +952,24 @@ In order, and **report what you measure before writing any code**:
   sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
   clean precedent for the time-plumbing.
 - ~~**#F1c Poster — last broken bands.**~~ **FIXED 2026-09-16b** (HANDOFF §11.4).
-- **#F1d Path data — §9.5 chords (generator). The user wants this fixed.** ~30 eclipses have a limb
-  bridged by one straight step of 300 km+ (1979-08-22 south limit: 10.6°); it shows on the MAIN MAP
-  too. Scan: any step >300 km in `umbra_n`/`umbra_s`. **First job: reconcile the contradictory notes**
-  — HANDOFF §9 says `gen_eclipse_paths_13f.py` holds an unfinished cone tracer fix blocked on the N/S
-  splitter; the LEGACY notes in this file say the cone approach was removed. Size the work only after
-  that. **Safety plan the user agreed to in principle:** regenerate ONLY the affected eclipses in a
-  sandbox, audit (`audit_paths.py`, `validate_paths.py`, Jubier where available), splice just those
-  records into the chunks — every other record stays byte-identical. He is wary: weeks went into the
-  generator. Note ~16 horizon-bounded grazers (807-02-11, 1547-11-12…) are real geometry, not chords.
+- **#F1d Regenerate all paths with generator `2026-09-17a`, then clean up.** The generator now traces
+  umbral limits for totals and annulars and uses the exact observer height (HANDOFF §9.5).
+  1. **User, on the Mac:** from the repo root,
+     `python3 "data build tools/gen_eclipse_paths.py" --jobs 8`. Watch the log for
+     `FIELD FALLBACK` lines and report them (none are expected: the narrow ones are routed by rule, silently).
+  2. **Assistant:** `check_regen.py --new <new> --base <deployed>` (per century if memory is short);
+     render and look at the largest movers; `test_tshirt`/`test_country`/`test_favorability`;
+     stamp BUILD; hand back `index.html`. Tonight's run is a TEST: the release is one final run after
+     the hybrid work (the user wants one engine, no piecemeal regeneration).
+  3. **Delete** `splice_umbral_limits.py` (only patches `13j`) and `gen_eclipse_paths_13f.py` (dead code).
+  4. Check whether the 33 former chord records still route through the poster's `centreEdges`.
+- **Hybrids and corridors under 20 km (655 records) still take the old route — do before the final
+  regeneration.** Design notes, the rejected attempts and the too-slow prototype: HANDOFF §9.5
+  "NEXT (open)". Start with warm-starting `_umb_depth`'s time search, or time-stepping.
+- **Old-frame helpers** (`_magnitude_at`, `_cone_depth`, `_cone_sun_alt`, `_gt_inst`) → `_fund_true`.
+  Same final regeneration. HANDOFF §9.5 "NEXT (small)".
+- **Residuals against Jubier, not yet explained:** 2023-10-14 and 2024-04-08 limits ~20 m narrower on
+  both sides (other references 4–9 m); limb ends near the horizon up to ~1 km.
 - ~~**#F1b T-shirt poster — finish the geometry.**~~ **FIXED 2026-09-16a.** SHIPPED and usable (HANDOFF §11.4), but
   `tools/checks/test_tshirt.js` **fails 3 catalogue-wide assertions**: one band over 8% of the
   map, some bands drawn past their own limbs, some centrelines drawn where the band doesn't
@@ -976,6 +985,9 @@ In order, and **report what you measure before writing any code**:
 ---
 
 ## DATA CORRECTNESS
+- **`gen_eclipse_paths.py --test` crashes** (`KeyError: 'tan_f1'` in `_magnitude_at`): its built-in
+  test record predates the `tan_f1` field. Same crash in `13j` — found 2026-09-17, not caused by
+  `17a`. The test suite is not a gate until its fixture is updated.
 - **#F7 ERA5 cloud vs observed cloud — MUCH SMALLER THAN THIS ENTRY ORIGINALLY CLAIMED, and
   probably not worth doing. Re-measured 2026-09-13.**
 
