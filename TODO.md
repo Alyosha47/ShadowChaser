@@ -314,8 +314,10 @@ The data-key and safety-rail traps are renderer-agnostic.)*
   change log says why, so trust these): worst is **cat 2190 at 42**, then 654 at 39, 790 at 38,
   9157 at 35, 519 at 34. **One** record above 40, **44** above 25. No record claims 55 any more.
   Some of the 25-40 band is probably the same bug in milder form.
-- **Two eclipses with a missing umbral sliver — WON'T FIX for now; documented so it isn't
-  rediscovered.** `332-03-13` (cat 5554) and `2485-12-07` (cat 10668), both type `A+`, are the
+- ~~**Two eclipses with a missing umbral sliver**~~ **FIXED 2026-09-18 in generator `2026-09-18a`**
+  (grazer seeding, HANDOFF §9.5); lands with the final regeneration. The hypothesis below is about the
+  old route's one-limit branch; it was not tested, because these records now take the field route.
+  Original note: `332-03-13` (cat 5554) and `2485-12-07` (cat 10668), both type `A+`, are the
   only two central eclipses in all 11,898 that produce NO umbral limb at all. Verified against
   Jubier's KMZs: he draws a single tiny annular edge for each — **50.8 km / 14 pts** (332) and
   **117.4 km / 37 pts** (2485), plus one terminus point tacked on either end (164 km and 222 km
@@ -952,7 +954,7 @@ In order, and **report what you measure before writing any code**:
   sweeping the Earth. The terrain-shadow scrubber (`shadow-ui.js` `setShadowTime` owner) is a
   clean precedent for the time-plumbing.
 - ~~**#F1c Poster — last broken bands.**~~ **FIXED 2026-09-16b** (HANDOFF §11.4).
-- **#F1d Regenerate all paths with generator `2026-09-17a`, then clean up.** The generator now traces
+- **#F1d Regenerate all paths with generator `2026-09-18d` (or later), then clean up.** The generator now traces
   umbral limits for totals and annulars and uses the exact observer height (HANDOFF §9.5).
   1. **User, on the Mac:** from the repo root,
      `python3 "data build tools/gen_eclipse_paths.py" --jobs 8`. Watch the log for
@@ -963,13 +965,18 @@ In order, and **report what you measure before writing any code**:
      the hybrid work (the user wants one engine, no piecemeal regeneration).
   3. **Delete** `splice_umbral_limits.py` (only patches `13j`) and `gen_eclipse_paths_13f.py` (dead code).
   4. Check whether the 33 former chord records still route through the poster's `centreEdges`.
-- **Grazing eclipses lose an umbral limb to seeding** (6 records incl. both `A+` ONELIMB ones) —
-  Jubier's limbs lie on our own contour; fix the seeding first. HANDOFF §9.5.
-- **Hybrids and corridors under 20 km (655 records) still take the old route — do before the final
-  regeneration.** Design notes, the rejected attempts and the too-slow prototype: HANDOFF §9.5
-  "NEXT (open)". Start with warm-starting `_umb_depth`'s time search, or time-stepping.
-- **Old-frame helpers** (`_magnitude_at`, `_cone_depth`, `_cone_sun_alt`, `_gt_inst`) → `_fund_true`.
-  Same final regeneration. HANDOFF §9.5 "NEXT (small)".
+- ~~**Grazing eclipses lose an umbral limb to seeding**~~ **FIXED 2026-09-18 in generator `2026-09-18a`**
+  (HANDOFF §9.5 "Grazer seeding"); also fixed the 4 narrow fallbacks. The 13 end-pinning ones are
+  fixed in `18b`.
+- ~~**Hybrids and corridors under 20 km (655 records) still take the old route**~~ **FIXED 2026-09-18 in
+  generator `2026-09-18b`** — one engine for every central eclipse, and the 13 end-pinning fallbacks
+  fixed with it (HANDOFF §9.5 "ONE ENGINE").
+- **N/S naming** — SETTLED 2026-09-18, no change (HANDOFF §9.5).
+- **ONE final regeneration with `18d` — READY.** (`18c` run stopped: 3 thin-hybrid fallbacks, fixed.) Expect zero `FIELD FALLBACK`; if so,
+  delete the fallback route afterwards (no output change, no rerun). Any fallback it reports is a
+  new case to diagnose.
+- ~~**Old-frame helpers**~~ **DONE 2026-09-18 in `18c`** (umbra ovals now exact; `_despur_segment` no
+  longer deletes limb end points). HANDOFF §9.5.
 - **Residuals against Jubier, not yet explained:** 2023-10-14 and 2024-04-08 limits ~20 m narrower on
   both sides (other references 4–9 m); limb ends near the horizon up to ~1 km.
 - ~~**#F1b T-shirt poster — finish the geometry.**~~ **FIXED 2026-09-16a.** SHIPPED and usable (HANDOFF §11.4), but

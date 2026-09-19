@@ -27,7 +27,7 @@ _B_A          = math.sqrt(1.0 - E2)   # polar/equatorial axis ratio, 0.99664719
 R_EARTH_M     = 6378137.0  # WGS84 equatorial radius (metres)
 R             = 6371.0    # km
 STEP_MIN      = 1         # minutes between path samples
-GEN_VERSION   = '2026-09-17a'  # generator code version; stamped into each chunk's __meta
+GEN_VERSION   = '2026-09-18d'  # generator code version; stamped into each chunk's __meta
 FIELD_FALLBACKS = []           # totals/annulars where umbral_limits_field returned nothing
                               # (bump when the generation math changes)
 TERM_STEP_MIN = 0.1       # finer step for terminator curves (was 0.5; gave ~80 km median vertex spacing → 6 km cross-track error)
@@ -171,7 +171,7 @@ def _fund_true(lat_gd_deg, lon_deg, d_r, mu, dt_s):
     Use THIS for anything measured in the shadow: the axis distance and the
     shadow radii L1' = L1 - zeta*tan_f1, L2' = L2 - zeta*tan_f2.
     _geo_to_fund's third value is zeta1 of the reduced (spherical) Earth, not
-    zeta: up to ~5 km off, which moves the limits 10-20 m, ~250 m at low sun
+    zeta: up to 16 km off, which moves the limits 10-20 m, ~250 m at low sun
     (found 2026-09-17 against Jubier; HANDOFF sec. 9.5)."""
     H = (mu + lon_deg - 0.00417807 * dt_s) * DEG
     u = math.atan(_B_A * math.tan(lat_gd_deg * DEG))
@@ -193,13 +193,12 @@ def _sun_sin_alt(lat_gd_deg, lon_deg, d_r, mu, dt_s):
 def _magnitude_at(rec, lat, lon, t):
     """Eclipse magnitude at geographic (lat, lon) at time t.
     Uses Bessel formula: (L1' - m) / (L1' + L2') where L1', L2' are cone radii
-    at the observer's axial position. Returns 0 to 1."""
+    at the observer's axial position. Returns 0 to 1. Exact observer frame
+    (_fund_true) for the shadow, _sun_sin_alt for the horizon (HANDOFF sec. 9.5)."""
     X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
-    xi_p, eta_p, zeta_p, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
-    if zeta_p <= 0: return 0.0
-    dx = xi_p - X
-    dy = (eta_p - Y) / rho1
-    m = math.sqrt(dx*dx + dy*dy)
+    if _sun_sin_alt(lat, lon, d_r, mu, dt_s) <= 0: return 0.0
+    xi_p, eta_p, zeta_p = _fund_true(lat, lon, d_r, mu, dt_s)
+    m = math.hypot(xi_p - X, eta_p - Y)
     L1p = L1 - zeta_p * rec['tan_f1']
     L2p = L2 - zeta_p * rec['tan_f2']
     if m >= L1p: return 0.0
@@ -1665,103 +1664,10 @@ def green_curve(rec):
     return out
 
 
-def _cone_depth(rec, lat, lon):
-    """Ever-total depth field: max over time of (|umbra radius| - axis distance)
-    in fundamental-plane units. >0 inside totality, =0 on the limit, <0 outside.
-    Returns (max_g, zeta_at_max)."""
-    tmin, tmax = rec['tmin'], rec['tmax']
-    tf2 = rec['tan_f2']
-    def g(t):
-        X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
-        xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
-        if zeta <= 0:
-            return -9.9, zeta
-        dx = xi - X; dy = (eta - Y) / rho1; m = math.hypot(dx, dy)
-        L2p = L2 - zeta * tf2
-        return abs(L2p) - m, zeta
-    N = 48; bt = tmin; bg = -9.9; bz = 0.0
-    for i in range(N + 1):
-        t = tmin + (tmax - tmin) * i / N
-        gg, z = g(t)
-        if gg > bg: bg, bt, bz = gg, t, z
-    a = max(tmin, bt - (tmax - tmin) / N); b = min(tmax, bt + (tmax - tmin) / N)
-    for _ in range(40):
-        m1 = a + (b - a) / 3; m2 = b - (b - a) / 3
-        g1, _ = g(m1); g2, _ = g(m2)
-        if g1 < g2: a = m1
-        else: b = m2
-    bg, bz = g((a + b) / 2)
-    return bg, bz
-
-
-def _cone_grad(rec, lat, lon, h=0.02):
-    a1, _ = _cone_depth(rec, lat + h, lon); a2, _ = _cone_depth(rec, lat - h, lon)
-    a3, _ = _cone_depth(rec, lat, lon + h); a4, _ = _cone_depth(rec, lat, lon - h)
-    return (a1 - a2) / (2 * h), (a3 - a4) / (2 * h)
-
-
-def _cone_correct(rec, lat, lon):
-    for _ in range(14):
-        f, _ = _cone_depth(rec, lat, lon)
-        if abs(f) < 1e-6: return lat, lon, True
-        gla, glo = _cone_grad(rec, lat, lon); g2 = gla * gla + glo * glo
-        if g2 < 1e-16: return lat, lon, False
-        lat -= f * gla / g2; lon -= f * glo / g2
-    f, _ = _cone_depth(rec, lat, lon)
-    return lat, lon, abs(f) < 2e-5
-
-
-def _cone_seed_robust(rec, lat0, lon0):
-    best = -1e9; bla = lat0; blo = lon0
-    for dla in range(-60, 61, 3):
-        for dlo in range(-60, 61, 3):
-            la = lat0 + dla; lo = lon0 + dlo
-            if abs(la) > 89:
-                continue
-            d, _ = _cone_depth(rec, la, lo)
-            if d > best:
-                best = d; bla, blo = la, lo
-    if best <= 0:
-        return None
-    step = 1.5
-    for _ in range(8):
-        improved = False
-        for dla, dlo in ((step, 0), (-step, 0), (0, step), (0, -step)):
-            la = bla + dla; lo = blo + dlo
-            if abs(la) > 89:
-                continue
-            d, _ = _cone_depth(rec, la, lo)
-            if d > best:
-                best = d; bla, blo = la, lo; improved = True
-        if not improved:
-            step *= 0.5
-    for direction in (0.25, -0.25):
-        la = bla
-        for _ in range(400):
-            la += direction
-            if abs(la) > 89:
-                break
-            d, _ = _cone_depth(rec, la, blo)
-            if d <= 0:
-                lo_in, hi_out = bla, la
-                for _ in range(40):
-                    mid = 0.5 * (lo_in + hi_out)
-                    dm, _ = _cone_depth(rec, mid, blo)
-                    if dm > 0:
-                        lo_in = mid
-                    else:
-                        hi_out = mid
-                cla, clo, ok = _cone_correct(rec, lo_in, blo)
-                return (cla, clo) if ok else (lo_in, blo)
-    return None
-
-
-
-# ── Implicit-field engine: penumbral limits ────────────────────────────────
 # The penumbral N/S limits recast in the unified architecture: every curve is
 # the zero level set of a scalar field evaluated at each ground point's own
 # moment of greatest eclipse, traced by a predictor-corrector. Green curve =
-# {sun alt at max = 0}; umbral fallback = {ever-total depth = 0} (_cone_*);
+# {sun alt at max = 0}; umbral limits = {ever-total depth = 0} (_umb_*);
 # here penumbra = {ever-partial depth = 0}. The traced contour is then
 # trimmed to the sunlit side and split into the N and S arcs.
 
@@ -1787,7 +1693,7 @@ def _pen_depth(rec, lat, lon):
     zeta_at_max) — zeta>0 means the point faces the sun at its own maximum.
 
     Axis distance is measured in the TRUE fundamental frame (unscaled eta).
-    The eta/rho1 scaling used by _cone_depth turns the shadow circle into an
+    The eta/rho1 scaling of the old reduced-sphere frame turns the shadow circle into an
     ellipse; that approximation is ~0.3% of the radius — invisible for the
     umbra (L2 ~ 0.009 -> ~0.2 km) but ~10 km for the penumbra (L1 ~ 0.54).
     Verified: the baseline's penumbral limit sits at median -0.07 km in this
@@ -1831,7 +1737,8 @@ def _pen_correct(rec, lat, lon):
 
 
 def _trace_zero(field, seed, step_km=30.0, maxpts=3000,
-                min_km=4.0, max_turn=12.0):
+                min_km=4.0, max_turn=12.0, width=None, min_width=0.0,
+                tol=1e-6, accept=2e-5):
     """Shared predictor-corrector: trace the zero contour of scalar
     field(lat, lon) from a seed point on it, GEODESICALLY. Every move is a
     great-circle step by (bearing, distance) via _gc_step, and the gradient
@@ -1847,49 +1754,87 @@ def _trace_zero(field, seed, step_km=30.0, maxpts=3000,
     both fail near poles). Returns ([(lon, lat), ...] starting at the seed,
     closed_flag).
     (Same discipline as the green_curve tracer, which stays untouched as a
-    validated incumbent.)"""
+    validated incumbent.)
+
+    width(lat, lon, grad) -> the local half-width (km) of a corridor bounded by
+    this contour and a twin (the umbra's other limb). Given it, every step keeps
+    the predictor's lateral error (sagitta step^2/2R) under 0.3 of the half-width
+    and the gradient probes under 0.25 of it, so Newton cannot land on the twin;
+    tracing stops where the half-width falls below min_width (a hybrid's pinch),
+    and closure means the seed lies on the last step, since the twin passes
+    within a step of it. tol/accept are |field| thresholds for the corrector:
+    a corridor metres wide needs them in millimetres.
+    Without width the behaviour is exactly the penumbra's and green line's."""
     PROBE = 2000.0                               # gradient probe, metres
     def _gc_km(la1, lo1, la2, lo2):
         h = (math.sin((la2 - la1) * DEG / 2) ** 2
              + math.cos(la1 * DEG) * math.cos(la2 * DEG)
              * math.sin((lo2 - lo1) * DEG / 2) ** 2)
         return 6371.0 * 2.0 * math.asin(min(1.0, math.sqrt(abs(h))))
+    pr = [PROBE]
     def gradb(la, lo):
         # field gradient as (bearing rad, magnitude per metre); None if any
         # probe leaves the field's domain (fields may return None outside it)
-        fN = field(*_gc_step(la, lo, 0.0, PROBE)); fS = field(*_gc_step(la, lo, math.pi, PROBE))
-        fE = field(*_gc_step(la, lo, math.pi / 2, PROBE)); fW = field(*_gc_step(la, lo, -math.pi / 2, PROBE))
+        h = pr[0]
+        fN = field(*_gc_step(la, lo, 0.0, h)); fS = field(*_gc_step(la, lo, math.pi, h))
+        fE = field(*_gc_step(la, lo, math.pi / 2, h)); fW = field(*_gc_step(la, lo, -math.pi / 2, h))
         if None in (fN, fS, fE, fW): return None, 0.0
-        gN = (fN - fS) / (2 * PROBE); gE = (fE - fW) / (2 * PROBE)
+        gN = (fN - fS) / (2 * h); gE = (fE - fW) / (2 * h)
         return math.atan2(gE, gN), math.hypot(gN, gE)
     def correct(la, lo):
         for _ in range(14):
             f = field(la, lo)
             if f is None: return la, lo, False
-            if abs(f) < 1e-6: return la, lo, True
+            if abs(f) < tol: return la, lo, True
             b, g = gradb(la, lo)
             if b is None or g < 1e-15: return la, lo, False
             la, lo = _gc_step(la, lo, b, -f / g)
         f = field(la, lo)
-        return la, lo, f is not None and abs(f) < 2e-5
+        return la, lo, f is not None and abs(f) < accept
+    def _seg_km(la1, lo1, la2, lo2, p):
+        # distance from p to the short segment 1-2, local flat frame (km)
+        c = math.cos(la1 * DEG) * 111.195
+        def xy(la, lo): return (((lo - lo1 + 180.0) % 360.0 - 180.0) * c, (la - la1) * 111.195)
+        bx, by = xy(la2, lo2); px, py = xy(p[0], p[1])
+        L = bx * bx + by * by
+        u = max(0.0, min(1.0, (px * bx + py * by) / L)) if L > 0 else 0.0
+        return math.hypot(px - u * bx, py - u * by)
     def one(sign):
         la, lo = seed; prevb = None; out = []; step = step_km
+        if width:   # first probe: before any gradient, bound it by the smallest
+            # possible half-width (steepest gradient = 1 per Earth radius)
+            pr[0] = min(PROBE, 250.0 * width(la, lo, 1.0 / R_EARTH_M))
         closed = False; walked = 0.0
         for _ in range(maxpts):
             b, g = gradb(la, lo)
             if b is None or g < 1e-15: break
             tb = b + sign * math.pi / 2          # contour tangent bearing
+            turn = None
             if prevb is not None:
                 turn = abs(math.degrees(((tb - prevb + math.pi) % (2 * math.pi)) - math.pi))
                 if turn > max_turn and step > min_km: step = max(min_km, step * 0.5)
                 elif turn < max_turn * 0.4 and step < step_km: step = min(step_km, step * 1.5)
+            if width:
+                # Lateral error (sagitta step^2/2R) must stay under 0.3 of the
+                # half-width, or Newton lands on the other limb.
+                hw = width(la, lo, g)
+                if hw < min_width: break                  # at a hybrid's pinch: the limb ends here
+                cap = 0.3 * hw
+                if turn: cap = max(cap, math.sqrt(0.6 * hw * last / math.radians(turn)))
+                step = max(0.05, min(step, cap))          # 50 m floor
+                pr[0] = min(PROBE, 250.0 * hw)            # probes must not reach the other limb
             la2, lo2 = _gc_step(la, lo, tb, step * 1000.0)
             la2, lo2, ok = correct(la2, lo2)
             if not ok: break
             walked += step
-            if walked > 10.0 * step_km and _gc_km(la2, lo2, seed[0], seed[1]) < 0.75 * step_km:
+            if walked > 10.0 * step_km and (
+                    _seg_km(la, lo, la2, lo2, seed) < min(0.75 * step, 0.5 * hw) if width
+                    else _gc_km(la2, lo2, seed[0], seed[1]) < 0.75 * step_km):
+                # With a width, "back at the seed" means the seed lies on this
+                # step: a narrow corridor's other limb passes within a step of
+                # it (1507-07-10: 5 km) and must not count as closure.
                 closed = True; break
-            out.append((lo2, la2)); prevb = tb; la, lo = la2, lo2
+            out.append((lo2, la2)); prevb = tb; la, lo = la2, lo2; last = step
         return out, closed
     f, fc = one(+1)
     if fc:
@@ -1959,7 +1904,7 @@ def penumbral_limits_field(rec, pn_old, ps_old):
     def circ(lon, lat):
         _, tstar, zeta = _pen_depth(rec, lat, lon)
         X, Xp, Y, Yp, d_r, mu, dt_s, _, _ = bstate(rec, tstar)
-        xi, eta, _, _ = _geo_to_fund(lat, lon, d_r, mu, dt_s)
+        xi, eta, _ = _fund_true(lat, lon, d_r, mu, dt_s)
         sp = math.hypot(Xp, Yp) or 1e-12
         north = ((xi - X) * (-Yp) + (eta - Y) * Xp) / sp > 0.0
         return tstar, zeta > 0.0, north
@@ -2065,22 +2010,27 @@ def _umb_g(rec, lat, lon, t):
     return abs(L2 - zeta * rec['tan_f2']) - math.hypot(xi - X, eta - Y)
 
 
-def _umb_depth(rec, lat, lon, N=96):
+def _umb_depth(rec, lat, lon, N=96, t0=None):
     """(D, t*, sin_alt): D = max over t of (|L2'| - axis distance), >0 where the
     point is ever inside the umbra/antumbra, 0 on the limit. Ungated by the
     horizon; sin_alt is the sun's altitude at the point's own maximum t*."""
-    tmin, tmax = rec['tmin'], rec['tmax']
-    bt = tmin; bg = -1e9
-    for i in range(N + 1):
-        t = tmin + (tmax - tmin) * i / N
-        g = _umb_g(rec, lat, lon, t)
-        if g > bg: bg, bt = g, t
-    a = max(tmin, bt - (tmax - tmin) / N); b = min(tmax, bt + (tmax - tmin) / N)
+    tmin, tmax = rec['tmin'], rec['tmax']; W = (tmax - tmin) / N
+    if t0 is None:
+        bt = tmin; bg = -1e9
+        for i in range(N + 1):
+            t = tmin + (tmax - tmin) * i / N
+            g = _umb_g(rec, lat, lon, t)
+            if g > bg: bg, bt = g, t
+    else:
+        bt = t0
+    a = max(tmin, bt - W); b = min(tmax, bt + W); a0, b0 = a, b
     for _ in range(40):
         m1 = a + (b - a) / 3; m2 = b - (b - a) / 3
         if _umb_g(rec, lat, lon, m1) < _umb_g(rec, lat, lon, m2): a = m1
         else: b = m2
     ts = (a + b) / 2
+    if t0 is not None and ((ts - a0 < 1e-3 * W and a0 > tmin) or (b0 - ts < 1e-3 * W and b0 < tmax)):
+        return _umb_depth(rec, lat, lon, N)      # maximum left the warm bracket: full scan
     _, _, _, _, d_r, mu, dt_s, _, _ = bstate(rec, ts)
     return _umb_g(rec, lat, lon, ts), ts, _sun_sin_alt(lat, lon, d_r, mu, dt_s)
 
@@ -2092,28 +2042,39 @@ def _umb_side(rec, lat, lon, ts):
     return ((xi - X) * (-Yp) + (eta - Y) * Xp) / (math.hypot(Xp, Yp) or 1e-12)
 
 
-def _umb_correct(rec, lat, lon, iters=20):
-    """Newton onto D = 0 along the local geodesic gradient."""
+def _umb_correct(rec, lat, lon, iters=40):
+    """Newton onto D = 0 along the local geodesic gradient.
+
+    Width-aware like _trace_zero: w = |L2'(t*)| * R (m) never exceeds the local
+    corridor half-width (a ground step moves the fundamental-plane distance by
+    at most as much), so probes <= w/4 and Newton steps <= w/2 cannot reach the
+    other limb, and the tolerance is in millimetres. With fixed 2 km probes and
+    a 13 m acceptance, seeds in a 350 m corridor failed or landed on the OTHER
+    limb (-1747-11-10: the south limb between its pinches was never traced)."""
     f = lambda la, lo: _umb_depth(rec, la, lo)[0]
-    H = 2000.0
     for _ in range(iters):
-        v = f(lat, lon)
-        if abs(v) < 1e-8: return lat, lon
+        v, ts, _ = _umb_depth(rec, lat, lon)
+        if abs(v) < 1e-10: return lat, lon
+        _, _, _, _, d_r, mu, dt_s, _, L2 = bstate(rec, ts)
+        w = abs(L2 - _fund_true(lat, lon, d_r, mu, dt_s)[2] * rec['tan_f2']) * R_EARTH_M
+        H = max(0.05, min(2000.0, 0.25 * w))
         gN = (f(*_gc_step(lat, lon, 0.0, H)) - f(*_gc_step(lat, lon, math.pi, H))) / (2 * H)
         gE = (f(*_gc_step(lat, lon, math.pi / 2, H)) - f(*_gc_step(lat, lon, -math.pi / 2, H))) / (2 * H)
         g2 = gN * gN + gE * gE
         if g2 < 1e-30: return None
         dist = -v / math.sqrt(g2)
         if abs(dist) > 500e3: return None
+        dist = max(-0.5 * w, min(0.5 * w, dist)) if w > 0 else dist
         lat, lon = _gc_step(lat, lon, math.atan2(gE, gN), dist)
-    return (lat, lon) if abs(f(lat, lon)) < 2e-6 else None
+    return (lat, lon) if abs(f(lat, lon)) < 1e-9 else None
 
 
 NIGHT_SIN_ALT = -0.2     # sun ~11.5 deg below the horizon: umbral tracing stops here
-UMB_STEP_KM = 10.0       # tracer step for umbral limits
-UMB_MIN_WIDTH_KM = 2 * UMB_STEP_KM   # narrower two-limit corridors keep the old route: with
-                         # the step wider than the corridor, Newton lands on the other limb
-                         # (1948-05-09 0.2 km, 1927-01-03 2.1 km, 1966-05-20 3.2 km)
+UMB_STEP_KM = 10.0       # tracer step for umbral limits (the width cap shortens it in thin corridors)
+UMB_MAXPTS = 20000       # per trace direction
+ANCHOR_KM = 5.0          # field warm start: full time scan at most this far apart
+PINCH_HW_KM = 0.05       # tracing stops at this half-width beside a hybrid pinch ...
+PINCH_JOIN_KM = 60.0     # ... and a limb end this close to the pinch is joined to it exactly
 UMB_MAX_STEP_KM = 30.0   # a traced limb with a longer step is malformed (the tracer jumped)
 
 
@@ -2164,19 +2125,95 @@ def _drop_retraced(arcs, tol_km=1.0, frac=0.9):
     return keep
 
 
+def _umb_deep_pt(rec, t):
+    """Ground point nearest the shadow axis at t: the centreline point, or, when
+    the axis misses the Earth, the rim point below it. Deepest in the umbra at t."""
+    X, _, Y, _, d_r, mu, dt_s, _, _ = bstate(rec, t)
+    rho1 = math.sqrt(1.0 - E2 * math.cos(d_r) ** 2)
+    u, w = X, Y / rho1
+    m = math.hypot(u, w)
+    k = min(1.0, (1.0 - 1e-9) / m) if m > 0 else 1.0
+    return f2g(u * k, w * k * rho1, d_r, mu, dt_s)
+
+
+def _umb_march_seeds(rec, n_seed, n_scan=2000, max_km=3000.0):
+    """Seeds on D = 0 found from inside the umbral region. For each time at
+    which the deepest ground point is in the umbra, march perpendicular to its
+    motion, both ways, doubling the distance until D < 0, then bisect onto the
+    sign change. The scan is fine because a grazer's umbra touches the Earth for
+    as little as 0.6% of the window (332-03-13), and cheap (no depth search)."""
+    tmin, tmax = rec['tmin'], rec['tmax']; dt = (tmax - tmin) / n_scan
+    inside = []
+    for i in range(n_scan + 1):
+        t = tmin + dt * i; p = _umb_deep_pt(rec, t)
+        if p and _umb_g(rec, p[0], p[1], t) > 0: inside.append((t, p))
+    out = []
+    for t, p in inside[::max(1, len(inside) // n_seed)]:
+        a = _umb_deep_pt(rec, t - dt); b = _umb_deep_pt(rec, t + dt)
+        if not (a and b): continue
+        brg = _gc_bearing(a, b)
+        for side in (1, -1):
+            bb = brg + side * math.pi / 2
+            lo, hi, d = 0.0, None, 2e3
+            while d <= max_km * 1e3:
+                D, _, sa = _umb_depth(rec, *_gc_step(p[0], p[1], bb, d))
+                if sa <= NIGHT_SIN_ALT: break
+                if D < 0: hi = d; break
+                lo = d; d *= 2
+            if hi is None: continue
+            while hi - lo > 1.0:
+                m = (lo + hi) / 2
+                if _umb_depth(rec, *_gc_step(p[0], p[1], bb, m))[0] > 0: lo = m
+                else: hi = m
+            out.append(_gc_step(p[0], p[1], bb, lo))
+    return out
+
+
+def _umb_pinches(rec, n_scan=2000):
+    """A hybrid's pinch points (lat, lon, t): where the on-axis umbral radius
+    L2 - zeta*tan f2 changes sign (total <-> annular). Both limbs meet there, so
+    it is supplied exactly, as the green-line termini are."""
+    tmin, tmax = rec['tmin'], rec['tmax']
+    def q(t):
+        X, _, Y, _, d_r, mu, dt_s, _, L2 = bstate(rec, t)
+        p = f2g(X, Y, d_r, mu, dt_s)
+        if p is None: return None, None
+        return L2 - _fund_true(p[0], p[1], d_r, mu, dt_s)[2] * rec['tan_f2'], p
+    out = []; prev = None
+    for i in range(n_scan + 1):
+        t = tmin + (tmax - tmin) * i / n_scan
+        v, p = q(t)
+        if v is not None and prev is not None and (v > 0) != (prev[0] > 0):
+            a, b, va = prev[1], t, prev[0]
+            for _ in range(50):
+                m = (a + b) / 2; vm, pm = q(m)
+                if vm is None: break
+                if (vm > 0) == (va > 0): a, va = m, vm
+                else: b = m
+            tp = (a + b) / 2; p = q(tp)[1]
+            if p is not None: out.append((p[0], p[1], tp))
+        prev = (v, t) if v is not None else None
+    return out
+
+
 def umbral_limits_field(rec, step_km=UMB_STEP_KM, n_seed_times=48):
     """Umbral N/S limits for a total or annular eclipse (two-limit or one-limit).
 
     Seeds come from the analytic envelope points (umbral_pts), which lie on or
-    near the limit; each is Newton-corrected onto D = 0 and traced with
-    _trace_zero. The traced contour is kept where the sun is up at the point's
+    near the limit, and from _umb_march_seeds, which reaches the limbs the
+    envelope misses (grazers, where envelope points exist for < 1% of the
+    window). Each is Newton-corrected onto D = 0 and traced with _trace_zero.
+    Both sources are needed: march-only loses 1547-11-12's north limb. The traced contour is kept where the sun is up at the point's
     own maximum (so every limb ends on the green line), cut into limbs wherever
     visibility or the side of the shadow's motion changes, and labelled N/S by
     that side. Every cut is bisected onto the exact break.
 
-    NOT for hybrids. Where L2' changes sign the corridor pinches to a point, and
-    the traced limbs fragment and mislabel -- tried 2026-09-17 both on |L2'| and
-    as separate umbral/antumbral parts (worst points 60-1,300 km off Jubier).
+    One method for every central eclipse, including hybrids and corridors
+    narrower than the step (2026-09-18b): the tracer's step and probes follow the
+    local corridor half-width |L2'|/|grad D| (see _trace_zero), and a seed is
+    skipped only when a traced limb ON ITS OWN SIDE is already near it. At a
+    hybrid's pinch (L2' = 0) the limbs meet: tracing stops beside it and each limb
+    is joined to the exact pinch point (_umb_pinches).
 
     Returns (north_segs, south_segs) of [(lon, lat), ...] in time order."""
     tmin, tmax = rec['tmin'], rec['tmax']
@@ -2185,21 +2222,53 @@ def umbral_limits_field(rec, step_km=UMB_STEP_KM, n_seed_times=48):
         n_pt, s_pt = umbral_pts(rec, tmin + (tmax - tmin) * i / n_seed_times)
         for p in (n_pt, s_pt):
             if p is not None: seeds.append(p)
+    seeds += _umb_march_seeds(rec, n_seed_times)
+    st = {'a': None, 't': None}
     def field(la, lo):
         # The limbs end on the horizon, so the contour is only needed on the day
         # side. Without this cut it wraps round the night side, overruns maxpts
         # and retraces the same limb (1984-11-22: one limb three times).
-        D, _, sa = _umb_depth(rec, la, lo)
+        # Warm start: a full time scan at an anchor, then a local search from the
+        # anchor's t* for every query within ANCHOR_KM of it. Seeding each query
+        # from the PREVIOUS query's t* made the field depend on call order, and
+        # Newton failed where t* has two maxima (1507-07-10 near its pinch).
+        if st['a'] is None or _gc_dist(st['a'], (la, lo)) > ANCHOR_KM * 1e3:
+            D, ts, sa = _umb_depth(rec, la, lo)
+            st['a'], st['t'] = (la, lo), ts
+        else:
+            D, ts, sa = _umb_depth(rec, la, lo, t0=st['t'])
         return D if sa > NIGHT_SIN_ALT else None
-    comps = []
+    def width(la, lo, g):
+        _, ts, _ = _umb_depth(rec, la, lo, t0=st['t'])
+        _, _, _, _, d_r, mu, dt_s, _, L2 = bstate(rec, ts)
+        z = _fund_true(la, lo, d_r, mu, dt_s)[2]
+        return abs(L2 - z * rec['tan_f2']) / g / 1000.0      # half-width, km
+    pinches = _umb_pinches(rec)
+    comps = []; sides = {}
+    def side_at(la, lo):
+        _, ts, _ = _umb_depth(rec, la, lo)
+        return _umb_side(rec, la, lo, ts) > 0
+    def traced(la, lo, d_m):
+        # Already traced: a traced vertex within d_m ON THE SAME SIDE of the
+        # shadow's motion. Side-blind, a narrow corridor's other limb (always
+        # within d_m) would count, and that limb would never be traced.
+        near = sorted((_gc_dist((la, lo), (q[1], q[0])), k, i)
+                      for k, (cc, _) in enumerate(comps) for i, q in enumerate(cc))
+        near = [x for x in near if x[0] < d_m]
+        if not near: return False
+        me = side_at(la, lo)
+        for _, k, i in near:
+            if (k, i) not in sides:
+                q = comps[k][0][i]; sides[(k, i)] = side_at(q[1], q[0])
+            if sides[(k, i)] == me: return True
+        return False
     for (la, lo) in seeds:
-        if any(_gc_dist((la, lo), (q[1], q[0])) < 60e3 for c, _ in comps for q in c):
-            continue
+        if traced(la, lo, 60e3): continue
         c = _umb_correct(rec, la, lo)
-        if c is None: continue
-        if any(_gc_dist(c, (q[1], q[0])) < 3 * step_km * 1e3 for cc, _ in comps for q in cc):
-            continue
-        pts, closed = _trace_zero(field, c, step_km=step_km, min_km=1.0, maxpts=6000)
+        if c is None or traced(c[0], c[1], 3 * step_km * 1e3): continue
+        st['a'] = None
+        pts, closed = _trace_zero(field, c, step_km=step_km, min_km=1.0, maxpts=UMB_MAXPTS, width=width,
+                                  min_width=PINCH_HW_KM, tol=1e-10, accept=1e-9)
         if len(pts) >= 3: comps.append((pts, closed))
 
     north, south = [], []
@@ -2227,7 +2296,8 @@ def umbral_limits_field(rec, step_km=UMB_STEP_KM, n_seed_times=48):
                 d = _gc_dist(A, B)
                 if d < 1.0: break
                 m = _gc_step(A[0], A[1], _gc_bearing(A, B), d / 2)
-                m = _umb_correct(rec, m[0], m[1]) or m
+                c = _umb_correct(rec, m[0], m[1])
+                if c and _gc_dist(c, m) <= d / 2: m = c
                 if lab_at(*m) == L: A = m
                 else: B = m
             return (A[1], A[0])
@@ -2239,6 +2309,24 @@ def umbral_limits_field(rec, step_km=UMB_STEP_KM, n_seed_times=48):
             if brk and (closed or r[-1] < n - 1): arc = arc + [refine(r[-1], (r[-1] + 1) % n)]
             if info[r[0]][1] > info[r[-1]][1]: arc = arc[::-1]
             (north if lab[r[0]][1] else south).append(arc)
+    # A limb that stopped beside a pinch (PINCH_HW_KM) is continued to it along
+    # the centreline: in that zone the limb is within PINCH_HW_KM of the
+    # centreline, and the gap closes to zero at the pinch. A straight chord
+    # was wrong: on the thinnest hybrids the zone is 32-39 km long, where a
+    # chord's sagitta (50-150 m) exceeds the corridor (-1747-11-10, -1716-09-28).
+    for arc in north + south:
+        for k in (0, -1):
+            lo, la = arc[k]
+            for pl, po, tp in pinches:
+                d = _gc_dist((la, lo), (pl, po))
+                if 1.0 < d < PINCH_JOIN_KM * 1e3:
+                    te = _umb_depth(rec, la, lo)[1]
+                    m = int(d / 5e3)                      # <= 5 km spacing
+                    fill = [centreline_pt(rec, te + (tp - te) * j / (m + 1)) for j in range(1, m + 1)]
+                    fill = [(c[1], c[0]) for c in fill if c] + [(po, pl)]
+                    if k == 0: arc[:0] = fill[::-1]
+                    else: arc.extend(fill)
+                    break
     return _drop_retraced(north), _drop_retraced(south)
 
 
@@ -2632,23 +2720,18 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     un_segs = [un] if un else []
     us_segs = [us] if us else []
 
-    # ── Unified umbral N/S limits ───────────────────────────────────────
-    # The depth=0 locus, found by marching perpendicular to the (reliable)
-    # centreline until the continuous ever-total depth field crosses zero.
-    # ONE method for total / annular / hybrid / grazing / pole: at a hybrid
-    # pinch both limits converge to the centreline (no figure-8 to trace); at
-    # the pole the march is local (no coordinate degeneracy); grazing yields
-    # one limb (the other never clears the horizon). Replaces the legacy
-    # envelope walk and the cone-contour split. The envelope walk above is
-    # retained only as a fallback when the perpendicular method returns nothing.
+    # ── Umbral N/S limits ───────────────────────────────────────────────
+    # umbral_limits_field (HANDOFF §9.5). The OLD ROUTE below -- the
+    # perpendicular march (perpendicular_limits) and, for one-limit eclipses,
+    # the analytic envelope walk -- is now only a fallback, taken when the
+    # field result fails umbral_limits_valid, and is logged as FIELD FALLBACK.
     one_limit = is_central and len(et) > 1 and et[1] in ('n', 's', '-', '+')
-    # 2026-09-17a: every central eclipse's limits come from umbral_limits_field.
-    # The perpendicular march and the analytic walk below now run ONLY when the
-    # field returns no limb at all; FIELD_FALLBACKS counts it so it can be retired.
+    # Every central eclipse's limits come from umbral_limits_field (hybrids and
+    # thin corridors too, since 2026-09-18b). The perpendicular march and the
+    # analytic walk below run ONLY when the field result fails
+    # umbral_limits_valid; FIELD_FALLBACKS counts it so the old route can be retired.
     _field_ok = False
-    _use_field = (is_central and et[0] != 'H'                     # hybrids: old route
-                  and (one_limit or (rec.get('path_width') or 0.0) >= UMB_MIN_WIDTH_KM))
-    if _use_field:
+    if is_central:
         try:
             _fn, _fs = umbral_limits_field(rec)
             _field_ok = bool(_fn or _fs) and umbral_limits_valid(_fn, _fs, not one_limit)
@@ -2781,10 +2864,14 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     un_segs = _split_at_pole(un_segs)
     us_segs = _split_at_pole(us_segs)
 
-    # Remove degenerate spurs / duplicate vertices from the corridor limits
-    # (lossless — only coincident-neighbour spurs; clean paths unchanged)
-    un_segs = [_despur_segment(s) for s in un_segs] if un_segs else []
-    us_segs = [_despur_segment(s) for s in us_segs] if us_segs else []
+    # Remove degenerate spurs / duplicate vertices -- OLD ROUTE ONLY. It was
+    # written for the perpendicular march's whiskers. On traced limbs there are
+    # none, and it did only harm (2026-09-18, all 45 references): its duplicate
+    # pass deleted the exact horizon end point of 6 limbs (109-415 m, e.g.
+    # 2021-12-04 N, 2049-05-31) and thinned hybrid limbs beside the pinch (<= 87 m).
+    if not _field_ok:
+        un_segs = [_despur_segment(s) for s in un_segs] if un_segs else []
+        us_segs = [_despur_segment(s) for s in us_segs] if us_segs else []
 
     # (The envelope-era suppress-fold is gone: the perpendicular method marches
     # from a smooth centreline, so each limit point is an independent depth-zero
@@ -3215,7 +3302,7 @@ def run_tests():
 def _gt_inst(rec, lat, lon, t):
     """Instantaneous integrand g(t): |umbra radius| - axis distance at a single
     time t (fundamental-plane units; >0 inside totality at that instant). This is
-    the inner function _cone_depth maximises over time."""
+    the inner function the (deleted) _cone_depth maximised over time."""
     X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
     xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
     if zeta is None or zeta <= 0:
@@ -3228,7 +3315,7 @@ def dep_local(rec, lat, lon, tseed, H):
     time) to the nearest local maximum of g(t), and return it. This tracks the
     shadow's SINGLE passage over (lat,lon) and ignores any other leg of a near-pole
     loop (total at a far-removed time). It equals the global ever-total max on every
-    non-self-approaching track (verified identical to _cone_depth on normal and pole
+    non-self-approaching track (verified identical to the global ever-total max on normal and pole
     eclipses), and recovers the inner limit on looping tracks where the global max
     fuses the two legs and drops it.
 

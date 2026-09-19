@@ -33,13 +33,17 @@ upload**; git does not deploy (§4).
 
 ## 0. START HERE — the ten lines a new session needs
 
-> **PATH GENERATOR, as of 2026-09-17 (full story §9.5).** Generator `2026-09-17a` is with the user and
-> a full regeneration is running on his Mac **as a TEST, not a release**: he wants ONE engine and ONE
-> final regeneration, no piecemeal patching. Before that final run: (1) hybrids and corridors under
-> 20 km still take the old route — make the field method handle them (§9.5 "Next"); (2) move the last
-> old-frame helpers onto `_fund_true` (§9.5 "Next"). When his test output is pushed, run
-> `check_regen.py` against the deployed data (a copy is NOT in git: the deployed set = git's 08-04
-> `13j` chunks + the 22 spliced chunks; download from the live site if the sandbox copy is gone).
+> **PATH GENERATOR, as of 2026-09-18 (full story §9.5).** Generator `2026-09-18d`, READY for the final
+> regeneration: ONE engine for
+> every central eclipse — grazers, thin corridors and hybrids included. The user's `17a` full regeneration (commit 96414d5) was a TEST, not a release, and is NOT
+> deployed: he wants ONE engine and ONE final regeneration, no piecemeal patching. **Do not regenerate
+> until he agrees it is ready.** Agreed plan (2026-09-18): finish every OUTPUT-changing item first
+> (N/S naming: settled, no change; old-frame helpers: DONE in `18c`), then ONE regeneration,
+> which is the final one. If it logs zero FIELD FALLBACK, the fallback route is dead code: delete it
+> afterwards — that cannot change output, so no second run. **Never ask him for a test run whose only
+> purpose is to license a code deletion.** Compare any regeneration with `check_regen.py` against the
+> deployed data (NOT in git: git's 08-04 `13j` chunks + the 22 spliced chunks; download from the live
+> site if the sandbox copy is gone).
 
 > **The cloud feature is CLOSED as of 2026-08-22c.** Photo's repeating tiles — the bug that ran for
 > six threads — were the SERVICE WORKER, not the map (§10A.8d, §12.1). What remains in `Photo` and
@@ -1004,7 +1008,7 @@ measurement in the field methods uses `_fund_true` (exact observer coordinates) 
 | curve | method |
 |---|---|
 | centreline | shadow axis at each time step (`centreline_pt`) |
-| umbral limits | **from `2026-09-17a`:** `umbral_limits_field` (contour tracer) for totals and annulars; hybrids keep `perpendicular_limits` + the analytic walk (§9.5) |
+| umbral limits | **from `2026-09-18b`:** `umbral_limits_field` (width-aware contour tracer) for EVERY central eclipse, hybrids included; `perpendicular_limits` + the analytic walk only as the logged fallback (§9.5) |
 | penumbral limits | `penumbral_limits_field` (contour tracer); the walker is its seed and per-side fallback |
 | green line | `green_curve` (contour tracer) |
 | terminators | `_terminator_curves`: analytic circle intersection per time step |
@@ -1185,13 +1189,14 @@ as `2026-09-17a`, together with a real bug it exposed (below). **A full regenera
 pending on the user's machine; after it, delete `splice_umbral_limits.py`** — it only patches `13j`.
 
 **The observer-height bug (found 2026-09-17, fixed in `17a`).** `_geo_to_fund` returns ζ₁ of the
-reduced (spherical) Earth, not ζ: up to ~5 km off. Every shadow radius `L' = L − ζ·tan f` used it,
+reduced (spherical) Earth, not ζ: up to **16 km** off (measured 2026-09-18 over 20,000 random
+points; the earlier "~5 km" was an underestimate — ξ and η from `_geo_to_fund` do equal the true ones). Every shadow radius `L' = L − ζ·tan f` used it,
 moving the limits 10–20 m, ~250 m at low sun. Fixed by `_fund_true` (the standard transform, as in
 `eclipse.js`). The horizon is a DIFFERENT quantity — the sun's altitude above the local vertical — and
 now has its own function, `_sun_sin_alt`. Using true ζ for the horizon made limb ends 4 km wrong;
 using each quantity for its own job fixed both. Applied to: umbral limits, `_pen_g` (penumbra and the
 terminator refinement that shares it), `green_curve`, and the centreline's `_max_sun_alt`.
-`perpendicular_limits`/`dep_local` (hybrids only now) still use the old frame.
+`perpendicular_limits`/`dep_local` (the fallback route only, since `18b`) still use the old frame.
 
 **Two failure modes found by regenerating 1901–2000, both handled in `17a`.**
 - *Retraced limbs* (1959-10-02, 1984-11-22: one limb stored 2–3 times). The ungated contour wraps
@@ -1199,9 +1204,9 @@ terminator refinement that shares it), `green_curve`, and the centreline's `_max
   Fixed: the field returns None once the sun is below `NIGHT_SIN_ALT` (−0.2, ~11.5°), so only the
   day side is traced. Also halved the time per eclipse.
 - *Corridor narrower than the step* (1948-05-09 0.2 km, 1927-01-03 2.1 km, 1966-05-20 3.2 km): Newton
-  lands on the other limb, so limbs shred or one vanishes. Two-limit eclipses narrower than
-  `UMB_MIN_WIDTH_KM` (2 × the 10 km step = 20 km; catalogue `path_width`) keep the old route by rule —
-  153 of 7,129 two-limit totals/annulars, none of them the former chord records.
+  lands on the other limb, so limbs shred or one vanishes. In `17a` these (under 20 km,
+  `UMB_MIN_WIDTH_KM`) kept the old route by rule; **since `18b` the tracer is width-aware and the rule
+  is gone** ("ONE ENGINE" below).
 - *Backstop:* `umbral_limits_valid` rejects a traced result with a step > 30 km, or with a limb
   missing on a two-limit eclipse; build_path then prints `FIELD FALLBACK` and takes the old route.
 - *Same limb traced twice* (1927-06-29): `_drop_retraced` removes a same-side arc lying within 1 km
@@ -1244,93 +1249,151 @@ data by `check_regen.py`, all 50 chunks, 2026-09-17.** Result: the engine is sou
 - **The field is right; the extraction is what fails.** Jubier's umbral limits for -297-11-29 and
   332-03-13 lie ON our zero contour (|D| ≤ 70 m) and in daylight (sun 0.4–1.8° up at their own
   maximum). So for grazers the limit exists in our field and the tracer simply never reaches it.
-- **Grazers lose a limb through SEEDING.** `umbral_pts` returns a point on one side only at these
-  geometries (for -297-11-29, one seed in 49 time samples, north only), so the other side's contour
-  component is never traced. Fix the seeding — e.g. march out perpendicular from centreline points
-  until D changes sign and bisect, or seed off the green line — before touching the gate.
-  332-03-13 is the same story: it is one of the two `A+` records with NO umbral limb in the
-  catalogue at all, yet its limb sits on our contour.
-- **N/S naming needs deciding with evidence, not assumed.** On 332-03-13 the curve Jubier calls
-  "Northern Umbra Limit" is what `_umb_side` calls south; on the polar totals (2003-11-23,
-  2021-12-04) his naming matched `_umb_side` exactly. Settle this before the final run.
+- **Grazers lost a limb through SEEDING — FIXED in `2026-09-18a`** (see "Grazer seeding" below).
+- **N/S naming — SETTLED 2026-09-18, no change: `_umb_side` (side of the shadow's travel) is right.**
+  Evidence: (a) the catalogue's own key (Espenak & Meeus, *Five Millennium Catalog*, 2nd ed.):
+  `+`/`n` = no northern limit, `–`/`s` = no southern limit. In the `17a` test run (96414d5) all 181
+  one-limit records carry exactly the limb the code implies (`+` 41 S, `n` 50 S, `–` 51 N, `s` 37 N);
+  the only exceptions were 332-03-13 and 2485-12-07 with no limb, which `18b` gives a south limb
+  (`A+` → S, as the key says). (b) All two-limit Jubier references match by name (medians 1–88 m; a
+  swap reads in km). (c) Jubier's 332-03-13 names ONE curve both "Southern Limit" and "Northern Umbra
+  Limit" (same points reversed), so it is not evidence either way.
 - **The narrow-corridor fallback costs less than feared:** old route vs Jubier, median/worst —
   1948-05-09 (0.2 km wide) 44 m / 299 m, 1927-01-03 (2.1 km) 69 m / 407 m, 305-02-10 (20.8 km)
   92 m / 5.2 km. Priority below the grazers.
 - **And the new engine on an ordinary total, 1965-05-30:** 209 m / 9.1 km → 5 m / 47 m.
 
-**NEXT (open): hybrids and corridors under 20 km.** 655 central eclipses (502 hybrids + 153 thin
-two-limit), 40–900 m median from Jubier on the old route vs 4–25 m for the field method elsewhere.
-- *Why the field tracer fails there:* where the corridor is narrower than the 10 km step, the Newton
-  corrector lands on the opposite limb; at a hybrid's pinch (L2' = 0) the width is zero.
-  Tried and rejected 2026-09-17: tracing |L2'| as-is; tracing the umbral (−L2') and antumbral (+L2')
-  parts separately with same-side de-duplication (limbs fragmented and mislabelled, worst 60 km to
-  1,300 km off).
-- *Tried, works in principle, far too slow:* cap the step at 0.3 × local half-width, where half-width
-  (metres) = |L2'(t*)| / |∇D| (both already computed), floor 0.05 km, `maxpts` 60,000; plus seed
-  de-duplication that only compares seeds with traced points ON THE SAME SIDE (a side-blind distance
-  test skips the other limb of a narrow corridor entirely — that, not only the step, is why
-  1927-01-03 lost its south limb). 1986-10-03 ran > 13 min unfinished (old route: 6 s). The cost is
-  `_umb_depth`: every field evaluation re-scans the whole eclipse window (96 samples + 40 ternary
-  steps) although t* barely moves between neighbouring contour points.
-- *Two ways forward, not yet tried:* (a) warm-start the time search from the previous point's t*
-  (local ternary/Newton, ~10× fewer evaluations) with a periodic full scan as a guard against missing
-  the global maximum on near-pole loops; (b) step in TIME instead of distance: for each t take the
-  envelope point (instantaneous D = 0 and ∂D/∂t = 0 — umbral_pts already solves this) and accept it
-  only if the global field agrees (max_t D ≈ 0 there). Same definition of the limit, and a time step
-  cannot jump across a narrow corridor; the inner-edge cases that made chords are exactly where the
-  global check rejects envelope points, so the contour tracer would still be needed there.
-- *The prototype's code is not kept* (it lived in the sandbox); everything needed is described here.
+**Grazer seeding — FIXED 2026-09-18 (`2026-09-18a`).** Measured, not assumed: at 49 time samples
+`umbral_pts` gave the six grazing fallbacks ZERO seeds (five) or north only (-297-11-29); at 4,000
+samples it finds some, in windows under 1% of the eclipse, and 332-03-13 still none. The envelope
+exists only while the umbra's edge is on the disk, which for a grazer is a sliver of time.
+**Fix: a second seed source, `_umb_march_seeds`.** Scan 2,000 times for when the ground point nearest
+the axis (`_umb_deep_pt`: the centreline point, or the rim point below an axis that misses the
+Earth) is inside the umbra; at up to 48 of those, march perpendicular to its motion both ways,
+doubling until D < 0, and bisect onto the sign change. Envelope seeds are kept: **march-only was
+tried and loses 1547-11-12's north limb**; with both, seeds overlap harmlessly (the tracer skips a
+seed already on a traced component).
+- All 6 grazers trace, pass `umbral_limits_valid`, end exactly on the horizon (sin alt 0.0000).
+  **Includes both `A+` records that never had a limb (332-03-13, 2485-12-07).** Rendered and looked at.
+- vs Jubier (ΔT removed): -297-11-29 N 10 m / 498 m, **S 46 m / 2.2 km**; 332-03-13 106 m median,
+  ends within 0.9 km (his 40 km "worst" is the terminus point he tacks on, not his limb; between his
+  sparse points he draws chords, ours follows the curve).
+- **It also fixed all 4 "narrow" fallbacks** (305-02-10, -1707-03-27, 1722-12-08, 1498-06-19): the
+  south limb was never seeded, not stepped over. 305-02-10 S: 5 m / 28 m (old route 92 m / 5.2 km).
+  The other three have no reference; their two limbs are 21.3/21.5/23.5 km apart at minimum against
+  catalogue widths 21.6/21.4/23.4.
+- **No regression:** 57 sampled eclipses (all references + random, every era) — the march started a
+  new trace only on the records above, so every other output is identical to `17a` by construction.
+  Cost +0.5 s per eclipse (~9%). `build_path` end-to-end on all ten: no FIELD FALLBACK, no AUDIT line.
 
-**NEXT: the fallbacks from the user's full test run (2026-09-17).** 23 of ~7,600 central eclipses
-(0.3%); each used the old route, so no data is damaged. They are the list of what the field method
-still cannot do. Complete, each diagnosed by re-running `umbral_limits_field` on the record:
+**ONE ENGINE — generator `2026-09-18b`: every central eclipse, hybrids and thin corridors included.**
+`build_path` now sends every T/A/H record to `umbral_limits_field`; the width rule
+(`UMB_MIN_WIDTH_KM`) and the hybrid exclusion are gone. The old route (perpendicular march, analytic
+walk) runs only as the `umbral_limits_valid` fallback, still logged as FIELD FALLBACK.
 
+*The one root cause.* All three remaining classes were a corridor narrower than the tracer's reach:
+- hybrids pinch to zero width where L2' = 0;
+- corridors under ~20 km (1948-05-09 is 0.2 km);
+- **the 13 "end-pinning" fallbacks were NOT a refine() bug** (the first diagnosis, below, fixed 8 of 13 by
+  luck): they are near-hybrid totals, 62 km wide at maximum but only **0.1–7 km wide at the horizon**,
+  where umbra radius → |L2| (ζ → 0). Normal totals are 50–130 km wide there. Measured for all 13.
+
+*What the tracer now does (`_trace_zero(width=...)`; without `width` it is byte-for-byte the
+penumbra's and green line's tracer).* Each fix below was reproduced first, then rendered or measured:
+1. **Step capped by the corridor**, half-width `hw = |L2'(t*)| / |∇D|`: the predictor's lateral error
+   (sagitta step²/2R, R from the last turn) must stay < 0.3·hw, so `cap = max(0.3·hw, √(0.6·hw·R))`,
+   50 m floor. The curvature term is what makes it affordable: a straight 0.2 km corridor keeps 10 km
+   steps (1948: 1,445 pts, 4 s). The first try, `0.3·hw` alone, hit 20,000 pts and truncated a limb.
+2. **Gradient probes ≤ ¼·hw** (were a fixed 2 km). Probes straddling both limbs gave a garbage gradient
+   and the tracer stalled for 10,000 steps of 0 m (31-11-03, half-width 0.56 km).
+3. **Corrector tolerances in mm** (`tol` 1e-10, `accept` 1e-9 Earth radii; were 6.4 m and 127 m). At a
+   pinch the corridor is metres wide: with 127 m accepted, the tracer U-turned onto the other limb
+   (1585-04-29, at a 140 m half-width) and walked the D = −5 m curve past the pinch.
+4. **Closure = the seed lies on the last step, within min(0.75·step, 0.5·hw)**. With a point-distance
+   test a narrow corridor's OTHER limb passing 5 km from the seed counted as closure (1507-07-10 lost
+   700 km of north limb). The first cut used 0.5·hw alone — on a wide path that is tens of km, and
+   every polar reference broke (2021-12-04 S median 8 km): caught by the reference regression.
+5. **Seed de-dup is side-aware** (`traced()`): a seed is skipped only when a traced vertex ON ITS OWN
+   SIDE of the shadow's motion is near. Side-blind, a thin corridor's second limb was never traced
+   (2023-04-20 S; §9.5's earlier notes predicted this).
+6. **Warm-started time search, ANCHORED** (`ANCHOR_KM` 5): a full scan at an anchor point, then a
+   local search from the anchor's t* for queries within 5 km. Seeding from the PREVIOUS query's t*
+   made D depend on call order; where g(t) has two maxima (near a pinch) Newton then failed (1507).
+   Also the reason for most of the speed-up.
+7. **Pinches supplied exactly** (`_umb_pinches`: the centreline time where on-axis L2 − ζ·tan f2 = 0,
+   bisected). Tracing stops at hw < 50 m (`PINCH_HW_KM`) and each limb end within 60 km of a pinch is
+   joined to it — the same idea as ending limbs on the green-line termini. Before this, 10-point
+   out-and-back slivers and 9 km gaps sat at pinches. Hybrid limbs therefore come in pieces meeting
+   at the pinches; that is correct, not fragmentation.
+8. `refine()` keeps a Newton-corrected bisection midpoint only if it stays inside the interval.
+
+*Results, all vs Jubier with ΔT removed (median / worst, m):* hybrids 1507-07-10 1/55 & 2/58,
+1543-07-31 1/63 & 1/42, 1585-04-29 1/46 & 1/46, 2005-04-08 2/36 & 3/20, 2023-04-20 4/32 & 4/30,
+1986-10-03 16/10336 & 15/110 (the 10 km is Jubier's tacked-on last point, 972 m INSIDE the umbra; the
+~15 m median is chord sagitta, as 2024-04-08's 19 m). Thin corridors 1948-05-09 1/51 & 1/48 (old
+route 44/299), 1927-01-03 1/63 & 1/47 (69/407). All 13 end-pinning records valid, no fragments.
+**Regression:** all 45 references otherwise equal `18a`; a 57-eclipse sample (all eras) has identical
+vertex counts and every vertex on the exact contour (0.00 m); vertices shift 0–40 m (170 m on
+-297-11-29's small hook) only because the first step now starts shorter — sampling phase, not
+accuracy. Every eclipse equal or faster (typically 6 → 5 s, polar 4 → 3 s). `build_path` end to end
+on eight mixed records: zero fallbacks, zero AUDIT lines.
+*Not yet run:* the whole catalogue. The final regeneration should report zero FIELD FALLBACK.
+
+*Rejected on the way (do not retry):* tracing |L2'| as-is, and umbral/antumbral parts separately
+(2026-09-17: 60–1,300 km off); a plain 0.3·hw step cap (20,000-pt limbs, 13 min on 1986); warm start
+from the previous call with a periodic full scan (call-order dependence, above).
+
+**The `17a` test run's 23 fallbacks — ALL FIXED as of `18b`:**
 ```
 end-pinning (13)  -1590-12-14  -1803-06-05  -1902-03-23  -166-11-20  161-11-05  1358-01-10
                   1695-12-06   31-11-03     2068-05-31   2518-03-12  667-08-25  826-08-07  985-07-20
 narrow (4)        -1707-03-27 (21.6 km)  305-02-10 (20.8)  1722-12-08 (21.4)  1498-06-19 (23.4)
 grazing (6)       -297-11-29  -839-07-26  -1784-06-05  332-03-13  890-02-23  2485-12-07
 ```
-332-03-13 and 2485-12-07 are the two `A+` records the audit has always reported as having no umbral
-limb at all (§9.7): same grazing class, so the geometry-based gate below is their best chance.
+Grazing and narrow: seeding (`18a`, "Grazer seeding" above). End-pinning: the width-aware tracer.
+Two diagnoses from 2026-09-17 were wrong and are kept as warnings: "end-pinning = refine() jump"
+(that jump was a symptom of the thin horizon corridor), and -297-11-29 "has no south limit on Earth"
+(it does — Jubier draws it, it lies on our contour; nothing seeded it).
 
+**Old-frame helpers — DONE in `2026-09-18c` (every output-changing item is now finished).**
+- `_magnitude_at` now uses `_fund_true` (true ζ, unscaled axis distance) and `_sun_sin_alt` for the
+  horizon. Its one effect on field-route output is the **umbra ovals**, which sat 35–300 m off the
+  true instantaneous umbra edge (2024-04-08 median 145 m) and are now exact (0.0 m, `_umb_g` = 0).
+  Its other callers (`_snap_to_edge` → envelope seeds; `_max_magnitude` → green termini) do not
+  reach field output: seeds are Newton-corrected, and `_GREEN_TERMINI` feeds only the old route.
+- The penumbra's side test uses `_fund_true` (ξ, η identical: no output change).
+- Deleted, never called: `_cone_depth`, `_cone_grad`, `_cone_correct`, `_cone_seed_robust`.
+- **`_despur_segment` now runs on the OLD ROUTE only.** Measured on all 45 references' field limbs, it
+  removed no real spur and did only harm: its duplicate pass deleted the exact horizon END POINT of
+  6 limbs (109–415 m; 2021-12-04 N worst 273 → 450 m, 2049-05-31, 2060-04-30, 2027-08-02, 1552-07-21,
+  1585-04-29) and thinned hybrid limbs beside the pinch (18–42 vertices, ≤ 87 m). The `17a` test
+  data has the same fault.
+- Regression `18c` vs `18b`: all 45 references within 1–4 m (vertex placement), `build_path` end to
+  end zero fallbacks.
 
-1. *End-pinning jump* — -1590-12-14, -1803-06-05, -1902-03-23, -166-11-20, 161-11-05, 1358-01-10
-   (ordinary 60–65 km totals). Every step is a proper tracer step except the FIRST or LAST, 36–245 km,
-   i.e. the point `refine()` adds. Its bisection calls `_umb_correct` on each midpoint and that Newton
-   step may move up to 500 km, so a midpoint can snap to a distant stretch of contour. **Fix:** reject
-   a correction landing outside the current bisection interval and keep the uncorrected midpoint.
-   (161-11-05 also leaves two 5-point fragments, which the same jump explains.)
-2. *Grazing one-limit eclipses* — -839-07-26 (T+), -1784-06-05 (A-): no limb traced at all. Catalogue
-   `path_width` is 0 for these, so the width rule does not apply and they reach the tracer. The
-   umbral edge barely clips the Earth; seeding (`umbral_pts`) or the Newton correction presumably
-   fails. Not yet diagnosed further.
-3. *The gate is wrong, not the trace* — -297-11-29 (T, gamma -0.989, 815 km "wide"): an extreme
-   grazer near Antarctica. The traced boundary is ONE closed loop entirely on the north side of the
-   shadow's travel (365 points sunlit, 387 not); there is no south limit on Earth. The field result
-   is right and `13j`'s south limb — 9 points, and its north limb has a 193 km step — is spurious,
-   missed by the audit (over the 3-point threshold) and by the chord scan (under 300 km).
-   **Fix:** decide one-limb vs two from the geometry, not the catalogue type: accept a single limb
-   when the traced contour has no sunlit points on the other side. Likely the same for class 2.
-   Also: the shipped catalogue probably holds more stub limbs like this — the `check_regen.py`
-   comparison after the full run will list them.
+**`2026-09-18d` — thin-hybrid fallbacks from the aborted `18c` run (2026-09-18).** The user's `18c`
+run logged FIELD FALLBACK on -1747-11-10, -1716-09-28 and -1641-03-17 (hybrids 0.5–0.7 km wide) and
+was stopped. All three: one step 32–44 km long, failing the 30 km gate. Two real bugs:
+1. **Pinch join was a straight chord.** On the thinnest hybrids the half-width stays under
+   `PINCH_HW_KM` (50 m) for 32–44 km either side of a pinch, so tracing stops that far out, and a
+   chord that long has a sagitta (50–150 m) wider than the corridor. The join now follows the
+   centreline from the limb end's t* to the pinch time (≤ 5 km spacing): in that zone the limb is
+   within 50 m of the centreline, closing to 0 at the pinch. `_umb_pinches` returns (lat, lon, t).
+2. **Fixed 2 km gradient probes survived in two places:** `_umb_correct` (seeds and `refine()`) and
+   the tracer's FIRST gradient at a seed (the width-aware probe only takes effect after it). In a
+   ~350 m corridor, seeds failed or were corrected onto the OTHER limb (-1747-11-10: its south limb
+   between the pinches was never traced), and a trace could stop at its seed (1585-04-29 N, worst
+   46 → 82 m, caught by the reference regression). Both now bound probes and Newton steps by
+   w = |L2'(t*)|·R⊕, which never exceeds the local half-width (the gradient is at most 1 per Earth
+   radius), and `_umb_correct` converges to mm. Note: `R` in this file is 6371 **km**; use
+   `R_EARTH_M` for metres (a units slip here was caught before delivery).
 
-4. *The 20 km width rule is too generous* — -1707-03-27 (21.6 km), 1498-06-19 (23.4 km),
-   1722-12-08 (21.4 km): ordinary annulars, gamma 0.68-0.75, each returning only a north limb. A
-   10 km step needs far more than 20 km of corridor to stay on its own limb. Raising
-   `UMB_MIN_WIDTH_KM` would be a stopgap and an expensive one — of 6,948 two-limit totals/annulars,
-   153 are under 20 km, 312 under 40, 461 under 60, 1,172 under 100 — so the real answer is the
-   width-limited step (NEXT open, above), which removes the rule instead of widening it.
-
-**NEXT (small): old-frame helpers still in the generator.** `_magnitude_at` (→ `_max_magnitude` →
-the green-line terminus polish), `_cone_depth`, `_cone_sun_alt`, `_gt_inst` (perpendicular-march
-support) still take ζ from `_geo_to_fund`. ξ and η from `_geo_to_fund` equal the true ones; only ζ
-(and the η/ρ₁ "scaled" distance some of them use) is the approximation. Move them to `_fund_true` /
-`_sun_sin_alt`, delete whichever become unused once hybrids leave the old route.
-
-**Hybrids stay on the old route, by design (for now).** Where L2' changes sign the corridor pinches to a
-point; traced limbs fragmented and mislabelled (worst points 60–1,300 km off Jubier on 1986-10-03,
-2005-04-08, 2023-04-20), tried both on |L2'| and as separate umbral/antumbral parts. 502 records.
+**After the final regeneration (dead code by then; output unchanged, no rerun):** if it logs zero
+FIELD FALLBACK, delete the old route from `build_path` — `perpendicular_limits`, `dep_local`,
+`_gt_inst`, `_cone_sun_alt`, the analytic one-limit walk and `umbra_pair`, the `_GREEN_TERMINI`
+block with `_polish_terminus` and `_max_magnitude`, `_terminate_on_green`, `_despur_segment`, and
+`umbral_limits_valid`'s fallback branch. Check each with grep before deleting; `umbral_pts` stays
+(it seeds the tracer).
 
 **Final generator vs `13j`, against Jubier, ΔT removed, umbral limits (median / worst):**
 ```
@@ -1436,8 +1499,8 @@ note below says 7,851 — not reconciled.
 
 **Result: 11,898 eclipses, 7,851 central. Zero stub or missing limbs on two-limit eclipses, zero
 gross N/S asymmetry, no stale chunks.** The 2028/2041 failure mode is confirmed absent
-catalogue-wide. Only two eclipses flagged — `332-03-13` and `2485-12-07`, both `A+`, both
-deliberately won't-fix; detail, Jubier measurements and the candidate fix are in TODO.
+catalogue-wide. Only two eclipses flagged — `332-03-13` and `2485-12-07`, both `A+`. **Fixed in
+generator `2026-09-18a`** (grazer seeding, §9.5); they will pass once the final regeneration ships.
 
 **Why a separate script rather than more generator checks.** The generator's in-run AUDIT pass checks
 only vertex GAPS (>350 km) and INTERIOR TURNS (>30°) on curves that already exist. `audit_curve()`
@@ -3048,6 +3111,21 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-18d** — **Generator `2026-09-18d`**: thin-hybrid fixes (pinch join along the centreline;
+  width-bounded probes in `_umb_correct` and the tracer's first step). The `18c` run was stopped at the
+  first three FIELD FALLBACKs (all this class). §9.5.
+- **2026-09-18c** — **Generator `2026-09-18c`** (§9.5 "Old-frame helpers"): `_magnitude_at` in the exact
+  frame (umbra ovals were 35–300 m off, now exact); dead `_cone_*` chain deleted; `_despur_segment`
+  restricted to the old route (it was deleting exact limb end points). N/S naming settled, no change.
+  Every output-changing item before the final regeneration is done.
+- **2026-09-18b** — **Generator `2026-09-18b`** (§9.5 "ONE ENGINE"): width-aware tracer (step, probe,
+  tolerances, closure), side-aware seed de-dup, anchored warm start, exact hybrid pinches. Every
+  central eclipse takes the field route; all 23 fallbacks of the `17a` test run fixed; hybrids 1–16 m
+  median from Jubier (old route 40–900 m). Not regenerated.
+- **2026-09-18a** — **Generator `2026-09-18a`** (§9.5 "Grazer seeding"): `_umb_march_seeds` adds
+  seeds marched out from the deepest ground point, fixing the 6 grazing and 4 narrow fallbacks of the
+  `17a` test run, including both `A+` records with no umbral limb. Identical output elsewhere. §9.5's
+  "no south limit" diagnosis for -297-11-29 corrected. Not regenerated.
 - **2026-09-17b** — **Generator `2026-09-17a`** (§9.5): umbral limits for totals and annulars traced by
   `umbral_limits_field`; exact observer height (`_fund_true`) for every shadow radius and a separate
   sun-altitude horizon test (`_sun_sin_alt`), fixing a 10–250 m error in the limits. Hybrids, two-limit
