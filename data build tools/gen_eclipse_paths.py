@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 gen_eclipse_paths.py  —  ShadowChaser
+Part of Follow the Shadow — https://followtheshadow.com
+
 Generates eclipse path JSON from Besselian element chunk files.
 
 Outputs per eclipse:
@@ -8,6 +10,7 @@ Outputs per eclipse:
   - umbra_ovals                   (umbral footprint params at intervals)
   - penumbra_n, penumbra_s        (geographic outer limits of penumbral shadow)
   - terminator_first, last        (sunrise/sunset line at P1 and P4 times)
+  - green_curve                   (maximum eclipse on the horizon)
   - ge                            (greatest eclipse point)
 
 All features verified against baseline truth (reference KMZ / NASA data).
@@ -28,11 +31,9 @@ R_EARTH_M     = 6378137.0  # WGS84 equatorial radius (metres)
 R             = 6371.0    # km
 STEP_MIN      = 1         # minutes between path samples
 GEN_VERSION   = '2026-09-18d'  # generator code version; stamped into each chunk's __meta
-FIELD_FALLBACKS = []           # totals/annulars where umbral_limits_field returned nothing
                               # (bump when the generation math changes)
 TERM_STEP_MIN = 0.1       # finer step for terminator curves (was 0.5; gave ~80 km median vertex spacing → 6 km cross-track error)
 PEN_N         = 720       # L1-circle sample points (penumbra sweep)
-MIN_SEG       = 10        # minimum points to retain a segment
 OVAL_STEP_MIN = 10        # minutes between umbral oval samples
 
 
@@ -98,7 +99,6 @@ def f2g(xi, eta, d_r, mu, dt_s):
     sin_d = math.sin(d_r); cos_d = math.cos(d_r)
     # Earth-flattening corrections
     rho1 = math.sqrt(1.0 - E2 * cos_d * cos_d)
-    rho2 = math.sqrt(1.0 - E2 * sin_d * sin_d)
     sin_d1 = sin_d / rho1
     cos_d1 = math.sqrt(1.0 - E2) * cos_d / rho1
     # Project to corrected fundamental plane
@@ -141,7 +141,7 @@ def centreline_pt(rec, t):
     return f2g(X, Y, d_r, mu, dt_s)
 
 
-# ── Umbral limits (perpendicular-to-velocity offset) ───────────────────────
+# ── Observer frame, magnitude and shadow edges ─────────────────────────────
 
 def _geo_to_fund(lat_gd_deg, lon_deg, d_r, mu, dt_s):
     """Inverse of f2g: geographic (lat, lon) to fundamental (xi, eta, zeta)."""
@@ -171,8 +171,7 @@ def _fund_true(lat_gd_deg, lon_deg, d_r, mu, dt_s):
     Use THIS for anything measured in the shadow: the axis distance and the
     shadow radii L1' = L1 - zeta*tan_f1, L2' = L2 - zeta*tan_f2.
     _geo_to_fund's third value is zeta1 of the reduced (spherical) Earth, not
-    zeta: up to 16 km off, which moves the limits 10-20 m, ~250 m at low sun
-    (found 2026-09-17 against Jubier; HANDOFF sec. 9.5)."""
+    zeta: up to 16 km off, which moves the limits 10-20 m, ~250 m at low sun."""
     H = (mu + lon_deg - 0.00417807 * dt_s) * DEG
     u = math.atan(_B_A * math.tan(lat_gd_deg * DEG))
     rsp = _B_A * math.sin(u); rcp = math.cos(u)
@@ -194,7 +193,7 @@ def _magnitude_at(rec, lat, lon, t):
     """Eclipse magnitude at geographic (lat, lon) at time t.
     Uses Bessel formula: (L1' - m) / (L1' + L2') where L1', L2' are cone radii
     at the observer's axial position. Returns 0 to 1. Exact observer frame
-    (_fund_true) for the shadow, _sun_sin_alt for the horizon (HANDOFF sec. 9.5)."""
+    (_fund_true) for the shadow, _sun_sin_alt for the horizon."""
     X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
     if _sun_sin_alt(lat, lon, d_r, mu, dt_s) <= 0: return 0.0
     xi_p, eta_p, zeta_p = _fund_true(lat, lon, d_r, mu, dt_s)
@@ -387,23 +386,6 @@ def umbral_pts(rec, t):
     return out[0], out[1]
 
 
-def _umbral_limb_endpoints(rec, t):
-    """Two points where the L2 (umbral) circle crosses Earth's disk edge."""
-    X, _, Y, _, d_r, mu, dt_s, _, L2 = bstate(rec, t)
-    d = math.sqrt(X*X+Y*Y)
-    if d < 1e-9: return None, None
-    a = (1.0 - L2*L2 + d*d) / (2*d)
-    disc = 1.0 - a*a
-    if disc < 0: return None, None
-    h = math.sqrt(disc)
-    p2x=a*X/d; p2y=a*Y/d
-    x3=p2x+h*(Y/d); y3=p2y-h*(X/d)
-    x4=p2x-h*(Y/d); y4=p2y+h*(X/d)
-    eps=1e-7
-    return (f2g(x3*(1-eps), y3*(1-eps), d_r, mu, dt_s),
-            f2g(x4*(1-eps), y4*(1-eps), d_r, mu, dt_s))
-
-
 def _pen_perp_pt(rec, t, side):
     """Point on L1 circle perpendicular to shadow velocity — the envelope point.
     side='n' for north, 's' for south. Returns (lat,lon) or None if off Earth."""
@@ -578,47 +560,6 @@ def penumbral_limits(rec, step_min=STEP_MIN, N=PEN_N):
 
 
 # ── Path splitting ─────────────────────────────────────────────────────────
-
-def _despur_segment(seg, spur_km=5.0, dup_km=0.5):
-    """Remove degenerate spurs / duplicate vertices from a corridor polyline
-    (list of [lon,lat]). A 'spur' is a vertex whose two NEIGHBOURS are within
-    spur_km of each other — the corridor steps out and returns to ~the same spot
-    (e.g. an over-the-pole whisker). Because the neighbours coincide the spur
-    encloses ~zero area, so removal is LOSSLESS. Normal sampling (~16 km spacing)
-    is never eligible, so a clean path is returned unchanged. A guard refuses any
-    change that would increase the worst interior turn."""
-    if len(seg) < 5:
-        return seg
-    def _hav(a, b):
-        la1, la2 = a[1]*DEG, b[1]*DEG; dl = (b[0]-a[0])*DEG
-        h = math.sin((la2-la1)/2)**2 + math.cos(la1)*math.cos(la2)*math.sin(dl/2)**2
-        return R*2*math.asin(math.sqrt(max(0.0, min(1.0, h))))
-    def _brg(a, b):
-        la1, la2 = a[1]*DEG, b[1]*DEG; dl = (b[0]-a[0])*DEG
-        return math.atan2(math.sin(dl)*math.cos(la2),
-                          math.cos(la1)*math.sin(la2)-math.sin(la1)*math.cos(la2)*math.cos(dl))
-    def _worst(s):
-        w = 0.0
-        for i in range(1, len(s)-1):
-            d = abs(_brg(s[i], s[i+1]) - _brg(s[i-1], s[i])); d = min(d, 2*math.pi-d)
-            if d > w: w = d
-        return w
-    out = [list(p) for p in seg]
-    i = 1
-    while 1 <= i < len(out)-1:
-        if _hav(out[i-1], out[i+1]) < spur_km and _hav(out[i-1], out[i]) >= dup_km:
-            out.pop(i); i = max(1, i-1)
-        else:
-            i += 1
-    j = 0
-    while j < len(out)-1:
-        if _hav(out[j], out[j+1]) < dup_km: out.pop(j+1)
-        else: j += 1
-    if len(out) == len(seg):
-        return seg
-    if _worst(out) > _worst(seg) + 0.5*DEG:   # guard: never worsen the worst turn
-        return seg
-    return out
 
 def unwrap(pts, lat_thresh=80.0, lon_jump=30.0, pole_lat=89.99):
     """Make a [lon,lat] list continuous and pole-aware.
@@ -1800,7 +1741,7 @@ def _trace_zero(field, seed, step_km=30.0, maxpts=3000,
         u = max(0.0, min(1.0, (px * bx + py * by) / L)) if L > 0 else 0.0
         return math.hypot(px - u * bx, py - u * by)
     def one(sign):
-        la, lo = seed; prevb = None; out = []; step = step_km
+        la, lo = seed; prevb = None; out = []; step = last = step_km
         if width:   # first probe: before any gradient, bound it by the smallest
             # possible half-width (steepest gradient = 1 per Earth radius)
             pr[0] = min(PROBE, 250.0 * width(la, lo, 1.0 / R_EARTH_M))
@@ -1970,39 +1911,11 @@ def penumbral_limits_field(rec, pn_old, ps_old):
     return pn, ps
 
 
-def _cone_sun_alt(rec, lat, lon):
-    """Sun altitude (deg) at the ground point (lat, lon) at the instant of ITS
-    OWN maximum eclipse. >= 0 means the eclipse is visible (sun up) there; the
-    locus where it == 0 is the Maximum-on-Horizon ('green') curve, on which every
-    umbral limit terminates. Same construction as build_path's _max_sun_alt."""
-    tmin = rec['tmin']; tmax = rec['tmax']
-    def adz(t):
-        X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
-        xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
-        if zeta is None:
-            return 1e18, -1.0
-        return math.hypot(xi - X, (eta - Y) / rho1), zeta
-    N = 48; bt = tmin; bd = 1e18
-    for i in range(N + 1):
-        t = tmin + (tmax - tmin) * i / N
-        dme, _z = adz(t)
-        if dme < bd: bd = dme; bt = t
-    a = max(tmin, bt - (tmax - tmin) / N); b = min(tmax, bt + (tmax - tmin) / N)
-    bz = -1.0
-    for _ in range(40):
-        m1 = a + (b - a) / 3; m2 = b - (b - a) / 3
-        d1, z1 = adz(m1); d2, z2 = adz(m2)
-        if d1 < d2: b = m2; bz = z1
-        else: a = m1; bz = z2
-    return math.degrees(math.asin(max(-1.0, min(1.0, bz))))
-
-
 # ── Umbral limits on the implicit-field engine ───────────────────────────────
 # The same method as the penumbra and the green line: a limit IS the zero contour
 # of the ever-central depth field, so it is traced rather than reconstructed from
-# the centreline. Replaces perpendicular_limits for totals and annulars; that march
-# could not reach the inner edge of a tightly curved path and left 300-2,000 km
-# chords (HANDOFF sec. 9.5). Hybrids stay on the old route (see umbral_limits_field).
+# the centreline. One method for every central eclipse: total, annular, hybrid,
+# grazing, polar, and corridors narrower than the tracer step.
 
 def _umb_g(rec, lat, lon, t):
     X, _, Y, _, d_r, mu, dt_s, _, L2 = bstate(rec, t)
@@ -2080,9 +1993,8 @@ UMB_MAX_STEP_KM = 30.0   # a traced limb with a longer step is malformed (the tr
 
 def umbral_limits_valid(north, south, two_limit):
     """A traced result is trusted only if every step is a tracer step. A longer
-    one means the tracer jumped between limbs -- which happens when the corridor
-    is narrower than the step (1948-05-09, 0.2 km wide). build_path then uses the
-    old route and logs a FIELD FALLBACK."""
+    one means the tracer jumped between limbs. build_path reports a result that
+    fails this check."""
     if two_limit and not (north and south):
         return False                      # a two-limit eclipse must yield both limbs
     for arc in north + south:
@@ -2359,28 +2271,12 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         a = math.sin((p2-p1)/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
         return EARTH_R_KM * 2*math.asin(math.sqrt(max(0.0, min(1.0, a))))
 
-    def umbra_pair(t):
-        n, s = umbral_pts(rec, t)
-        if n is None or s is None:
-            lp1, lp2 = _umbral_limb_endpoints(rec, t)
-            if lp1 and lp2:
-                if n is None: n = lp1 if lp1[0] > lp2[0] else lp2
-                if s is None: s = lp2 if lp1[0] > lp2[0] else lp1
-        return n, s
-
-    def find_first_valid(t_lo, t_hi, want_centreline=True):
-        # Find the earliest t in [t_lo, t_hi] where the relevant function is
-        # defined. Works for both centreline (None outside the eclipse) and
-        # umbra limb (always defined for central eclipses, so this returns
-        # t_lo immediately).
+    def find_first_valid(t_lo, t_hi):
+        # Earliest t in [t_lo, t_hi] at which the shadow axis meets the Earth.
         scan = t_lo
         prev_ok = False
         while scan <= t_hi + 1e-9:
-            if want_centreline:
-                ok = centreline_pt(rec, scan) is not None
-            else:
-                n, s = umbra_pair(scan)
-                ok = n is not None and s is not None
+            ok = centreline_pt(rec, scan) is not None
             if ok:
                 if prev_ok or scan <= t_lo + 1e-9:
                     return scan
@@ -2388,12 +2284,7 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
                 t_out, t_in = scan - step, scan
                 for _ in range(40):
                     tm = 0.5*(t_out + t_in)
-                    if want_centreline:
-                        valid = centreline_pt(rec, tm) is not None
-                    else:
-                        n, s = umbra_pair(tm)
-                        valid = n is not None and s is not None
-                    if valid: t_in = tm
+                    if centreline_pt(rec, tm) is not None: t_in = tm
                     else: t_out = tm
                     if t_in - t_out < 1e-7: break
                 return t_in
@@ -2401,25 +2292,17 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
             scan += step
         return None
 
-    def find_last_valid(t_lo, t_hi, want_centreline=True):
+    def find_last_valid(t_lo, t_hi):
+        # Latest t in [t_lo, t_hi] at which the shadow axis meets the Earth.
         scan = t_hi
         while scan >= t_lo - 1e-9:
-            if want_centreline:
-                ok = centreline_pt(rec, scan) is not None
-            else:
-                n, s = umbra_pair(scan)
-                ok = n is not None and s is not None
+            ok = centreline_pt(rec, scan) is not None
             if ok:
                 # bisect between (scan, scan + step) for tangency
                 t_in, t_out = scan, scan + step
                 for _ in range(40):
                     tm = 0.5*(t_in + t_out)
-                    if want_centreline:
-                        valid = centreline_pt(rec, tm) is not None
-                    else:
-                        n, s = umbra_pair(tm)
-                        valid = n is not None and s is not None
-                    if valid: t_in = tm
+                    if centreline_pt(rec, tm) is not None: t_in = tm
                     else: t_out = tm
                     if t_out - t_in < 1e-7: break
                 return t_in
@@ -2477,78 +2360,18 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
                 dt = min(DT_MAX, dt * 2.0)
         return out
 
-    def adaptive_walk_pair(t_start, t_end, pair_sampler, k_max=MAX_KM, k_min=MIN_KM):
-        # Like adaptive_walk but for a pair of curves (n, s) walked together.
-        # pair_sampler(t) -> (n_pt, s_pt) or (None, None)
-        # Step size tracks max(|Δn|, |Δs|) so that whichever curve has the
-        # higher local velocity governs the sampling — important near cusps
-        # where n and s move at radically different speeds.
-        out = []
-        n0, s0 = pair_sampler(t_start)
-        if n0 is None or s0 is None: return out
-        out.append((t_start, n0, s0))
-        t_cur = t_start
-        dt = DT_MAX
-        iters = 0
-        SAFETY = 100000
-        while t_cur < t_end - 1e-9 and iters < SAFETY:
-            iters += 1
-            t_next = min(t_cur + dt, t_end)
-            n_next, s_next = pair_sampler(t_next)
-            if n_next is None or s_next is None:
-                dt = max(DT_MIN, dt * 0.5)
-                if dt <= DT_MIN + 1e-12: break
-                continue
-            d_n = gc_km(out[-1][1], n_next)
-            d_s = gc_km(out[-1][2], s_next)
-            d = max(d_n or 0, d_s or 0)
-            if d > k_max and dt > DT_MIN + 1e-12:
-                dt = max(DT_MIN, dt * 0.5)
-                continue
-            out.append((t_next, n_next, s_next))
-            t_cur = t_next
-            if d < k_min and dt < DT_MAX:
-                dt = min(DT_MAX, dt * 2.0)
-        return out
-
-    cl, un, us = [], [], []
+    cl = []
     if is_central:
         _GREEN = green_curve(rec)
-        # True limit termini: where the magnitude=1 contour meets the green line
-        # (alt=0). Found as the points where eclipse magnitude crosses 1.0 ALONG
-        # the green line (well-conditioned — no cusp stall). _GREEN is a flat
-        # list of [lon,lat] with None delimiters between components, so skip any
-        # pair that spans a delimiter.
-        _GREEN_TERMINI = []
-        _TERM_DIRS = []   # local green-curve chord bearing (rad) per terminus
-        for _i in range(len(_GREEN) - 1):
-            _g0, _g1 = _GREEN[_i], _GREEN[_i+1]
-            if _g0 is None or _g1 is None: continue
-            _m0 = _max_magnitude(rec, _g0[1], _g0[0])
-            _m1 = _max_magnitude(rec, _g1[1], _g1[0])
-            if (_m0 >= 1.0) != (_m1 >= 1.0):
-                _a, _b = _g0, _g1; _s0 = _m0 >= 1.0
-                for _ in range(22):
-                    _m = ((_a[0]+_b[0])/2.0, (_a[1]+_b[1])/2.0)
-                    if (_max_magnitude(rec, _m[1], _m[0]) >= 1.0) == _s0:
-                        _a = _m
-                    else:
-                        _b = _m
-                _GREEN_TERMINI.append([(_a[0]+_b[0])/2.0, (_a[1]+_b[1])/2.0])
-                _TERM_DIRS.append(_gc_bearing((_g0[1], _g0[0]), (_g1[1], _g1[0])))
-        # Each curve has its own validity interval — they DIFFER, sometimes
-        # by 5+ minutes near tangencies, which means the umbra walker must
-        # bisect each side separately. Sharing the centreline interval was
-        # the bug that produced asymmetric umbra termination (one limb
-        # crawling past the other) on 1997, 2017, and many high-γ totals.
-        t_cA = find_first_valid(tmin, tmax, want_centreline=True)
-        t_cB = find_last_valid(tmin, tmax, want_centreline=True)
+        # The centreline's own validity interval (bisected to the tangency).
+        t_cA = find_first_valid(tmin, tmax)
+        t_cB = find_last_valid(tmin, tmax)
 
         def _max_sun_alt(lat, lon):
             # Sun altitude (deg) at this ground point at the instant of ITS OWN
             # maximum eclipse. >=0 => eclipse visible (sun up) at max. The locus
-            # where ==0 is the baseline's "Maximum on Horizon" curve; he terminates
-            # every limit and the centreline there (visible-totality).
+            # where ==0 is the "Maximum on Horizon" (green) curve; every limit
+            # and the centreline end there (visible totality).
             def adz(t):
                 X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
                 xi, eta, _zeta = _fund_true(lat, lon, d_r, mu, dt_s)
@@ -2583,106 +2406,6 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
                     cur = None
             return walk[best_lo:best_hi]
 
-        # ── Terminus polish ─────────────────────────────────────────────
-        # The termini above are bisected along the green POLYLINE, i.e. on a
-        # straight CHORD between two traced green vertices. The bisection
-        # lands exactly ON the magnitude=1 contour (it solves mag=1 along the
-        # chord) but where the green curve bends hard the crossing point is
-        # displaced ALONG that contour: 2028-07-22's south tip sat 43.8 km
-        # from the baseline's, at alt-at-max = -0.149 deg with |mag-1| ~ 1e-6.
-        # Polish: predictor-corrector walk ALONG the exact mag=1 contour
-        # (step on the local tangent, bisect back onto mag=1 along the
-        # normal), moving in the direction of increasing alt-at-own-max,
-        # until alt crosses 0; then bisect the crossing on the contour. A
-        # polished point is accepted only if it reduces |alt| without
-        # leaving the contour, so a failed solve can never make it worse.
-        def _polish_terminus(P, _brg_unused):
-            lat0, lon0 = P[1], P[0]
-            STEP = 5000.0     # tangent step, m
-            CORR = 3000.0     # normal correction half-range, m
-            MAXKM = 150e3     # walk cap, m
-            def mag(la, lo): return _max_magnitude(rec, la, lo) - 1.0
-            def correct(la, lo, brg_n):
-                # bisect mag=0 along +-CORR of the normal; None if no bracket
-                mN = mag(*_gc_step(la, lo, brg_n, -CORR))
-                mP = mag(*_gc_step(la, lo, brg_n, +CORR))
-                if (mN >= 0.0) == (mP >= 0.0): return None
-                a, b, sa = -CORR, CORR, mN >= 0.0
-                for _ in range(18):
-                    m = (a + b) / 2.0
-                    if (mag(*_gc_step(la, lo, brg_n, m)) >= 0.0) == sa: a = m
-                    else: b = m
-                return _gc_step(la, lo, brg_n, (a + b) / 2.0)
-            def tangent(la, lo):
-                # contour tangent bearing (rad) from the magnitude gradient
-                E = 800.0
-                gN = mag(*_gc_step(la, lo, 0.0, E)) - mag(*_gc_step(la, lo, math.pi, E))
-                gE = mag(*_gc_step(la, lo, math.pi/2, E)) - mag(*_gc_step(la, lo, -math.pi/2, E))
-                if abs(gN) < 1e-15 and abs(gE) < 1e-15: return None
-                return math.atan2(gE, gN) + math.pi/2  # gradient bearing atan2(east, north), rotated 90deg = contour tangent
-            a0 = _max_sun_alt(lat0, lon0)
-            if abs(a0) < 1e-3: return P
-            la, lo = lat0, lon0
-            # choose walk direction: probe one tangent step each way
-            tb = tangent(la, lo)
-            if tb is None: return P
-            best_dir = None
-            for sgn in (1.0, -1.0):
-                q = _gc_step(la, lo, tb + (0.0 if sgn > 0 else math.pi), STEP)
-                c = correct(q[0], q[1], tb + math.pi/2)
-                if c is None: continue
-                if (_max_sun_alt(c[0], c[1]) - a0) * (-a0) > 0:  # moving toward 0
-                    best_dir = sgn; break
-            if best_dir is None: return P
-            prev = (la, lo); prev_a = a0; walked = 0.0
-            while walked < MAXKM:
-                tb = tangent(prev[0], prev[1])
-                if tb is None: return P
-                if best_dir < 0: tb += math.pi
-                q = _gc_step(prev[0], prev[1], tb, STEP)
-                c = correct(q[0], q[1], tb + math.pi/2)
-                if c is None: return P
-                ca = _max_sun_alt(c[0], c[1])
-                if (ca < 0.0) != (prev_a < 0.0):
-                    # bisect the alt crossing along the contour chord prev->c.
-                    # Midpoints via great-circle stepping, NOT coordinate
-                    # averaging (this tip straddles the antimeridian, where
-                    # averaging lon -179.7 and +179.9 lands near lon 0).
-                    A, B, sa = prev, c, prev_a < 0.0
-                    for _ in range(16):
-                        brg_ab = _gc_bearing(A, B)
-                        _dla = (B[0]-A[0])*DEG
-                        _dlo = (B[1]-A[1])*DEG
-                        _h = (math.sin(_dla/2)**2 + math.cos(A[0]*DEG)
-                              * math.cos(B[0]*DEG) * math.sin(_dlo/2)**2)
-                        d_ab = 2.0*R_EARTH_M*math.asin(min(1.0, math.sqrt(abs(_h))))
-                        mid0 = _gc_step(A[0], A[1], brg_ab, d_ab/2.0)
-                        mid = correct(mid0[0], mid0[1], brg_ab + math.pi/2) or mid0
-                        if (_max_sun_alt(mid[0], mid[1]) < 0.0) == sa: A = mid
-                        else: B = mid
-                    brg_ab = _gc_bearing(A, B)
-                    _dla = (B[0]-A[0])*DEG
-                    _dlo = (B[1]-A[1])*DEG
-                    _h = (math.sin(_dla/2)**2 + math.cos(A[0]*DEG)
-                          * math.cos(B[0]*DEG) * math.sin(_dlo/2)**2)
-                    d_ab = 2.0*R_EARTH_M*math.asin(min(1.0, math.sqrt(abs(_h))))
-                    fla, flo = _gc_step(A[0], A[1], brg_ab, d_ab/2.0)
-                    if (abs(_max_sun_alt(fla, flo)) < abs(a0)
-                            and abs(mag(fla, flo)) < 1e-4):
-                        return [flo, fla]
-                    return P
-                prev, prev_a = c, ca; walked += STEP
-            return P
-        _GREEN_TERMINI = [_polish_terminus(_P, _D)
-                          for _P, _D in zip(_GREEN_TERMINI, _TERM_DIRS)]
-
-
-        # (Umbral N/S limits are computed below by the unified perpendicular
-        # method from the centreline. The legacy per-side time-bisection
-        # (_umbra_n_pt/_umbra_s_pt, find_first_for/find_last_for) and the
-        # envelope walk that consumed it have been removed -- perp replaces them.)
-
-
         # Walk centreline over its own valid interval.
         if t_cA is not None and t_cB is not None and t_cB > t_cA + 1e-9:
             walk = _visible_trim(adaptive_walk(t_cA, t_cB, lambda t: centreline_pt(rec, t)))
@@ -2691,76 +2414,42 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
         for (_, lat, lon) in walk:
             cl.append([round(lon, 5), round(lat, 5)])
 
-        # (umbra n / s are now produced by perpendicular_limits, below)
-
-        # ── Tip caps ────────────────────────────────────────────────────
-        # The envelope limits truncate a little short of each grazing tip
-        # (their perpendicular offset runs off the disk). Close each end by
-        # tracing the umbral-limit zero contour from one side's truncated end
-        # around the tip to the other side's end. This is a single C1 curve
-        # (no envelope/terminator seam), so it joins both sides smoothly. The
-        # trace is self-validating: if it fails to close or is not smooth, it
-        # is discarded and that end simply stays truncated -- the proven
-        # envelope is never harmed.
-        # Tips are OPEN: each umbral limit ends at its true terminus on the
-        # green (Maximum-on-Horizon) line via _terminate_on_green; no cap bridges
-        # the north and south limits. This matches the baseline's universal model
-        # (verified across all test KMZs).
     else:
         # Partial / non-central eclipse: only the centreline is meaningful,
         # and even that only where the axis hits Earth. (Often empty.)
-        t_cA = find_first_valid(tmin, tmax, want_centreline=True)
-        t_cB = find_last_valid(tmin, tmax, want_centreline=True)
+        t_cA = find_first_valid(tmin, tmax)
+        t_cB = find_last_valid(tmin, tmax)
         if t_cA is not None and t_cB is not None and t_cB > t_cA + 1e-9:
             walk = adaptive_walk(t_cA, t_cB, lambda t: centreline_pt(rec, t))
             for (_, lat, lon) in walk:
                 cl.append([round(lon, 5), round(lat, 5)])
 
     cl_segs = [cl] if cl else []
-    un_segs = [un] if un else []
-    us_segs = [us] if us else []
 
     # ── Umbral N/S limits ───────────────────────────────────────────────
-    # umbral_limits_field (HANDOFF §9.5). The OLD ROUTE below -- the
-    # perpendicular march (perpendicular_limits) and, for one-limit eclipses,
-    # the analytic envelope walk -- is now only a fallback, taken when the
-    # field result fails umbral_limits_valid, and is logged as FIELD FALLBACK.
+    # Traced by umbral_limits_field as the zero contour of the ever-in-umbra
+    # depth. A result failing umbral_limits_valid is reported, not replaced.
     one_limit = is_central and len(et) > 1 and et[1] in ('n', 's', '-', '+')
-    # Every central eclipse's limits come from umbral_limits_field (hybrids and
-    # thin corridors too, since 2026-09-18b). The perpendicular march and the
-    # analytic walk below run ONLY when the field result fails
-    # umbral_limits_valid; FIELD_FALLBACKS counts it so the old route can be retired.
-    _field_ok = False
+    _n_segs, _s_segs = [], []
     if is_central:
+        _tag = f"{rec.get('year')}-{rec.get('month')}-{rec.get('day')}"
         try:
-            _fn, _fs = umbral_limits_field(rec)
-            _field_ok = bool(_fn or _fs) and umbral_limits_valid(_fn, _fs, not one_limit)
-        except Exception:
-            _field_ok = False
-        if _field_ok:
-            un_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _fn]
-            us_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _fs]
-            _n_segs, _s_segs = _fn, _fs
-        if not _field_ok:
-            _tag = f"{rec.get('year')}-{rec.get('month')}-{rec.get('day')}"
-            FIELD_FALLBACKS.append(_tag)
-            print(f"  FIELD FALLBACK {_tag} {et}: umbral_limits_field gave no valid limb; old route used", flush=True)
+            _n_segs, _s_segs = umbral_limits_field(rec)
+        except Exception as e:
+            print(f"  UMBRAL LIMITS FAILED {_tag} {et}: {e}", flush=True)
+        if not umbral_limits_valid(_n_segs, _s_segs, not one_limit):
+            print(f"  UMBRAL LIMITS INVALID {_tag} {et}", flush=True)
+    un_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _n_segs]
+    us_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _s_segs]
     if is_central and not one_limit and len(cl) >= 7:
-        if not _field_ok:
-            try:
-                _cl_times = [w[0] for w in walk]
-                _n_segs, _s_segs = perpendicular_limits(rec, cl, _cl_times)
-            except Exception:
-                _n_segs, _s_segs = [], []
         # Narrow-band densification. On near-grazing eclipses the umbral
         # band can be narrower than the chord sagitta of the standard
         # 1-minute sampling (~15 km spacing): 1986-10-03's band thins to
         # 2.4 km and the drawn centreline chords exited the drawn band by
         # up to 152 m — the "centreline outside the umbral path" effect.
         # Where the local band width drops below NARROW_KM, resample the
-        # centreline walk so vertex spacing tracks the width, and rerun the
-        # perpendicular march on the refined times. Pure resampling of the
-        # same exact curves; costs nothing except on grazers.
+        # centreline walk so vertex spacing tracks the width. Pure resampling
+        # of the same exact curve; costs nothing except on grazers.
         NARROW_KM = 12.0
         if (_n_segs or _s_segs) and len(walk) >= 3:
             _unf = [q for s in _n_segs for q in s]
@@ -2777,9 +2466,9 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
                 return dn + ds
             wds = [_width_at(lon, lat) for (_t, lat, lon) in walk]
             # Only INTERIOR narrowness qualifies: every eclipse's band
-            # tapers to zero at its grazing tips, which the tip caps
-            # already handle — densifying there merely perturbs validated
-            # tip geometry (2033's umbra_s max drifted 1.9 -> 3.7 km).
+            # tapers to zero at its grazing tips, and densifying there merely
+            # perturbs validated tip geometry (2033's umbra_s max drifted
+            # 1.9 -> 3.7 km).
             _in0, _in1 = 3, len(walk) - 5
             _interior = [w for w in wds[_in0:_in1 + 1]]
             if _interior and min(_interior) < NARROW_KM:
@@ -2799,60 +2488,6 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
                 walk = walk2
                 cl = [[round(lon, 5), round(lat, 5)] for (_t, lat, lon) in walk]
                 cl_segs = [cl]
-                if not _field_ok:
-                    try:
-                        _n_segs, _s_segs = perpendicular_limits(rec, cl, [w[0] for w in walk])
-                    except Exception:
-                        pass
-        if (_n_segs or _s_segs) and not _field_ok:
-            un_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _n_segs]
-            us_segs = [[[round(lo, 5), round(la, 5)] for (lo, la) in seg] for seg in _s_segs]
-            un_segs = _terminate_on_green(un_segs, _GREEN_TERMINI)
-            us_segs = _terminate_on_green(us_segs, _GREEN_TERMINI)
-
-    # A two-limit eclipse must yield two limbs. The perpendicular march can drop
-    # one near the pole (1554) or on a wide annular band (1547/1565); the analytic
-    # tracer does not. So if the march produced exactly one real limb (≥3 pts) on a
-    # two-limit eclipse, retrace below — the analytic block yields both. (The loop
-    # case 1533 keeps the march: it produces both limbs, so this never fires there.)
-    _present = lambda segs: sum(len(s) for s in segs) >= 3
-    _dropped = is_central and not one_limit and (_present(un_segs) != _present(us_segs))
-
-    if is_central and not _field_ok and (one_limit or _dropped or (not un_segs and not us_segs)):
-        # One-limit eclipse — exactly one umbral/antumbral edge meets Earth. Two
-        # kinds: a non-central grazer (axis misses Earth: A-/A+/An/As — no centre-
-        # line to march from), or a central one-limit (Tn/Ts: axis hits Earth but
-        # the opposite limit runs off the disk). The perpendicular march assumes a
-        # two-sided band around the centreline, so here it makes either nothing or
-        # a garbled stub (the 1523 "zigzag"). The catalog's own type code flags the
-        # case — a 2nd character in n/s/-/+ means one limit. Trace that single edge
-        # analytically with umbral_pts (per-time envelope, needs no centreline,
-        # smooth by construction). Validated vs baseline truth on the 1598 annular grazer
-        # (6/115); resolves 1523 Tn to a clean single south limit.
-        try:
-            _ts = [tmin + (tmax - tmin) * i / 1200.0 for i in range(1201)]
-            _pairs = [(t, umbra_pair(t)) for t in _ts]
-            _tn = [t for t, (n, s) in _pairs if n is not None]
-            _to = [t for t, (n, s) in _pairs if s is not None]
-            _au = []; _as = []
-            # Each limb has its OWN validity interval (they can be asymmetric or
-            # disjoint); walking both over a shared interval under-samples the
-            # shorter one to nothing. So trace each over its own [min,max] t-range.
-            if len(_tn) >= 2:
-                _nw = adaptive_walk(min(_tn), max(_tn), lambda t: umbra_pair(t)[0])
-                _nz = [[round(lo, 5), round(la, 5)] for (_, la, lo) in _nw]
-                if len(_nz) >= 3: _au = _terminate_on_green([_nz], _GREEN_TERMINI)
-            if len(_to) >= 2:
-                _sw = adaptive_walk(min(_to), max(_to), lambda t: umbra_pair(t)[1])
-                _sz = [[round(lo, 5), round(la, 5)] for (_, la, lo) in _sw]
-                if len(_sz) >= 3: _as = _terminate_on_green([_sz], _GREEN_TERMINI)
-            # The analytic tracer OWNS the result for these cases: replace both
-            # limbs with its pair. Merging with the perpendicular's lone limb
-            # would overlap it (same physical edge) and still read as one line.
-            if _au or _as:
-                un_segs, us_segs = _au, _as
-        except Exception:
-            pass
 
     # Unwrap all curves so they are continuous past the antimeridian
     cl_segs = [unwrap(cl_segs[0])] if cl_segs else []
@@ -2863,20 +2498,6 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
     cl_segs = _split_at_pole(cl_segs)
     un_segs = _split_at_pole(un_segs)
     us_segs = _split_at_pole(us_segs)
-
-    # Remove degenerate spurs / duplicate vertices -- OLD ROUTE ONLY. It was
-    # written for the perpendicular march's whiskers. On traced limbs there are
-    # none, and it did only harm (2026-09-18, all 45 references): its duplicate
-    # pass deleted the exact horizon end point of 6 limbs (109-415 m, e.g.
-    # 2021-12-04 N, 2049-05-31) and thinned hybrid limbs beside the pinch (<= 87 m).
-    if not _field_ok:
-        un_segs = [_despur_segment(s) for s in un_segs] if un_segs else []
-        us_segs = [_despur_segment(s) for s in us_segs] if us_segs else []
-
-    # (The envelope-era suppress-fold is gone: the perpendicular method marches
-    # from a smooth centreline, so each limit point is an independent depth-zero
-    # crossing -- it cannot produce the old envelope's zigzag. A sharp turn here
-    # is a legitimate tip cusp, not a fold, so nothing is suppressed.)
 
     # ── Penumbral limits ───────────────────────────────────────────────
     pn, ps, t_first, t_last = penumbral_limits(rec, step_min, pen_n)
@@ -3040,23 +2661,6 @@ def build_path(rec, step_min=STEP_MIN, pen_n=PEN_N):
 
 # ── Chunk processing ────────────────────────────────────────────────────────
 
-# Lat/lon precision in output JSON. 5 decimals ≈ 1 m at the equator;
-# 4 decimals ≈ 11 m. 5 is well below cartographic relevance and roughly
-# halves raw JSON size before gzip.
-_COORD_DECIMALS = 5
-
-def _round_coords(obj):
-    """Recursively round any [lon, lat] pair (or list of them) in obj."""
-    if isinstance(obj, list):
-        if (len(obj) == 2 and all(isinstance(x, (int, float)) for x in obj)):
-            return [round(obj[0], _COORD_DECIMALS),
-                    round(obj[1], _COORD_DECIMALS)]
-        return [_round_coords(x) for x in obj]
-    if isinstance(obj, dict):
-        return {k: _round_coords(v) for k, v in obj.items()}
-    return obj
-
-
 def _round_path(path):
     """Round each field to its appropriate coordinate precision.
 
@@ -3180,7 +2784,7 @@ def main():
                    help='parallel worker processes (default 1 = serial; '
                         'try 0 for all CPU cores)')
     args=p.parse_args()
-    if args.test: run_tests(); return
+    if args.test: run_tests(args.data_dir); return
     os.makedirs(args.out_dir, exist_ok=True)
     chunks=[c for c in sorted(glob.glob(os.path.join(args.data_dir,'*.json')))
             if os.path.basename(c) not in ('index.json','tz_index.json')]
@@ -3212,154 +2816,46 @@ def main():
 
 # ── Tests ──────────────────────────────────────────────────────────────────
 
-def run_tests():
-    cases=[
-        ('2017 Aug 21 Total',{
-            # NOTE: x0,y0,mu0 derived from reference KMZ GE coordinates.
-            # The Five Millennium Canon has mu0≈163.8° which is wrong;
-            # correct values below were back-solved from ge=(−87.664°,36.966°).
-            "year":2017,"month":8,"day":21,"cat_no":9681,"eclipse_type":"T",
-            "lat_dd_ge":36.96635,"lng_dd_ge":-87.66410,
-            "dt":70.3,"tmin":-3.0,"tmax":3.0,
-            "x0":-0.136480,"x1":0.5406427,"x2":1.15e-05,"x3":-8.87e-06,
-            "y0":0.493227,"y1":-0.1463278,"y2":-0.0000970,"y3":2.28e-06,
-            "d0":11.73621,"d1":-0.013293,"d2":-3e-06,
-            "mu0":89.23713,"mu1":15.00402,"mu2":0.0,
-            "l10":0.537050,"l11":0.0001254,"l12":-1.21e-05,
-            "l20":-0.009928,"l21":0.0001251,"l22":-1.21e-05,
-        }),
-        ('1999 Aug 11 Total',{
-            "year":1999,"month":8,"day":11,"cat_no":9506,"eclipse_type":"T",
-            "lat_dd_ge":45.07591,"lng_dd_ge":24.29834,
-            "dt":63.7,"tmin":-3.0,"tmax":3.0,
-            "x0":0.070042,"x1":0.5443035,"x2":-4.06e-05,"x3":-8.06e-06,
-            "y0":0.502841,"y1":-0.1184929,"y2":-0.0001158,"y3":1.69e-06,
-            "d0":15.32734,"d1":-0.012035,"d2":-3e-06,
-            "mu0":343.68741,"mu1":15.00298,"mu2":0.0,
-            "l10":0.542469,"l11":0.0001168,"l12":-1.17e-05,
-            "l20":-0.00365,"l21":0.0001163,"l22":-1.16e-05,
-        }),
-        ('1994 Nov 3 Total',{
-            "year":1994,"month":11,"day":3,"cat_no":9496,"eclipse_type":"T",
-            "lat_dd_ge":-35.35609,"lng_dd_ge":-34.22272,
-            "dt":60.6,"tmin":-3.0,"tmax":3.0,
-            "x0":0.11255,"x1":0.5687827,"x2":2.07e-05,"x3":-9.66e-06,
-            "y0":-0.38557,"y1":-0.1257803,"y2":0.0001233,"y3":2.05e-06,
-            "d0":-15.10091,"d1":-0.012686,"d2":3e-06,
-            "mu0":34.10425,"mu1":15.00142,"mu2":0.0,
-            "l10":0.536597,"l11":-3.14e-05,"l12":-1.3e-05,
-            "l20":-0.009493,"l21":-3.12e-05,"l22":-1.3e-05,
-        }),
-    ]
+def run_tests(data_dir='./data/besselian'):
+    """Build three well-observed totals from the catalogue and check them against
+    the catalogue's own greatest eclipse and path width. Exits non-zero on failure."""
+    cases = [(2017, 8, 21), (1999, 8, 11), (1994, 11, 3)]
+    recs = {}
+    for c in glob.glob(os.path.join(data_dir, '*.json')):
+        if os.path.basename(c) in ('index.json', 'tz_index.json'): continue
+        with open(c) as f:
+            for r in json.load(f):
+                if (r.get('year'), r.get('month'), r.get('day')) in cases:
+                    recs[(r['year'], r['month'], r['day'])] = r
 
     def flat(segs): return [p for s in segs for p in s]
-    def max_jump(segs):
-        w=0
-        for seg in segs:
-            for i in range(1,len(seg)):
-                dlon=abs(seg[i][0]-seg[i-1][0])
-                if dlon>180: dlon=360-dlon
-                dlat=abs(seg[i][1]-seg[i-1][1])
-                alat=(seg[i][1]+seg[i-1][1])/2*DEG
-                d=R*math.sqrt((dlat*DEG)**2+(math.cos(alat)*dlon*DEG)**2)
-                if d>w: w=d
-        return w
+    def km(a, b): return _gc_dist((a[1], a[0]), (b[1], b[0])) / 1000.0
 
-    for label,rec in cases:
-        path=build_path(rec)
-        un_f=flat(path['umbra_n']); us_f=flat(path['umbra_s'])
-        pn_f=flat(path['penumbra_n']); ps_f=flat(path['penumbra_s'])
-        print(f'\n{label}:')
-        ge=path['ge']
-        print(f'  GE: {ge[0]:.4f}, {ge[1]:.4f}')
-        print(f'  Centreline:  {sum(len(s) for s in path["centreline"])} pts '
-              f' {len(path["centreline"])} segs')
-        print(f'  Umbra N:     {len(un_f)} pts  {len(path["umbra_n"])} segs'
-              f'  max_jump={max_jump(path["umbra_n"]):.0f}km')
-        print(f'  Umbra S:     {len(us_f)} pts  {len(path["umbra_s"])} segs'
-              f'  max_jump={max_jump(path["umbra_s"]):.0f}km')
-        print(f'  Umbra ovals: {len(path.get("umbra_ovals",[]))} @ {OVAL_STEP_MIN}min')
-        pn_lat = f'{min(p[1] for p in pn_f):.1f}° to {max(p[1] for p in pn_f):.1f}°' if pn_f else 'empty'
-        ps_lat = f'{min(p[1] for p in ps_f):.1f}° to {max(p[1] for p in ps_f):.1f}°' if ps_f else 'empty'
-        print(f'  Penumbra N:  {len(pn_f)} pts  {len(path["penumbra_n"])} segs  lat {pn_lat}')
-        print(f'  Penumbra S:  {len(ps_f)} pts  {len(path["penumbra_s"])} segs  lat {ps_lat}')
-        tf=flat(path['terminator_first']); tl=flat(path['terminator_last'])
-        print(f'  Term first:  {len(tf)} pts  {len(path["terminator_first"])} segs')
-        print(f'  Term last:   {len(tl)} pts  {len(path["terminator_last"])} segs')
-        # Corridor width check
-        if un_f and us_f:
-            mid=len(un_f)//2
-            n_pt=(un_f[mid][1],un_f[mid][0]); s_pt=None
-            best=1e9
-            for p in us_f:
-                d=_sph(n_pt,(p[1],p[0]))
-                if d<best: best=d; s_pt=(p[1],p[0])
-            print(f'  Corridor width: {_km(n_pt,s_pt):.1f} km at midpoint')
-        raw=json.dumps({str(path['cat_no']):path},separators=(',',':')).encode()
-        print(f'  Size: {len(raw)//1024}KB raw  {len(_gz.compress(raw))//1024}KB gz')
-
-
-def _gt_inst(rec, lat, lon, t):
-    """Instantaneous integrand g(t): |umbra radius| - axis distance at a single
-    time t (fundamental-plane units; >0 inside totality at that instant). This is
-    the inner function the (deleted) _cone_depth maximised over time."""
-    X, _, Y, _, d_r, mu, dt_s, L1, L2 = bstate(rec, t)
-    xi, eta, zeta, rho1 = _geo_to_fund(lat, lon, d_r, mu, dt_s)
-    if zeta is None or zeta <= 0:
-        return -9.9
-    return abs(L2 - zeta * rec['tan_f2']) - math.hypot(xi - X, (eta - Y) / rho1)
-
-
-def dep_local(rec, lat, lon, tseed, H):
-    """LOCAL-in-time depth: climb from tseed (the centreline point's own central
-    time) to the nearest local maximum of g(t), and return it. This tracks the
-    shadow's SINGLE passage over (lat,lon) and ignores any other leg of a near-pole
-    loop (total at a far-removed time). It equals the global ever-total max on every
-    non-self-approaching track (verified identical to the global ever-total max on normal and pole
-    eclipses), and recovers the inner limit on looping tracks where the global max
-    fuses the two legs and drops it.
-
-    Below-horizon plateau escape: _gt_inst returns a -9.9 sentinel wherever the
-    ground point is below the horizon at t. If tseed lands on that plateau the
-    hill-climb is blind (flat field) and the old code returned -9.9 — reading
-    "never total" for points that ARE inside totality, just after their local
-    sunrise (or before local sunset). The perpendicular march then truncated on
-    the seed-time terminator instead of the true envelope, up to ~100+ km short
-    at sunrise/sunset path ends, and the exact green-tip splice drew a kink
-    (2033-03-30, 2021-12-04, 2039-12-15, ... — 14 eclipses in 2001-2100).
-    Fix: scan in time to the NEAREST above-horizon instant (still this point's
-    own single passage, so the near-pole-loop locality rationale is preserved),
-    then hill-climb from there. Byte-identical whenever f(tseed) > -9."""
-    f = lambda t: _gt_inst(rec, lat, lon, t)
-    t = tseed; fc = f(t)
-    if fc <= -9.0:
-        tmn, tmx = rec['tmin'], rec['tmax']
-        found = None; n = 1
-        while True:
-            tp = tseed + n*H; tm = tseed - n*H
-            cand = []
-            if tp <= tmx and f(tp) > -9.0: cand.append(tp)
-            if tm >= tmn and f(tm) > -9.0: cand.append(tm)
-            if cand:
-                found = min(cand, key=lambda x: abs(x - tseed)); break
-            if tp > tmx and tm < tmn: break
-            n += 1
-        if found is None: return fc
-        t = found; fc = f(t)
-    fr = f(t + H); fl = f(t - H)
-    d = 1 if (fr >= fc and fr >= fl) else (-1 if fl > fc else 0)
-    if d:
-        n = 0
-        while n < 400:                       # climb to this passage's local peak
-            nt = t + d * H; nf = f(nt)
-            if nf <= fc: break
-            t, fc = nt, nf; n += 1
-    a, b = t - H, t + H                       # refine the peak (ternary)
-    for _ in range(20):
-        m1 = a + (b - a) / 3; m2 = b - (b - a) / 3
-        if f(m1) < f(m2): a = m1
-        else: b = m2
-    return f((a + b) / 2)
+    failures = 0
+    for key in cases:
+        label = '%d-%02d-%02d' % key
+        rec = recs.get(key)
+        if rec is None:
+            print(f'{label}: FAIL  not found in {data_dir}'); failures += 1; continue
+        path = build_path(rec)
+        un, us = flat(path['umbra_n']), flat(path['umbra_s'])
+        ge = path['ge']
+        ge_off = km(ge, (rec['lng_dd_ge'], rec['lat_dd_ge']))
+        width = (min(km(ge, q) for q in un) + min(km(ge, q) for q in us)) if un and us else 0.0
+        checks = [
+            ('centreline',                  bool(path['centreline'])),
+            ('both umbral limits',          bool(un and us)),
+            ('traced limits valid',         umbral_limits_valid(*umbral_limits_field(rec), True)),
+            ('GE within 1 km of catalogue', ge_off < 1.0),
+            ('width within 5% of catalogue', abs(width - rec['path_width']) <= 0.05 * rec['path_width']),
+        ]
+        bad = [name for name, ok in checks if not ok]
+        failures += bool(bad)
+        print(f'{label} {rec["eclipse_type"]}: {"FAIL  " + ", ".join(bad) if bad else "PASS"}'
+              f'   GE off {ge_off * 1000:.0f} m   width {width:.1f} km (catalogue {rec["path_width"]})'
+              f'   centreline {len(flat(path["centreline"]))} pts   umbra {len(un)}/{len(us)} pts')
+    print('All tests pass' if not failures else f'{failures} test(s) FAILED')
+    if failures: raise SystemExit(1)
 
 
 def _split_at_pole(segs):
@@ -3383,151 +2879,5 @@ def _split_at_pole(segs):
     return out
 
 
-def _terminate_on_green(segs, termini):
-    """Complete each umbral limb at its analytically-exact green-line tip.
-
-    At every tip the umbra edge goes tangent — magnitude→1 and sun-altitude→0
-    simultaneously — so the iterative perpendicular march degenerates and stops a
-    sample-step or more short of the corner, sometimes curling inward. Each tip is
-    already computed exactly as a _GREEN_TERMINI point (magnitude=1 ∩ horizon).
-    So truncate the degenerate tail at the limb's closest approach to its tip and
-    append the exact tip. Gated by the limb's OWN median sampling step (its
-    resolution) — no absolute constant. Fires wherever the march stops more than
-    one sample short of the exact corner: this corrects the previously-known ~1%
-    terminus shortfall on EVERY central eclipse (verified to bring non-loop limb
-    ends from 18-25 km short to 0-1 km of baseline truth), and removes the inward curl on
-    near-pole loops, in one rule.
-
-    All distances are great-circle: a limb that crosses the antimeridian has its
-    endpoint and that endpoint's true terminus ~360° apart in raw longitude, so a
-    planar metric would match the end to the FAR terminus, place the closest
-    approach at the opposite end, and truncate the whole limb. The spherical
-    metric matches each end to its genuine tip regardless of the seam."""
-    if not termini: return segs
-    def gc(p, q):                                     # p, q are [lon, lat]
-        return _gc_dist((p[1], p[0]), (q[1], q[0]))
-    out = []
-    for seg in segs:
-        if len(seg) < 4:
-            out.append(seg); continue
-        steps = sorted(gc(seg[i], seg[i+1]) for i in range(len(seg)-1))
-        res = steps[len(steps)//2] if steps else 0.0
-        seg = list(seg)
-        for trailing in (True, False):
-            anchor = seg[-1] if trailing else seg[0]
-            T = min(termini, key=lambda t: gc(anchor, t))
-            ki = min(range(len(seg)), key=lambda i: gc(seg[i], T))
-            # A terminus completes only the end on whose SIDE it falls: its closest
-            # approach to the limb must lie on this end's half. A terminus nearer
-            # the opposite end — or no terminus at this end at all, as when an umbra
-            # lifts off mid-disc rather than at a horizon tangency — is not this
-            # end's, and truncating to it would gut the limb. (Great-circle metric
-            # above handles the antimeridian; this handles which end owns the tip.)
-            if trailing and ki < len(seg) // 2: continue
-            if (not trailing) and ki > len(seg) // 2: continue
-            if gc(seg[ki], T) <= res:
-                continue                              # already at the tip
-            P = [round(T[0], 5), round(T[1], 5)]
-            seg = (seg[:ki+1] + [P]) if trailing else ([P] + seg[ki:])
-        out.append(seg)
-    return out
-
-
-def perpendicular_limits(rec, centreline, times, accept_deg=20.0):
-    """Umbral N/S limits as the depth=0 locus, found by marching perpendicular to
-    the (reliable) centreline until the depth field crosses zero. The depth is the
-    LOCAL-IN-TIME peak (dep_local) seeded at each centreline point's own central
-    time, so a near-pole loop's far leg cannot fuse in and erase the inner limit.
-    ALL geometry is done with 3D unit vectors, so there is no lat/lon singularity
-    at the pole and no antimeridian seam: one method for total / annular / hybrid /
-    grazing / pole / near-pole-loop. At a hybrid pinch both limits converge to the
-    centreline; at the pole the march is an ordinary great-circle rotation; grazing
-    yields one limb (the other never clears the horizon).
-    Returns (north_segs, south_segs)."""
-    D2R = math.pi / 180.0; Rk = 6371.0
-    H = (rec['tmax'] - rec['tmin']) / 2000.0
-    def V(lat, lon):
-        la = lat * D2R; lo = lon * D2R; c = math.cos(la)
-        return (c * math.cos(lo), c * math.sin(lo), math.sin(la))
-    def LL(v):
-        return (math.degrees(math.asin(max(-1.0, min(1.0, v[2])))),
-                math.degrees(math.atan2(v[1], v[0])))
-    def nrm(v):
-        m = math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
-        return (v[0]/m, v[1]/m, v[2]/m) if m > 1e-15 else None
-    def crs(a, b):
-        return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
-    def dot(a, b): return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
-    def axpy(s, a, b): return (s*a[0]+b[0], s*a[1]+b[1], s*a[2]+b[2])   # s*a + b
-    def scl(s, a): return (s*a[0], s*a[1], s*a[2])
-    def _dep(la, lo, t): return dep_local(rec, la, lo, t, H)
-    def march(P, Dir, t, maxkm=600.0, step=10.0):
-        la0, lo0 = LL(P)
-        if _dep(la0, lo0, t) <= 0: return P         # pinch: limit is on the centreline
-        prev = P; dist = 0.0
-        while dist < maxkm:
-            dist += step; th = dist / Rk
-            Q = axpy(math.cos(th), P, scl(math.sin(th), Dir))   # rotate P toward Dir
-            la, lo = LL(Q)
-            if _dep(la, lo, t) <= 0:
-                a3, b3 = prev, Q
-                for _ in range(20):                 # bisection on the great circle
-                    m = nrm(axpy(1.0, a3, b3))
-                    lam, lom = LL(m)
-                    if _dep(lam, lom, t) > 0: a3 = m
-                    else: b3 = m
-                return a3
-            prev = Q
-        return None
-    cl = centreline
-    if len(cl) < 7: return [], []
-    Pc = [V(p[1], p[0]) for p in cl]                # centreline as unit vectors
-    left = []; right = []
-    for i in range(len(cl)):
-        t = times[i] if i < len(times) else times[-1]
-        P = Pc[i]; Pa = Pc[max(0, i-3)]; Pb = Pc[min(len(cl)-1, i+3)]
-        T = nrm(axpy(-1.0, Pa, Pb))                 # chord Pb - Pa (forward tangent)
-        if T is not None: T = nrm(axpy(-dot(T, P), P, T))   # project into tangent plane
-        Lh = nrm(crs(P, T)) if T is not None else None      # left perpendicular
-        if Lh is None:
-            left.append(None); right.append(None); continue
-        for Dir, acc in ((Lh, left), (scl(-1.0, Lh), right)):
-            M = march(P, Dir, t)
-            if M is None:
-                acc.append(None); continue
-            la, lo = LL(M)
-            acc.append((lo, la) if _cone_sun_alt(rec, la, lo) >= 0.0 else None)
-    def runs(side):                                 # split at below-horizon gaps
-        out = []; cur = []
-        for pt in side:
-            if pt is None:
-                if len(cur) >= 3: out.append(cur)
-                cur = []
-            else: cur.append(pt)
-        if len(cur) >= 3: out.append(cur)
-        return out
-    def smooth(c, w=4):                             # denoise in 3D: no seam, no pole
-        if len(c) < 2*w + 2: return c
-        vs = [V(p[1], p[0]) for p in c]
-        out = [c[0]]
-        for i in range(1, len(vs)-1):
-            lo_ = max(0, i-w); hi = min(len(vs), i+w+1)
-            sx = sum(vs[j][0] for j in range(lo_, hi))
-            sy = sum(vs[j][1] for j in range(lo_, hi))
-            sz = sum(vs[j][2] for j in range(lo_, hi))
-            la, lo = LL(nrm((sx, sy, sz)))
-            out.append((lo, la))
-        out.append(c[-1])
-        return out
-    left_segs = [smooth(r) for r in runs(left)]
-    right_segs = [smooth(r) for r in runs(right)]
-    def mlat(segs):
-        pts = [p for s in segs for p in s]
-        return sum(p[1] for p in pts) / len(pts) if pts else -999.0
-    return (left_segs, right_segs) if mlat(left_segs) >= mlat(right_segs) else (right_segs, left_segs)
-
-
 if __name__=='__main__':
-    import sys
-    if '--test' in sys.argv: run_tests()
-    else: main()
+    main()

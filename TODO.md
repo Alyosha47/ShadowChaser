@@ -972,7 +972,8 @@ In order, and **report what you measure before writing any code**:
   generator `2026-09-18b`** — one engine for every central eclipse, and the 13 end-pinning fallbacks
   fixed with it (HANDOFF §9.5 "ONE ENGINE").
 - **N/S naming** — SETTLED 2026-09-18, no change (HANDOFF §9.5).
-- **ONE final regeneration with `18d` — READY.** (`18c` run stopped: 3 thin-hybrid fallbacks, fixed.) Expect zero `FIELD FALLBACK`; if so,
+- ~~**ONE final regeneration with `18d`**~~ **DONE 2026-09-19, verified, deploying. NO FURTHER REGENERATIONS (user's ruling).** Old-route code deleted 2026-09-19 (output byte-identical).
+- ~~**Generator `--test` is stale**~~ **FIXED 2026-09-19**: loads 2017-08-21, 1999-08-11, 1994-11-03 from `data/besselian` and asserts centreline, both limits, traced-limit validity, GE within 1 km and width within 5% of the catalogue; exits 1 on failure. Expect zero `FIELD FALLBACK`; if so,
   delete the fallback route afterwards (no output change, no rerun). Any fallback it reports is a
   new case to diagnose.
 - ~~**Old-frame helpers**~~ **DONE 2026-09-18 in `18c`** (umbra ovals now exact; `_despur_segment` no

@@ -3111,6 +3111,25 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-19b** — **Generator cleanup, output byte-identical** (35 eclipses of every class, before vs
+  after). Removed the dead old umbral route: `perpendicular_limits`, `dep_local`, `_gt_inst`,
+  `_terminate_on_green`, `_despur_segment`, `_umbral_limb_endpoints`, `_cone_sun_alt`, `_round_coords`,
+  the green-termini polish, the umbra-pair walker; `FIELD_FALLBACKS` replaced by printed warnings
+  (UMBRAL LIMITS FAILED / INVALID). Kept `_geo_to_fund` and `_max_magnitude`: `obscuration_countries.py`
+  and `central_countries.py` import them. Deleted `splice_umbral_limits.py` (retired by its own terms).
+  Header credits followtheshadow.com; no HANDOFF/Jubier references in the file. pyflakes clean.
+  GEN_VERSION left at `2026-09-18d` because the output is unchanged. `--test` rewritten the same day: it
+  loads its three totals from `data/besselian` (the hand-typed copies lacked `tan_f1`/`tan_f2`) and now
+  asserts (centreline, both limits, traced-limit validity, GE < 1 km and width within 5% of the
+  catalogue), exiting 1 on failure. Run: `python3 "data build tools/gen_eclipse_paths.py" --test`.
+- **2026-09-19a** — **FINAL path regeneration (`18d`, commit 4160f5d) verified and approved for deploy; the
+  user has ruled NO FURTHER REGENERATIONS.** Zero FIELD FALLBACK. `check_regen.py` vs the live deployed
+  set (downloaded; run in 5-chunk batches — the full set OOMs a 3 GB sandbox): no structure issues (only
+  the expected 3-piece hybrid limbs); vs Jubier, every one of 53 references improved (umbra median
+  2–26 m, was 40–3,089 m). Tolerance tables in `index.html` and the manual rewritten to medians (centreline
+  ~5 m, umbra ~5 m, polar grazers ~10 m, penumbra ~0.6 km, terminators ~60 m) with a worst-case note.
+  Known and accepted: ≤ ~0.2 km chord sagitta on tightly curved grazing limbs (10 km vertex spacing).
+  BUILD 2026-09-19a. Next (no output change): delete the dead old-route code (§9.5).
 - **2026-09-18d** — **Generator `2026-09-18d`**: thin-hybrid fixes (pinch join along the centreline;
   width-bounded probes in `_umb_correct` and the tracer's first step). The `18c` run was stopped at the
   first three FIELD FALLBACKs (all this class). §9.5.
