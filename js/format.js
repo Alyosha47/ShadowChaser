@@ -44,6 +44,9 @@ function fmtLocalAnchored(h, off, anchor) {
 
 function fmtDur(s) {
   if (!s || s <= 0) return '--';
+  /* Under 10 s, tenths: a 0.4 s totality rounded to "0s" read as none at all,
+     while its C2 and C3, each rounded to the second, looked 1 s apart. */
+  if (s < 10) return s.toFixed(1) + 's';
   var m   = Math.floor(s / 60);
   var sec = Math.round(s % 60);
   return m > 0 ? m + 'm\u2009' + pad(sec) + 's' : sec + 's';

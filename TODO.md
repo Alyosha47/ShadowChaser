@@ -1,3 +1,17 @@
+- **Contact times print whole seconds** so a 0.4 s totality shows C2/C3 1 s apart (durations already show
+  tenths under 10 s). Show tenths on contacts when the event is under ~10 s.
+- **More Jubier KMZs wanted** for classes with no reference: thin hybrids (1804-02-11, 1894-04-06),
+  near-hybrid totals (2068-05-31, 1695-12-06), one-limit grazers (890-02-23, 2485-12-07), 20–25 km
+  corridors (1722-12-08, 1498-06-19).
+- **BLOCKER for deleting `data/paths/`: `test_tshirt.js` and `test_favorability.js` read path files from it
+  as fixtures** (test_tshirt: paths_2001_2100, paths_101_200 and others). Switch them to computing their
+  paths with `js/pathgen.js` first, run the suites in the container, THEN delete the folder.
+- **Paths on the device — deployed? then delete `data/paths/`.** After the user confirms BUILD `2026-09-20a`
+  works live, remove `data/paths/` from the repo. Then retire or re-point the two tools that read it:
+  `data build tools/check_regen.py` and `validate_paths.py` (validate against `js/pathgen.js` output,
+  run in the container). HANDOFF §9.6.
+- **Equal-magnitude curves** (offered, not built): same field + tracer; verify against the 24 Jubier KMZs
+  that carry 0.2/0.4/0.6/0.8 N/S curves. HANDOFF §9.6.
 # ShadowChaser — TODO (the single task list)
 
 ## What this file is — and how it relates to the handoff

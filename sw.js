@@ -3,12 +3,11 @@
 // The app must work with no signal in a field, so the strategy is:
 //   • CORE — app shell, map engine, fonts, basemap vectors. Precached on
 //     install, fetched fresh, and nothing runs without it.
-//   • DATA — Besselian elements for every century plus the two nearest path
-//     centuries. Precached best-effort, second in line so the first paint
-//     never waits on 20 MB of eclipse paths.
+//   • DATA — Besselian elements for every century (every eclipse path is
+//     computed from them on the device, js/pathgen.js) and the cloud climatology.
+//     Precached best-effort, second in line so the first paint never waits.
 //   • Everything else same-origin is cached ON DEMAND as it is used — relief
-//     tiles, other path centuries. "Plan at home online, navigate offline in
-//     the field."
+//     tiles. "Plan at home online, navigate offline in the field."
 //
 // Cache name carries BUILD, so a bump replaces the whole set atomically and
 // the activate handler deletes every older cache.
@@ -54,7 +53,11 @@ const CORE = [
       /* The favorability score layer. It reads Cloud.sampleAt, so it loads after
          cloud-average.js in index.html — and it must be precached, or it is
          missing offline, which is exactly where a field user wants it. */
-      'favorability','favorability-ui'].map(n => `js/${n}.js`),
+      'favorability','favorability-ui',
+      /* The path engine: paths are computed on the device from the Besselian
+         data below, so every eclipse has its path offline. pathgen-worker.js is
+         not a <script> tag (it is started as a Web Worker by paths.js). */
+      'pathgen','pathgen-worker','paths'].map(n => `js/${n}.js`),
   /* The map engine. These were MISSING: the app moved from Cesium to MapLibre
      but the precache list didn't, so ~1.9 MB of engine was only ever cached
      opportunistically after first use — a fresh install that went offline
@@ -94,7 +97,7 @@ const BESSELIAN = [
    total. The layer fetches at most 16 of them for a given date, but which 16
    depends on the eclipse the user picks in the field, so precaching a subset
    would mean the layer works for some eclipses offline and not others — worse
-   than either extreme. 3.3 MB is a sixth of what the two path centuries cost.
+   than either extreme (3.3 MB).
    DATA, never CORE: a missing month degrades to its neighbour (see cloud-average.js),
    so a failure here must not fail the install. */
 const CLOUD = [];
@@ -104,8 +107,6 @@ for (let m = 1; m <= 12; m++)
 
 const DATA = [
   ...BESSELIAN,
-  'data/paths/paths_1901_2000.json.gz',
-  'data/paths/paths_2001_2100.json.gz',
   ...CLOUD,
 ];
 
@@ -171,7 +172,7 @@ self.addEventListener('install', e => {
     await self.skipWaiting();
 
     // 3) Field data. Immutable, throttled, and last so the first paint never
-    //    waits on 20 MB of eclipse paths.
+    //    waits on it.
     const ok = await precache(c, DATA, 'default', 4);
     console.log(`[SW] ${CACHE}: shell + ${ok}/${DATA.length} data files cached`);
   })());
@@ -231,7 +232,7 @@ self.addEventListener('fetch', e => {
   }
 
   // Cache-first; cache-on-demand for everything same-origin (relief tiles,
-  // Workers/Assets, besselian/paths outside the field range). Offline misses fail quietly.
+  // Workers/Assets, besselian outside the field range). Offline misses fail quietly.
   e.respondWith(
     caches.match(req, { ignoreSearch: true }).then(hit => {
       if (hit) return hit;

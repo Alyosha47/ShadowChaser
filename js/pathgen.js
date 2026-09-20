@@ -1,4 +1,25 @@
 /* pathgen.js — eclipse path generator (JavaScript port of gen_eclipse_paths.py) */
+/* pathgen.js — Follow the Shadow — https://followtheshadow.com
+ *
+ * Computes a solar eclipse's complete path from its Besselian elements, on the
+ * device: centreline, umbral limits (N/S), umbral ovals, penumbral limits,
+ * sunrise/sunset terminator curves, the maximum-on-horizon ("green") curve and
+ * greatest eclipse. The output is the path record the app draws.
+ *
+ * Method: every limit is the zero contour of a continuous field over the Earth
+ * (e.g. "deepest umbral immersion this point ever gets"), traced by one contour
+ * tracer; hybrid pinches, horizon ends and grazing limbs fall out of the same
+ * method. A JavaScript port of gen_eclipse_paths.py (generator 2026-09-18d),
+ * verified against its output for all 11,898 eclipses, then improved.
+ *
+ *   PathGen.eclipse_path(rec) -> path          (rec: one Besselian record)
+ *   PathGen.VERSION                            (bump when output changes: it keys the device cache)
+ *
+ * Runs in a Web Worker (pathgen-worker.js) or on the main thread.
+ */
+(function (root) {
+'use strict';
+var PATHGEN_VERSION = '2026-09-20c';
 
 /* Python's round(x, n): correctly rounded, exact ties to even. */
 function pyround(x, n) {
@@ -57,7 +78,6 @@ function unwrap(pts, lat_thresh, lon_jump, pole_lat) {
 /* umbral.js — prototype port of gen_eclipse_paths.py's umbral_limits_field.
    Faithful line-by-line translation; Python semantics made explicit:
    pmod() = Python %, and every tuple/None check spelled out. */
-'use strict';
 
 var DEG = Math.PI / 180;
 var E2 = 2.0 / 298.257223563 - Math.pow(1.0 / 298.257223563, 2);
@@ -215,10 +235,11 @@ function umbral_pts(rec, t) {
 function trace_zero(field, seed, o) {
   o = o || {};
   var step_km = o.step_km !== undefined ? o.step_km : 30.0, maxpts = o.maxpts !== undefined ? o.maxpts : 3000;
-  var min_km = o.min_km !== undefined ? o.min_km : 4.0, max_turn = 12.0;
-  var width = o.width || null, min_width = o.min_width || 0.0;
+  var min_km = o.min_km !== undefined ? o.min_km : 4.0, max_turn = o.max_turn !== undefined ? o.max_turn : 12.0;
+  var width = o.width || null, min_width = o.min_width || null;   /* (la, lo) -> km, or null */
+  var side = o.side || null;          /* (la, lo) -> which side of the shadow's track; must not change */
   var tol = o.tol !== undefined ? o.tol : 1e-6, accept = o.accept !== undefined ? o.accept : 2e-5;
-  var PROBE = 2000.0, pr = PROBE;
+  var PROBE = o.probe_m !== undefined ? o.probe_m : 2000.0, pr = PROBE;   /* gradient probe, metres */
   function gc_km(la1, lo1, la2, lo2) {
     var h = Math.pow(Math.sin((la2 - la1) * DEG / 2), 2) + Math.cos(la1 * DEG) * Math.cos(la2 * DEG) * Math.pow(Math.sin((lo2 - lo1) * DEG / 2), 2);
     return 6371.0 * 2.0 * Math.asin(Math.min(1.0, Math.sqrt(Math.abs(h))));
@@ -254,6 +275,7 @@ function trace_zero(field, seed, o) {
   }
   function one(sign) {
     var la = seed[0], lo = seed[1], prevb = null, out = [], step = step_km, last = step_km;
+    var my_side = side ? side(la, lo) : null;
     if (width) pr = Math.min(PROBE, 250.0 * width(la, lo, 1.0 / R_EARTH_M));
     var closed = false, walked = 0.0, hw = 0;
     for (var k = 0; k < maxpts; k++) {
@@ -267,7 +289,7 @@ function trace_zero(field, seed, o) {
       }
       if (width) {
         hw = width(la, lo, g);
-        if (hw < min_width) break;
+        if (min_width && hw < min_width(la, lo)) break;         /* beside a hybrid's pinch */
         var cap = 0.3 * hw;
         if (turn) cap = Math.max(cap, Math.sqrt(0.6 * hw * last / (turn * DEG)));
         step = Math.max(0.05, Math.min(step, cap));
@@ -277,6 +299,12 @@ function trace_zero(field, seed, o) {
       var cr = correct(p2[0], p2[1]);
       if (!cr[2]) break;
       var la2 = cr[0], lo2 = cr[1];
+      /* A step that lands on the other limb is too long for this corridor
+         (it narrows during the step, near a pinch): halve it and retry. */
+      if (side && side(la2, lo2) !== my_side) {
+        if (step <= 0.05) break;
+        step = Math.max(0.05, step * 0.5); prevb = null; k--; continue;
+      }
       walked += step;
       if (walked > 10.0 * step_km &&
           (width ? seg_km(la, lo, la2, lo2, seed) < Math.min(0.75 * step, 0.5 * hw)
@@ -463,7 +491,19 @@ function umbral_limits_field(rec) {
     return Math.abs(b[8] - z * rec.tan_f2) / g / 1000.0;
   }
   var pinches = umb_pinches(rec), comps = [], sides = {};
+  /* Where a corridor thinner than PINCH_HW_KM ends the trace: beside a pinch,
+     where it truly closes (the limb is then joined to the pinch point), and
+     below the horizon, where nothing is drawn. A sunlit thin corridor is traced
+     to its end: a near-hybrid total narrows to tens of metres at the horizon
+     without closing, and stopping there left its limits short of the horizon
+     (985-07-20: 4 km); tracing on into the night crawled for 20,000 steps. */
+  function near_pinch_width(la, lo) {
+    for (var i = 0; i < pinches.length; i++)
+      if (gc_dist([la, lo], [pinches[i][0], pinches[i][1]]) < PINCH_JOIN_KM * 1e3) return PINCH_HW_KM;
+    return umb_depth(rec, la, lo, st.t)[2] <= 0 ? PINCH_HW_KM : 0.0;
+  }
   function side_at(la, lo) { var ts = umb_depth(rec, la, lo)[1]; return umb_side(rec, la, lo, ts) > 0; }
+  function side_here(la, lo) { var ts = umb_depth(rec, la, lo, st.t)[1]; return umb_side(rec, la, lo, ts) > 0; }
   function traced(la, lo, d_m) {
     var near = [];
     comps.forEach(function (cc, k) { cc[0].forEach(function (q, j) { near.push([gc_dist([la, lo], [q[1], q[0]]), k, j]); }); });
@@ -484,7 +524,7 @@ function umbral_limits_field(rec) {
     if (c === null || traced(c[0], c[1], 3 * step_km * 1e3)) return;
     st.a = null;
     var tr = trace_zero(field, c, { step_km: step_km, min_km: 1.0, maxpts: UMB_MAXPTS, width: width,
-      min_width: PINCH_HW_KM, tol: 1e-10, accept: 1e-9 });
+      min_width: near_pinch_width, side: side_here, tol: 1e-10, accept: 1e-9 });
     if (tr[0].length >= 3) comps.push(tr);
   });
 
@@ -530,14 +570,27 @@ function umbral_limits_field(rec) {
     });
   });
 
+  /* A limb that stopped beside a pinch (PINCH_HW_KM) is continued to it along
+     the centreline: in that zone the limb is within PINCH_HW_KM of it, closing
+     to 0 at the pinch. Both limbs reaching a pinch from the same side use the
+     SAME centreline points (a fixed ~2 km grid from the pinch), so there they
+     coincide exactly; sampled separately, two chords of one curve crossed. */
+  var FILL_KM = 2.0;
+  function pinch_fill(pl, po, tp, te) {
+    var dir = te > tp ? 1 : -1, c0 = centreline_pt(rec, tp), c1 = centreline_pt(rec, tp + dir * 1e-4);
+    if (!c0 || !c1) return [];
+    var dt = dir * 1e-4 * FILL_KM * 1e3 / Math.max(1.0, gc_dist(c0, c1)), out = [];
+    for (var t = tp + dt; (t - te) * dir < 0; t += dt) { var c = centreline_pt(rec, t); if (c) out.push([c[1], c[0]]); }
+    return out;                                   /* ordered away from the pinch */
+  }
   north.concat(south).forEach(function (arc) {
     [0, -1].forEach(function (k) {
       var e = k === 0 ? arc[0] : arc[arc.length - 1], lo = e[0], la = e[1];
       for (var pi = 0; pi < pinches.length; pi++) {
         var pl = pinches[pi][0], po = pinches[pi][1], tp = pinches[pi][2], d = gc_dist([la, lo], [pl, po]);
-        if (1.0 < d && d < PINCH_JOIN_KM * 1e3) {
-          var te = umb_depth(rec, la, lo)[1], m = Math.floor(d / 5e3), fill = [];
-          for (var jj = 1; jj <= m; jj++) { var c = centreline_pt(rec, te + (tp - te) * jj / (m + 1)); if (c) fill.push([c[1], c[0]]); }
+        if (d <= 1.0) { if (k === 0) arc[0] = [po, pl]; else arc[arc.length - 1] = [po, pl]; break; }  /* snap */
+        if (d < PINCH_JOIN_KM * 1e3) {
+          var fill = pinch_fill(pl, po, tp, umb_depth(rec, la, lo)[1]).reverse();   /* toward the pinch */
           fill.push([po, pl]);
           if (k === 0) Array.prototype.unshift.apply(arc, fill.reverse());
           else Array.prototype.push.apply(arc, fill);
@@ -566,26 +619,34 @@ function green_curve(rec) {
       if (r1[0] < r2[0]) { b = m2; bz = r1[1]; bdist = r1[0]; }
       else { a = m1; bz = r2[1]; bdist = r2[0]; }
     }
-    return [Math.asin(clamp(bz, -1.0, 1.0)) / DEG, bdist];
+    return [Math.asin(clamp(bz, -1.0, 1.0)) / DEG, bdist, (a + b) / 2];
   }
-  var PEN = Math.abs(bstate(rec, (tmin + tmax) / 2.0)[7]) * 1.005;
+  /* inside the penumbra at its moment of maximum: this point sees an eclipse at all */
+  function seen(lat, lon) {
+    var f = field(lat, lon), b = bstate(rec, f[2]), z = fund_true(lat, lon, b[4], b[5], b[6])[2];
+    return f[1] < b[7] - z * rec.tan_f1;
+  }
   function grad(lat, lon) {
     var h = 0.02;
     return [(field(lat + h, lon)[0] - field(lat - h, lon)[0]) / (2 * h),
             (field(lat, lon + h)[0] - field(lat, lon - h)[0]) / (2 * h)];
   }
-  function correct(lat, lon) {
-    for (var i = 0; i < 12; i++) {
+  function correct(lat, lon, tight) {
+    /* The target is the sun's altitude in degrees at the point's own maximum:
+       0.003 deg is ~330 m on the ground near the horizon, which is what this
+       curve used to sit from Jubier's. */
+    var goal = tight ? 1e-6 : 1e-5;
+    for (var i = 0; i < (tight ? 40 : 25); i++) {
       var f = field(lat, lon)[0];
-      if (Math.abs(f) < 0.003) return [lat, lon, true];
+      if (Math.abs(f) < goal) return [lat, lon, true];
       var g = grad(lat, lon), g2 = g[0] * g[0] + g[1] * g[1];
       if (g2 < 1e-12) return [lat, lon, false];
       lat -= f * g[0] / g2; lon -= f * g[1] / g2;
     }
-    return [lat, lon, Math.abs(field(lat, lon)[0]) < 0.02];
+    return [lat, lon, Math.abs(field(lat, lon)[0]) < 1e-4];
   }
   function trace(seed) {
-    var step_km = 35.0, maxpts = 4000;
+    var step_km = 20.0, maxpts = 8000;    /* 35 km chords bowed ~110 m off the curve */
     function one_dir(sign) {
       var la = seed[0], lo = seed[1], prevb = null, out = [];
       for (var k = 0; k < maxpts; k++) {
@@ -601,7 +662,21 @@ function green_curve(rec) {
         var c = correct(la + sign * step_km / 111.0 * tla, lo + sign * step_km / 111.0 * tlo);
         if (!c[2]) break;
         var la2 = c[0], lo2 = c[1];
-        if (field(la2, lo2)[1] > PEN) break;
+        if (!seen(la2, lo2)) {
+          /* The curve ends where the eclipse stops being seen at all: on the
+             penumbral limit at the horizon, the same point where the limit and
+             the sunrise/sunset curve meet. Bisect onto it, each trial pulled back
+             onto the curve. (Stopping at a fixed radius one step out overshot
+             by 4-85 km: 2017-08-21.) */
+          var A = [la, lo], B = [la2, lo2];
+          for (var it = 0; it < 30; it++) {
+            var mc = correct((A[0] + B[0]) / 2, A[1] + (pmod(B[1] - A[1] + 180, 360) - 180) / 2, true);
+            if (!mc[2]) break;
+            if (seen(mc[0], mc[1])) A = [mc[0], mc[1]]; else B = [mc[0], mc[1]];
+          }
+          if (A[0] !== la || A[1] !== lo) out.push([A[1], A[0]]);
+          break;
+        }
         out.push([lo2, la2]); prevb = b; la = la2; lo = lo2;
         if (out.length > 5 && Math.abs(la2 - seed[0]) < 0.4 && Math.abs(pmod(lo2 - seed[1] + 180, 360) - 180) < 0.4) break;
       }
@@ -880,13 +955,6 @@ function penumbra_both(rec) {           /* test helper: exactly build_path's seq
   return [f[0], f[1], w[2], w[3]];
 }
 
-/* ── Terminator lemniscates (penumbra ∩ sunrise/sunset line) ───────────── */
-function f2g_term(xi, eta, d_r, mu, dt_s) {
-  var lat_gc = Math.asin(clamp(eta * Math.cos(d_r), -1.0, 1.0));
-  var lat_gd = Math.atan(Math.tan(lat_gc) / Math.sqrt(1.0 - E2));
-  var H = Math.atan2(xi, -eta * Math.sin(d_r)) / DEG;
-  return [lat_gd / DEG, pmod(H - mu + 0.00417807 * dt_s + 180.0, 360.0) - 180.0];
-}
 function term_crossings_at(rec, t) {
   var b = bstate(rec, t), X = b[0], Y = b[2], L1 = b[7], D2 = X * X + Y * Y;
   if (D2 < 1e-18) return null;
@@ -894,149 +962,6 @@ function term_crossings_at(rec, t) {
   if (Math.abs(kd) > 1.0) return null;
   var h = Math.sqrt(Math.max(0.0, 1.0 - kd * kd)), cx = X / D, cy = Y / D, nx = -Y / D, ny = X / D;
   return [cx * kd + nx * h, cy * kd + ny * h, cx * kd - nx * h, cy * kd - ny * h, X, Y, b[4], b[5], b[6], L1];
-}
-function term_tangency_time(rec, t_out, t_in) {
-  var tol = 1e-7;
-  function kd_excess(t) {
-    var b = bstate(rec, t), X = b[0], Y = b[2], L1 = b[7], D = Math.sqrt(X * X + Y * Y);
-    if (D < 1e-18) return -1.0;
-    return Math.abs((D * D + 1.0 - L1 * L1) / (2.0 * D)) - 1.0;
-  }
-  var lo = t_out, hi = t_in;
-  for (var i = 0; i < 60; i++) {
-    var mid = 0.5 * (lo + hi);
-    if (kd_excess(mid) > 0) lo = mid; else hi = mid;
-    if (Math.abs(hi - lo) < tol) break;
-  }
-  return 0.5 * (lo + hi);
-}
-function term_tangent_point(rec, t, polish) {
-  if (polish === undefined) polish = true;
-  var b = bstate(rec, t), X = b[0], Y = b[2], L1 = b[7], D = Math.sqrt(X * X + Y * Y);
-  if (D < 1e-18) return null;
-  var kd = clamp((D * D + 1.0 - L1 * L1) / (2.0 * D), -1.0, 1.0);
-  var ll = f2g_term(X / D * kd, Y / D * kd, b[4], b[5], b[6]);
-  return polish ? rs_exact(rec, t, ll) : ll;
-}
-function gcd_m(A, B) {            /* haversine metres, [lat, lon] */
-  var dla = (B[0] - A[0]) * DEG, dlo = (B[1] - A[1]) * DEG;
-  var h = Math.pow(Math.sin(dla / 2), 2) + Math.cos(A[0] * DEG) * Math.cos(B[0] * DEG) * Math.pow(Math.sin(dlo / 2), 2);
-  return 2.0 * R_EARTH_M * Math.asin(Math.min(1.0, Math.sqrt(Math.abs(h))));
-}
-function rs_exact(rec, t, ll, keep_seed, cap_km) {
-  if (ll === null || ll === undefined) return null;
-  keep_seed = !!keep_seed; if (cap_km === undefined) cap_km = null;
-  var lat = ll[0], lon = ll[1];
-  function accept(la2, lo2) {
-    if (cap_km === null) return [la2, lo2];
-    var dla = (la2 - ll[0]) * DEG, dlo = (lo2 - ll[1]) * DEG;
-    var h = Math.pow(Math.sin(dla / 2), 2) + Math.cos(ll[0] * DEG) * Math.cos(la2 * DEG) * Math.pow(Math.sin(dlo / 2), 2);
-    var moved = 6371.0 * 2.0 * Math.asin(Math.min(1.0, Math.sqrt(Math.abs(h))));
-    if (moved <= cap_km) return [la2, lo2];
-    return keep_seed ? ll : null;
-  }
-  var H = 800.0, r0 = pen_g(rec, lat, lon, t), g0 = r0[0], z0 = r0[1], res = Math.hypot(g0, z0);
-  for (var it = 0; it < 30; it++) {
-    if (Math.abs(z0) < 1e-8 && Math.abs(g0) < 1e-8) return accept(lat, lon);
-    var p, N, S, E, W;
-    p = gc_step(lat, lon, 0.0, H); N = pen_g(rec, p[0], p[1], t);
-    p = gc_step(lat, lon, Math.PI, H); S = pen_g(rec, p[0], p[1], t);
-    p = gc_step(lat, lon, Math.PI / 2, H); E = pen_g(rec, p[0], p[1], t);
-    p = gc_step(lat, lon, -Math.PI / 2, H); W = pen_g(rec, p[0], p[1], t);
-    var a11 = (N[0] - S[0]) / (2 * H), a12 = (E[0] - W[0]) / (2 * H), a21 = (N[1] - S[1]) / (2 * H), a22 = (E[1] - W[1]) / (2 * H);
-    var det = a11 * a22 - a12 * a21;
-    if (Math.abs(det) < 1e-30) break;
-    var dn = (-g0 * a22 + z0 * a12) / det, de = (-z0 * a11 + g0 * a21) / det;
-    var stepm = Math.hypot(dn, de), brg = Math.atan2(de, dn), la2, lo2, g2, z2, r2, found = false;
-    for (var bt = 0; bt < 6; bt++) {
-      var q = gc_step(lat, lon, brg, stepm); la2 = q[0]; lo2 = q[1];
-      var rr = pen_g(rec, la2, lo2, t); g2 = rr[0]; z2 = rr[1]; r2 = Math.hypot(g2, z2);
-      if (r2 < res) { found = true; break; }
-      stepm *= 0.5;
-    }
-    if (!found) break;                                  /* Python for-else */
-    lat = la2; lon = lo2; g0 = g2; z0 = z2; res = r2;
-  }
-  if (Math.abs(z0) < 1e-6 && Math.abs(g0) < 1e-6) return accept(lat, lon);
-  var qq = rs_ring_solve(rec, t, ll);
-  if (qq !== null) return accept(qq[0], qq[1]);
-  return keep_seed ? ll : null;
-}
-function rs_ring_solve(rec, t, ll) {
-  var H = 800.0;
-  function zg(la, lo) { return pen_g(rec, la, lo, t); }
-  function zgrad_brg(la, lo) {
-    var p, zN, zS, zE, zW;
-    p = gc_step(la, lo, 0.0, H); zN = zg(p[0], p[1])[1];
-    p = gc_step(la, lo, Math.PI, H); zS = zg(p[0], p[1])[1];
-    p = gc_step(la, lo, Math.PI / 2, H); zE = zg(p[0], p[1])[1];
-    p = gc_step(la, lo, -Math.PI / 2, H); zW = zg(p[0], p[1])[1];
-    var gN = (zN - zS) / (2 * H), gE = (zE - zW) / (2 * H), m = Math.hypot(gN, gE);
-    return m > 1e-15 ? [Math.atan2(gE, gN), m] : [null, 0.0];
-  }
-  function on_ring(la, lo) {
-    for (var i = 0; i < 10; i++) {
-      var z = zg(la, lo)[1];
-      if (Math.abs(z) < 1e-9) return [la, lo, true];
-      var bm = zgrad_brg(la, lo);
-      if (bm[0] === null) return [la, lo, false];
-      var p = gc_step(la, lo, bm[0], -z / bm[1]); la = p[0]; lo = p[1];
-    }
-    return [la, lo, Math.abs(zg(la, lo)[1]) < 1e-7];
-  }
-  var r0 = on_ring(ll[0], ll[1]);
-  if (!r0[2]) return null;
-  var la0 = r0[0], lo0 = r0[1];
-  function ring_step(la, lo, brg, d_m) {
-    var p = gc_step(la, lo, brg, d_m), r = on_ring(p[0], p[1]);
-    return r[2] ? [r[0], r[1]] : null;
-  }
-  var b0 = zgrad_brg(la0, lo0)[0];
-  if (b0 === null) return null;
-  var tang = b0 + Math.PI / 2, g0 = zg(la0, lo0)[0], best = null, STEPK = 8e3;
-  var signs = [1.0, -1.0];
-  for (var si = 0; si < 2; si++) {
-    var sgn = signs[si], prev = [la0, lo0], pg = g0, samples = [[[la0, lo0], g0]];
-    for (var k = 0; k < 40; k++) {
-      var q = ring_step(prev[0], prev[1], sgn > 0 ? tang : tang + Math.PI, STEPK);
-      if (q === null) break;
-      var qg = zg(q[0], q[1])[0];
-      samples.push([q, qg]);
-      if ((qg < 0.0) !== (pg < 0.0)) { best = [prev, q, pg]; break; }
-      prev = q; pg = qg;
-    }
-    if (best) break;
-    if (samples.length >= 3) {
-      var mi = 1;
-      for (var s = 2; s < samples.length - 1; s++) if (samples[s][1] > samples[mi][1]) mi = s;   /* first max */
-      if (samples[mi][1] > samples[0][1]) {
-        var A2 = samples[mi - 1][0], B2 = samples[mi + 1][0];
-        for (var it = 0; it < 18; it++) {
-          var brg_ab = gc_bearing(A2, B2), d_ab = gcd_m(A2, B2);
-          var m1 = ring_step(A2[0], A2[1], brg_ab, d_ab / 3.0), m2 = ring_step(A2[0], A2[1], brg_ab, 2.0 * d_ab / 3.0);
-          if (m1 === null || m2 === null) break;
-          if (zg(m1[0], m1[1])[0] < zg(m2[0], m2[1])[0]) A2 = m1; else B2 = m2;
-        }
-        if (zg(A2[0], A2[1])[0] > 0.0) {
-          var i0 = Math.max(0, mi - 1);
-          best = [samples[i0][0], A2, samples[i0][1]];
-          if (best[2] > 0.0) best = [samples[0][0], A2, samples[0][1]];
-          break;
-        }
-      }
-    }
-  }
-  if (best === null) return null;
-  var A = best[0], B = best[1], ga = best[2];
-  for (var j = 0; j < 24; j++) {
-    var bab = gc_bearing(A, B), dab = gcd_m(A, B);
-    if (dab < 2.0) break;
-    var M = ring_step(A[0], A[1], bab, dab / 2.0);
-    if (M === null) break;
-    if ((zg(M[0], M[1])[0] < 0.0) === (ga < 0.0)) { A = M; ga = zg(M[0], M[1])[0]; } else B = M;
-  }
-  var gz = zg(A[0], A[1]);
-  return (Math.abs(gz[1]) < 1e-6 && Math.abs(gz[0]) < 1e-5) ? [A[0], A[1]] : null;
 }
 function insert_rs_junctions(rec, term_first, term_last, junctions) {
   function gc_km(a, b) {
@@ -1056,136 +981,109 @@ function insert_rs_junctions(rec, term_first, term_last, junctions) {
   });
 }
 
+/* Sunrise/sunset curves (the "lemniscates"): where the penumbra's edge meets
+   the horizon, traced through time. At any instant the horizon (sun altitude
+   0, geodetic) is exactly a great circle about the sub-solar point, so the
+   meeting points are the roots of ONE function of one angle: the penumbral
+   depth g(theta) going round that circle. g > 0 on one arc, which the two roots
+   bound: branch a where g rises through 0 (increasing theta), branch b where it
+   falls. The two branches meet at a tip exactly when the maximum of g on the
+   circle touches 0, found by bisection in time; the tip is where that maximum
+   lies. (Replaces a 2-D Newton solve that failed as the branches merged, and
+   the rough fallback that then drew 2017-08-21's tips 100 km off, zigzagging.) */
+function horizon_frame(rec, t) {
+  var b = bstate(rec, t);
+  return { t: t, plat: b[4] / DEG, plon: pmod(-b[5] + 0.00417807 * b[6] + 180, 360) - 180 };
+}
+function horizon_pt(F, th) { return gc_step(F.plat, F.plon, th, R_EARTH_M * Math.PI / 2); }
+function horizon_g(rec, F, th) { var p = horizon_pt(F, th); return pen_g(rec, p[0], p[1], F.t)[0]; }
+/* The arc of the horizon inside the penumbra at time F.t: {a, b, m} (radians),
+   or null. `near` = a previous arc to search around (tracking), else a scan. */
+function horizon_arc(rec, F, near) {
+  function g(th) { return horizon_g(rec, F, th); }
+  var m, lo, hi, i;
+  if (near) {
+    var w = Math.max(3 * (near.b - near.a) / 2, 0.01);
+    lo = near.m - w; hi = near.m + w;
+  } else {
+    var N = 1440, best = -Infinity, bi = 0;
+    for (i = 0; i < N; i++) { var v = g(2 * Math.PI * i / N); if (v > best) { best = v; bi = i; } }
+    lo = 2 * Math.PI * (bi - 1) / N; hi = 2 * Math.PI * (bi + 1) / N;
+  }
+  for (i = 0; i < 60 && hi - lo > 1e-13; i++) {             /* golden: the arc's deepest point */
+    var m1 = hi - 0.618033988749895 * (hi - lo), m2 = lo + 0.618033988749895 * (hi - lo);
+    if (g(m1) < g(m2)) lo = m1; else hi = m2;
+  }
+  m = (lo + hi) / 2;
+  if (!(g(m) > 0)) return null;
+  function root(dir) {                                        /* step out from m until g < 0, then bisect */
+    var s = near ? Math.max((near.b - near.a) / 8, 1e-6) : 2 * Math.PI / 1440, inn = m, out = null;
+    for (var k = 0; k < 200; k++) {
+      var th = inn + dir * s;
+      if (Math.abs(th - m) > Math.PI) return null;
+      if (g(th) <= 0) { out = th; break; }
+      inn = th; s *= 1.6;
+    }
+    if (out === null) return null;
+    for (var j = 0; j < 60 && Math.abs(out - inn) > 1e-13; j++) {
+      var mid = (inn + out) / 2;
+      if (g(mid) > 0) inn = mid; else out = mid;
+    }
+    return (inn + out) / 2;
+  }
+  var ra = root(-1), rb = root(+1);
+  if (ra === null || rb === null) return null;
+  return { a: ra, b: rb, m: m };
+}
+
 function terminator_curves(rec, t_first, t_last, step_min) {
-  if (step_min === undefined) step_min = STEP_MIN;
-  var EXT = 1.0, tmin = rec.tmin - EXT, tmax = rec.tmax + EXT, tstep = step_min / 60.0;
-  var runs = [], cur = [], t = tmin;
-  while (t <= tmax + 1e-9) {
-    var r = term_crossings_at(rec, t);
-    if (r !== null) cur.push([t].concat(r));
-    else if (cur.length) { runs.push(cur); cur = []; }
-    t += tstep;
+  var EXT = 1.0, tmin = rec.tmin - EXT, tmax = rec.tmax + EXT, i;
+  /* 1. Where, roughly, the penumbra meets the horizon at all (fundamental plane). */
+  var runs = [], cur = null, dt0 = 1 / 60;
+  for (var t = tmin; t <= tmax + 1e-9; t += dt0) {
+    if (term_crossings_at(rec, t) !== null) { if (!cur) cur = [t, t]; cur[1] = t; }
+    else if (cur) { runs.push(cur); cur = null; }
   }
-  if (cur.length) runs.push(cur);
+  if (cur) runs.push(cur);
   if (!runs.length) return [[], []];
-  function tip_densify(t_far, t_tan, polish) {
-    var n = 24; if (polish === undefined) polish = true;
-    var out = [];
-    for (var k = 1; k <= n; k++) {
-      var frac = k / (n + 1), biased = 1.0 - Math.pow(1.0 - frac, 2), t_s = t_far + (t_tan - t_far) * biased;
-      var rr = term_crossings_at(rec, t_s);
-      if (rr === null) continue;
-      var pa = f2g_term(rr[0], rr[1], rr[6], rr[7], rr[8]), pb = f2g_term(rr[2], rr[3], rr[6], rr[7], rr[8]);
-      if (polish) { pa = rs_exact(rec, t_s, pa); pb = rs_exact(rec, t_s, pb); }
-      out.push([pa ? [pa[1], pa[0]] : null, pb ? [pb[1], pb[0]] : null]);
+  var MAX_KM = 30.0, MIN_KM = 10.0, DT_MIN = 1e-7;
+  function km(p, q) { return gc_dist(p, q) / 1000; }
+  var loops = [];
+  runs.forEach(function (run) {
+    /* 2. Exactly: start inside the run, walk both ways in time, tracking the arc. */
+    var t0 = (run[0] + run[1]) / 2, A0 = horizon_arc(rec, horizon_frame(rec, t0), null);
+    if (!A0) {                                                 /* try the whole rough run */
+      for (var tt = run[0]; tt <= run[1] && !A0; tt += dt0) { A0 = horizon_arc(rec, horizon_frame(rec, tt), null); if (A0) t0 = tt; }
+      if (!A0) return;
     }
-    return out;
-  }
-  function trim_tail(run_, kd_thresh) {
-    if (!run_.length) return [];
-    for (var i = run_.length - 1; i >= 0; i--) {
-      var X = run_[i][5], Y = run_[i][6], L1 = run_[i][10], D = Math.sqrt(X * X + Y * Y);
-      if (Math.abs((D * D + 1.0 - L1 * L1) / (2.0 * D)) <= kd_thresh) return run_.slice(0, i + 1);
-    }
-    return [];
-  }
-  var KD_THRESH = 0.99, loops = [];
-  runs.forEach(function (run_orig) {
-    var after_tail = trim_tail(run_orig, KD_THRESH);
-    var after_head = trim_tail(after_tail.slice().reverse(), KD_THRESH).reverse();
-    var run = after_head.length >= 2 ? after_head : run_orig;
-    var t_first_samp = run[0][0], t_last_samp = run[run.length - 1][0];
-    var t_start_tan = null, tip_start = null, t_end_tan = null, tip_end = null;
-    var t_prev_start = run_orig[0][0] - tstep;
-    if (t_prev_start >= tmin - 1e-12 && term_crossings_at(rec, t_prev_start) === null) {
-      t_start_tan = term_tangency_time(rec, t_prev_start, run_orig[0][0]); tip_start = term_tangent_point(rec, t_start_tan);
-    }
-    var t_next_end = run_orig[run_orig.length - 1][0] + tstep;
-    if (t_next_end <= tmax + 1e-12 && term_crossings_at(rec, t_next_end) === null) {
-      t_end_tan = term_tangency_time(rec, t_next_end, run_orig[run_orig.length - 1][0]); tip_end = term_tangent_point(rec, t_end_tan);
-    }
-    function branch_pt(ti, branch) {
-      var rr = term_crossings_at(rec, ti);
-      if (rr === null) return null;
-      return branch === 'a' ? rs_exact(rec, ti, f2g_term(rr[0], rr[1], rr[6], rr[7], rr[8]))
-                            : rs_exact(rec, ti, f2g_term(rr[2], rr[3], rr[6], rr[7], rr[8]));
-    }
-    function pinch_edge(t_good, t_bad, branch) {
-      var best = null;
-      for (var i = 0; i < 14; i++) {
-        var tm = 0.5 * (t_good + t_bad), p = branch_pt(tm, branch);
-        if (p) { t_good = tm; best = p; } else t_bad = tm;
-      }
-      return best;
-    }
-    function pinch_ladder(t_far, t_bad, branch) {
-      var tip = pinch_edge(t_far, t_bad, branch);
-      return tip ? [[tip[1], tip[0]]] : [];
-    }
-    var res_a = [], res_b = [];
-    run.forEach(function (s) {
-      res_a.push([s[0], rs_exact(rec, s[0], f2g_term(s[1], s[2], s[7], s[8], s[9]), true, 60.0)]);
-      res_b.push([s[0], rs_exact(rec, s[0], f2g_term(s[3], s[4], s[7], s[8], s[9]), true, 60.0)]);
-    });
-    var curve_a = [], curve_b = [];
-    [[res_a, curve_a, 'a'], [res_b, curve_b, 'b']].forEach(function (x) {
-      var res = x[0], curve = x[1], branch = x[2];
-      res.forEach(function (tp, k) {
-        var ti = tp[0], p = tp[1];
-        if (p !== null) {
-          if (k > 0 && res[k - 1][1] === null && curve.length)
-            Array.prototype.push.apply(curve, pinch_ladder(ti, res[k - 1][0], branch).reverse());
-          curve.push([p[1], p[0]]);
-        } else if (k > 0 && res[k - 1][1] !== null) {
-          Array.prototype.push.apply(curve, pinch_ladder(res[k - 1][0], ti, branch));
+    function walk(dir) {                                       /* -> {pts:[{t,a,b}], tip} */
+      var pts = [], t = t0, A = A0, F = horizon_frame(rec, t), dt = 1 / 60;
+      pts.push({ t: t, A: A, F: F });
+      while (true) {
+        var tn = t + dir * dt;
+        if (tn < tmin || tn > tmax) return { pts: pts, tip: null };
+        var Fn = horizon_frame(rec, tn), An = horizon_arc(rec, Fn, A);
+        if (!An) {
+          if (dt > DT_MIN) { dt /= 2; continue; }
+          /* the arc closed between t and tn: the tip, where g's maximum is 0 */
+          return { pts: pts, tip: horizon_pt(F, A.m) };
         }
-      });
-    });
-    function split(dens) {
-      return [dens.filter(function (d) { return d[0] !== null; }).map(function (d) { return d[0]; }),
-              dens.filter(function (d) { return d[1] !== null; }).map(function (d) { return d[1]; })];
-    }
-    var sd_a = [], sd_b = [], ed_a = [], ed_b = [], sp;
-    if (t_start_tan !== null) { sp = split(tip_densify(t_first_samp, t_start_tan).reverse()); sd_a = sp[0]; sd_b = sp[1]; }
-    if (t_end_tan !== null) { sp = split(tip_densify(t_last_samp, t_end_tan)); ed_a = sp[0]; ed_b = sp[1]; }
-    if (t_end_tan !== null) {
-      Array.prototype.push.apply(ed_a, pinch_ladder(t_last_samp, t_end_tan, 'a'));
-      Array.prototype.push.apply(ed_b, pinch_ladder(t_last_samp, t_end_tan, 'b'));
-    }
-    if (t_start_tan !== null) {
-      sd_a = pinch_ladder(t_first_samp, t_start_tan, 'a').reverse().concat(sd_a);
-      sd_b = pinch_ladder(t_first_samp, t_start_tan, 'b').reverse().concat(sd_b);
-    }
-    function chain_gap(chain) {
-      var pts = chain.filter(function (q) { return q !== null; }), worst = 0.0;
-      for (var i = 0; i < pts.length - 1; i++) {
-        var h = Math.pow(Math.sin((pts[i + 1][1] - pts[i][1]) * DEG / 2), 2) + Math.cos(pts[i][1] * DEG) * Math.cos(pts[i + 1][1] * DEG) * Math.pow(Math.sin((pts[i + 1][0] - pts[i][0]) * DEG / 2), 2);
-        worst = Math.max(worst, 6371.0 * 2.0 * Math.asin(Math.min(1.0, Math.sqrt(Math.abs(h)))));
-      }
-      return worst;
-    }
-    function ll_(tp) { return tp ? [tp[1], tp[0]] : null; }
-    var SEAM_MAX = 220.0;
-    if (t_end_tan !== null) {
-      var chainE = curve_a.slice(-1).concat(ed_a, [ll_(tip_end)], ed_b.slice().reverse(), curve_b.slice(-1));
-      if (chain_gap(chainE) > SEAM_MAX) {
-        sp = split(tip_densify(t_last_samp, t_end_tan, false)); ed_a = sp[0]; ed_b = sp[1];
-        tip_end = term_tangent_point(rec, t_end_tan, false);
+        var pa = horizon_pt(F, A.a), pb = horizon_pt(F, A.b), qa = horizon_pt(Fn, An.a), qb = horizon_pt(Fn, An.b);
+        var d = Math.max(km(pa, qa), km(pb, qb));
+        if (d > MAX_KM && dt > DT_MIN) { dt /= 2; continue; }
+        pts.push({ t: tn, A: An, F: Fn }); t = tn; A = An; F = Fn;
+        if (d < MIN_KM && dt < 1 / 60) dt = Math.min(1 / 60, dt * 2);
       }
     }
-    if (t_start_tan !== null) {
-      var chainS = curve_b.slice(0, 1).concat(sd_b.slice().reverse(), [ll_(tip_start)], sd_a, curve_a.slice(0, 1));
-      if (chain_gap(chainS) > SEAM_MAX) {
-        sp = split(tip_densify(t_first_samp, t_start_tan, false).reverse()); sd_a = sp[0]; sd_b = sp[1];
-        tip_start = term_tangent_point(rec, t_start_tan, false);
-      }
-    }
-    var full_a = sd_a.concat(curve_a, ed_a), full_b = sd_b.concat(curve_b, ed_b);
+    var bw = walk(-1), fw = walk(+1);
+    var seq = bw.pts.slice(1).reverse().concat(fw.pts);          /* time increasing */
+    var ca = seq.map(function (s) { var p = horizon_pt(s.F, s.A.a); return [p[1], p[0]]; });
+    var cb = seq.map(function (s) { var p = horizon_pt(s.F, s.A.b); return [p[1], p[0]]; });
     var loop = [];
-    if (tip_start) loop.push([tip_start[1], tip_start[0]]);
-    Array.prototype.push.apply(loop, full_a);
-    if (tip_end) loop.push([tip_end[1], tip_end[0]]);
-    Array.prototype.push.apply(loop, full_b.slice().reverse());
+    if (bw.tip) loop.push([bw.tip[1], bw.tip[0]]);
+    Array.prototype.push.apply(loop, ca);
+    if (fw.tip) loop.push([fw.tip[1], fw.tip[0]]);
+    Array.prototype.push.apply(loop, cb.reverse());
     if (loop.length && !pteq(loop[0], loop[loop.length - 1])) loop.push(loop[0].slice());
     if (loop.length >= 4) loops.push(unwrap(loop));
   });
@@ -1214,76 +1112,96 @@ function compute_ge(rec) {
   if (pt) return [pyround(pt[1], 4), pyround(pt[0], 4)];
   return [pyround(rec.lng_dd_ge !== undefined ? rec.lng_dd_ge : 0.0, 4), pyround(rec.lat_dd_ge !== undefined ? rec.lat_dd_ge : 0.0, 4)];
 }
-function bisect_umbra_at_t(rec, p_lat, p_lon, bearing_rad, t, search_m, iters) {
-  if (search_m === undefined) search_m = 400000; if (iters === undefined) iters = 24;
-  var R_E = R_EARTH_M, lat0 = p_lat * DEG, lon0 = p_lon * DEG, cos_lat0 = Math.cos(lat0), sin_lat0 = Math.sin(lat0);
-  var cos_b = Math.cos(bearing_rad), sin_b = Math.sin(bearing_rad);
-  var b = bstate(rec, t), d_r = b[4], mu = b[5], dt_s = b[6];
-  var sin_d = Math.sin(d_r), cos_d = Math.cos(d_r), rho1 = Math.sqrt(1.0 - E2 * cos_d * cos_d);
-  var sin_d1 = sin_d / rho1, cos_d1 = Math.sqrt(1.0 - E2) * cos_d / rho1;
-  function at_dist(d) {
-    var ang = d / R_E, s2 = clamp(sin_lat0 * Math.cos(ang) + cos_lat0 * Math.sin(ang) * cos_b, -1.0, 1.0), lat2 = Math.asin(s2);
-    var lon2 = lon0 + Math.atan2(sin_b * Math.sin(ang) * cos_lat0, Math.cos(ang) - sin_lat0 * s2);
-    return [lat2 / DEG, pmod(lon2 / DEG + 180, 360) - 180];
-  }
-  function zeta_at(ll) {
-    var lat_gc = Math.atan(Math.tan(ll[0] * DEG) * Math.sqrt(1.0 - E2));
-    var H_deg = pmod(ll[1] + mu - 0.00417807 * dt_s, 360);
-    if (H_deg > 180) H_deg -= 360;
-    return Math.sin(lat_gc) * sin_d1 + Math.cos(lat_gc) * Math.cos(H_deg * DEG) * cos_d1;
-  }
-  if (magnitude_at(rec, p_lat, p_lon, t) < 1.0 - 1e-9) return null;
-  var HALF_CIRC = Math.PI * R_E, term_m = HALF_CIRC, i;
-  if (!(zeta_at(at_dist(HALF_CIRC)) > 0)) {
-    var tlo = 0.0, thi = HALF_CIRC;
-    for (i = 0; i < iters; i++) { var tm = 0.5 * (tlo + thi); if (zeta_at(at_dist(tm)) > 0) tlo = tm; else thi = tm; }
-    term_m = tlo;
-  }
-  var lo = 0.0, hi = Math.min(search_m, term_m), q;
-  q = at_dist(hi); if (magnitude_at(rec, q[0], q[1], t) >= 1.0 - 1e-9) hi = term_m;
-  q = at_dist(hi); if (magnitude_at(rec, q[0], q[1], t) >= 1.0 - 1e-9) return at_dist(term_m);
-  for (i = 0; i < iters; i++) {
-    var mid = 0.5 * (lo + hi); q = at_dist(mid);
-    if (magnitude_at(rec, q[0], q[1], t) >= 1.0 - 1e-9) lo = mid; else hi = mid;
-  }
-  return at_dist(0.5 * (lo + hi));
-}
-function umbra_ovals(rec, oval_step_min, N) {
-  if (oval_step_min === undefined) oval_step_min = OVAL_STEP_MIN; if (N === undefined) N = 48;
-  var step = oval_step_min / 60.0, half_width_m = (rec.path_width || 0) * 500.0;
-  var oval_search_m = Math.max(half_width_m * 1.5, 400000), ovals = [], t = rec.tmin;
+/* Umbral ovals: the umbra's footprint every OVAL_STEP_MIN minutes. Each is the
+   zero contour of the instantaneous depth g = |L2'| - distance at that moment,
+   traced like the limits; where the sun is down the oval is cut by the
+   sunrise/sunset line, which in geodetic lat/lon is a great circle, so the cut
+   is closed exactly along it. */
+function umbra_ovals(rec, oval_step_min) {
+  if (oval_step_min === undefined) oval_step_min = OVAL_STEP_MIN;
+  var step = oval_step_min / 60.0, ovals = [], t = rec.tmin;
   while (t <= rec.tmax + 1e-9) {
     var cl = centreline_pt(rec, t);
-    if (cl === null) { t += step; continue; }
-    var cl_lat = cl[0], cl_lon = cl[1];
-    if (magnitude_at(rec, cl_lat, cl_lon, t) < 1.0 - 1e-9) { t += step; continue; }
-    var raw = [], bad = false, i;
-    for (i = 0; i < N; i++) {
-      var bearing = 2.0 * Math.PI * i / N, edge = bisect_umbra_at_t(rec, cl_lat, cl_lon, bearing, t, oval_search_m);
-      if (edge === null) { bad = true; break; }
-      raw.push([bearing, edge[0], edge[1]]);
+    if (cl !== null && magnitude_at(rec, cl[0], cl[1], t) >= 1.0 - 1e-9) {
+      var ring = oval_at(rec, t, cl);
+      if (ring && ring.length >= 4) ovals.push(ring);
     }
-    if (bad || raw.length < 3) { t += step; continue; }
-    var MAX_DEG = 0.3;
-    for (var pass = 0; pass < 4; pass++) {
-      var refined = [raw[0]], changed = false;
-      for (var j = 1; j < raw.length; j++) {
-        var a = refined[refined.length - 1], c = raw[j];
-        if (Math.sqrt(Math.pow(c[1] - a[1], 2) + Math.pow(c[2] - a[2], 2)) > MAX_DEG) {
-          var b_mid = (a[0] + c[0]) / 2, e = bisect_umbra_at_t(rec, cl_lat, cl_lon, b_mid, t, oval_search_m);
-          if (e) { refined.push([b_mid, e[0], e[1]]); changed = true; }
-        }
-        refined.push(c);
-      }
-      raw = refined;
-      if (!changed) break;
-    }
-    var ring = raw.map(function (p) { return [pyround(p[2], 4), pyround(p[1], 4)]; });
-    ring.push(ring[0]);
-    ovals.push(ring);
     t += step;
   }
   return ovals;
+}
+function oval_at(rec, t, cl) {
+  var b = bstate(rec, t), d_r = b[4], mu = b[5], dt_s = b[6];
+  function sunup(la, lo) { return sun_sin_alt(la, lo, d_r, mu, dt_s) > 0; }
+  function field(la, lo) { return sunup(la, lo) ? umb_g(rec, la, lo, t) : null; }
+  /* seed: the edge along the first bearing that reaches it in daylight */
+  var seed = null, r_m = 0;
+  for (var k = 0; k < 8 && !seed; k++) {
+    var brg = k * Math.PI / 4, lo_ = 0, hi = null, d = 1e3, q;
+    while (d < 6e6) {
+      q = gc_step(cl[0], cl[1], brg, d);
+      if (!sunup(q[0], q[1])) break;
+      if (umb_g(rec, q[0], q[1], t) < 0) { hi = d; break; }
+      lo_ = d; d *= 1.5;
+    }
+    if (hi === null) continue;
+    for (var it = 0; it < 60 && hi - lo_ > 0.01; it++) {
+      var m = (lo_ + hi) / 2; q = gc_step(cl[0], cl[1], brg, m);
+      if (umb_g(rec, q[0], q[1], t) > 0) lo_ = m; else hi = m;
+    }
+    seed = gc_step(cl[0], cl[1], brg, lo_); r_m = lo_;
+  }
+  if (!seed) return null;
+  var stepkm = clamp(r_m / 1000 / 20, 0.001, 2.0);
+  var tr = trace_zero(field, seed, { step_km: stepkm, min_km: stepkm / 20, max_turn: 3.0, maxpts: 8000,
+                                     probe_m: Math.min(2000.0, 250.0 * stepkm),
+                                     tol: 1e-10, accept: 1e-9 });
+  var pts = tr[0];                                     /* [lon, lat] */
+  if (pts.length < 3) return null;
+  if (!tr[1]) {                                        /* cut by the horizon: close along it */
+    var ea = pts[0], eb = pts[pts.length - 1], probe_km = stepkm * 2;
+    function nearNight(e) {                           /* an open end must be beside the horizon */
+      for (var a = 0; a < 8; a++) { var q = gc_step(e[1], e[0], a * Math.PI / 4, probe_km * 1000); if (!sunup(q[0], q[1])) return true; }
+      return false;
+    }
+    if (!nearNight(ea) || !nearNight(eb)) return null;   /* the trace failed; draw nothing rather than a chord */
+    /* carry each end exactly onto the horizon (edge and horizon meet there) */
+    var e0 = to_horizon(pts[1], pts[0]), e1 = to_horizon(pts[pts.length - 2], pts[pts.length - 1]);
+    pts.unshift(e0); pts.push(e1);
+    var A = [pts[pts.length - 1][1], pts[pts.length - 1][0]], B = [pts[0][1], pts[0][0]];
+    var dd = gc_dist(A, B), bb = gc_bearing(A, B), n = Math.max(1, Math.ceil(dd / (stepkm * 1000)));
+    for (var j = 1; j < n; j++) { var c = gc_step(A[0], A[1], bb, dd * j / n); pts.push([c[1], c[0]]); }
+  }
+  /* from the sunlit end q (reached from p), walk on along the edge to where the
+     sun's altitude is exactly zero: bisect the distance, each trial point put
+     back on the edge (g = 0) by Newton */
+  function onedge(la, lo) {
+    for (var i = 0; i < 20; i++) {
+      var g = umb_g(rec, la, lo, t);
+      if (Math.abs(g) < 1e-11) break;
+      var H = 5.0, p;
+      p = gc_step(la, lo, 0, H); var gN = umb_g(rec, p[0], p[1], t);
+      p = gc_step(la, lo, Math.PI, H); var gS = umb_g(rec, p[0], p[1], t);
+      p = gc_step(la, lo, Math.PI / 2, H); var gE = umb_g(rec, p[0], p[1], t);
+      p = gc_step(la, lo, -Math.PI / 2, H); var gW = umb_g(rec, p[0], p[1], t);
+      var a = (gN - gS) / (2 * H), c = (gE - gW) / (2 * H), m = Math.hypot(a, c);
+      if (m < 1e-18) break;
+      p = gc_step(la, lo, Math.atan2(c, a), -g / m); la = p[0]; lo = p[1];
+    }
+    return [la, lo];
+  }
+  function to_horizon(p, q) {
+    var Q = [q[1], q[0]], brg = gc_bearing([p[1], p[0]], Q), lo_ = 0, hi = stepkm * 2000, x;
+    for (var j = 0; j < 40 && hi - lo_ > 0.1; j++) {
+      var m = (lo_ + hi) / 2; x = gc_step(Q[0], Q[1], brg, m); x = onedge(x[0], x[1]);
+      if (sunup(x[0], x[1])) lo_ = m; else hi = m;
+    }
+    x = gc_step(Q[0], Q[1], brg, lo_); x = onedge(x[0], x[1]);
+    return [x[1], x[0]];
+  }
+  var ring = pts.map(function (p) { return [pyround(p[0], 4), pyround(p[1], 4)]; });
+  ring.push(ring[0].slice());
+  return ring;
 }
 
 /* ── Simplification, pole split, rounding ──────────────────────────────── */
@@ -1292,8 +1210,12 @@ function dp_perp(p, a, b) {
   if (dx === 0 && dy === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
   return Math.abs(dx * (a[1] - p[1]) - (a[0] - p[0]) * dy) / Math.hypot(dx, dy);
 }
+/* Douglas-Peucker. tol is a number, or an array giving each vertex its own
+   tolerance (a vertex is kept when its deviation / its tolerance is largest and
+   exceeds 1; with one tolerance for all this is the classic algorithm). */
 function simplify_dp(pts, tol) {
   var n = pts.length, max_segment_km = 200.0, i, k;
+  var tl = Array.isArray(tol) ? tol : null;
   if (n < 3) return pts.slice();
   var keep = new Array(n).fill(false);
   keep[0] = keep[n - 1] = true;
@@ -1305,8 +1227,11 @@ function simplify_dp(pts, tol) {
     var seg = stack.pop(), lo = seg[0], hi = seg[1];
     if (hi <= lo + 1) continue;
     var a = pts[lo], b = pts[hi], worst_d = 0.0, worst_i = -1;
-    for (i = lo + 1; i < hi; i++) { var d = dp_perp(pts[i], a, b); if (d > worst_d) { worst_d = d; worst_i = i; } }
-    if (worst_d > tol) { keep[worst_i] = true; stack.push([lo, worst_i]); stack.push([worst_i, hi]); }
+    for (i = lo + 1; i < hi; i++) {
+      var d = tl ? dp_perp(pts[i], a, b) / tl[i] : dp_perp(pts[i], a, b);
+      if (d > worst_d) { worst_d = d; worst_i = i; }
+    }
+    if (worst_d > (tl ? 1.0 : tol)) { keep[worst_i] = true; stack.push([lo, worst_i]); stack.push([worst_i, hi]); }
   }
   function gc_km_loc(p, q) {
     var p1 = p[1] * DEG, p2 = q[1] * DEG, dl = (q[0] - p[0]) * DEG;
@@ -1343,8 +1268,8 @@ function round_path(path) {
   var result = {};
   Object.keys(path).forEach(function (k) {
     var v = path[k];
-    if (k === 'green_curve' && Array.isArray(v))
-      result[k] = v.map(function (p) { return p === null ? null : [pyround(p[0], 3), pyround(p[1], 3)]; });
+    if (k === 'green_curve' && Array.isArray(v))      /* 5 dp like the other exact curves */
+      result[k] = v.map(function (p) { return p === null ? null : [pyround(p[0], 5), pyround(p[1], 5)]; });
     else if (k in PREC && Array.isArray(v)) {
       var dp = PREC[k];
       if (k === 'ge') result[k] = v.length ? [pyround(v[0], dp), pyround(v[1], dp)] : v;
@@ -1530,7 +1455,28 @@ function build_path(rec) {
   var pen_n_start = pnp.length ? pnp[0] : null, pen_s_start = psp.length ? psp[0] : null;
   var pen_n_end = pnp.length ? pnp[pnp.length - 1] : null, pen_s_end = psp.length ? psp[psp.length - 1] : null;
   var DP_TIGHT = 9e-5, DP_LOOSE = 1.8e-3;
-  ['centreline', 'umbra_n', 'umbra_s', 'umbra_ovals'].forEach(function (f) { result[f] = result[f].map(function (s) { return simplify_dp(s, DP_TIGHT); }); });
+  /* A limit's tolerance is at most a quarter of the distance to the other limit:
+     where a hybrid pinches, the corridor is only metres wide, and simplifying
+     each limit to the usual 10 m let the drawn limits cross (1804-02-11). */
+  function limit_tol(seg, others) {
+    return seg.map(function (p) {
+      var best = Infinity;                       /* squared distance to the other limit's segments */
+      others.forEach(function (o) {
+        for (var j = 0; j + 1 < o.length; j++) {
+          var ax = pmod(o[j][0] - p[0] + 180, 360) - 180, ay = o[j][1] - p[1];
+          var bx = ax + (o[j + 1][0] - o[j][0]), by = ay + (o[j + 1][1] - o[j][1]);
+          var dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+          var u = L > 0 ? clamp(-(ax * dx + ay * dy) / L, 0, 1) : 0, qx = ax + u * dx, qy = ay + u * dy;
+          best = Math.min(best, qx * qx + qy * qy);
+        }
+      });
+      return Math.max(1e-9, Math.min(DP_TIGHT, 0.25 * Math.sqrt(best)));
+    });
+  }
+  ['centreline', 'umbra_ovals'].forEach(function (f) { result[f] = result[f].map(function (s) { return simplify_dp(s, DP_TIGHT); }); });
+  var un = result.umbra_n, us = result.umbra_s;
+  result.umbra_n = un.map(function (s) { return simplify_dp(s, us.length ? limit_tol(s, us) : DP_TIGHT); });
+  result.umbra_s = us.map(function (s) { return simplify_dp(s, un.length ? limit_tol(s, un) : DP_TIGHT); });
   ['penumbra_n', 'penumbra_s', 'terminator_first', 'terminator_last'].forEach(function (f) { result[f] = result[f].map(function (s) { return simplify_dp(s, DP_LOOSE); }); });
   var juncs = [];
   [result.penumbra_n, result.penumbra_s].forEach(function (s) { if (s.length && s[0].length) juncs.push(s[0][0]); });
@@ -1555,9 +1501,11 @@ function build_path(rec) {
 function eclipse_path(rec) { return round_path(build_path(rec)); }
 
 var api = {
+  VERSION: PATHGEN_VERSION,
   bstate: bstate, f2g: f2g, centreline_pt: centreline_pt,
   umbral_limits_field: umbral_limits_field, umbral_limits_valid: umbral_limits_valid, umb_depth: umb_depth,
-  green_curve: green_curve, penumbra_both: penumbra_both, pyround: pyround, terminators_test: terminators_test, umbra_ovals: umbra_ovals, compute_ge: compute_ge, eclipse_path: eclipse_path
+  green_curve: green_curve, penumbra_both: penumbra_both, pyround: pyround, terminators_test: terminators_test, umbra_ovals: umbra_ovals, compute_ge: compute_ge, eclipse_path: eclipse_path, umb_g: umb_g, sun_sin_alt: sun_sin_alt, oval_at: oval_at, gc_dist: gc_dist
 };
-if (typeof module !== 'undefined') module.exports = api;
-if (typeof self !== 'undefined') self.PathGen = api;
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+root.PathGen = api;
+})(typeof self !== 'undefined' ? self : this);

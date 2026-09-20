@@ -761,36 +761,14 @@ function buildBands(records){
 
 /* ── Data: the app's precached chunks, not the network ─────────────────── */
 
-/* The log gives us catalogue entries; the bands need PATH records, which live
-   in data/paths chunks. map.js ALREADY has loadPathChunk(entry) — with the
-   DecompressionStream handling and its own cache — so this uses it rather than
-   growing a second loader. (An earlier draft of this file defined its own
-   loadPathChunk, which would have silently overwritten map.js's, since both are
-   plain globals. Standing rule: use the existing API.)
-
-   Group by chunk so a log spanning three centuries costs three loads, not one
-   per eclipse. */
+/* The log gives us catalogue entries; the bands need PATH records. Each comes
+   from loadPath (paths.js): the device cache, or computed on the device. Logged
+   eclipses are computed in the background when they are added (userlog.js), so
+   here they are normally already cached. Standing rule: use the existing API. */
 function tsLoadPathRecords(rows) {
-  var byChunk = {};
-  rows.forEach(function (r) {
-    var ck = r.rec && r.rec._chunk;
-    if (!ck) return;
-    (byChunk[ck] = byChunk[ck] || []).push(r);
-  });
-
-  var keys = Object.keys(byChunk);
-  if (!keys.length) return Promise.resolve([]);
-
-  return Promise.all(keys.map(function (ck) {
-    var sample = byChunk[ck][0].rec;
-    return loadPathChunk(sample).then(function (paths) {
-      if (!paths) return [];
-      return byChunk[ck].map(function (r) { return paths[r.key] || null; })
-                        .filter(Boolean);
-    }).catch(function () { return []; });
-  })).then(function (groups) {
-    return groups.reduce(function (a, b) { return a.concat(b); }, []);
-  });
+  return Promise.all(rows.map(function (r) {
+    return loadPath(r.rec).catch(function () { return null; });
+  })).then(function (paths) { return paths.filter(Boolean); });
 }
 
 /* ── Render ────────────────────────────────────────────────────────────

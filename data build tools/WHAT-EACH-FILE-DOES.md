@@ -7,11 +7,15 @@ in `data/` that the app then reads.
 
 ## Eclipse paths
 
-**gen_eclipse_paths.py** — the big one, and the source of truth for the maths.
-Turns Besselian elements into every curve the app draws: centreline, umbral
-limits, umbral footprints, penumbral limits, terminators, greatest eclipse.
-Writes `data/paths/paths_*.json.gz`. Everything else that needs eclipse
-geometry imports from here rather than reimplementing it.
+**The app no longer uses generated path files.** Paths are computed on the device
+by `js/pathgen.js` (in a Web Worker, `js/pathgen-worker.js`; loaded and cached by
+`js/paths.js`). To change a path, edit `js/pathgen.js` and bump its
+`PATHGEN_VERSION`. See HANDOFF §9.6.
+
+**gen_eclipse_paths.py** — the Python original of the path engine, now the
+reference only: `js/pathgen.js` is its port (verified on all 11,898 eclipses).
+Still imported by the country-index tools for its geometry helpers. It writes
+`data/paths/paths_*.json.gz`, which the app no longer reads.
 
 **gen_eclipse_paths_13f.py** — an older version, kept as a reference (version
 stamp 2026-07-13f). Not used by anything.

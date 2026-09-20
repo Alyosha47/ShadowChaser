@@ -335,18 +335,9 @@
       <li>Elevation auto-filled online via the Open-Elevation API.</li>
     </ul>
 
-    <h4>Median errors</h4>
-    <table class="narrow">
-      <tr><th>Curve</th><th>Median error</th></tr>
-      <tr><td>Centreline</td><td>~5 m</td></tr>
-      <tr><td>Umbra edges (N/S)</td><td>~5 m</td></tr>
-      <tr><td>Polar grazers (|γ| ≥ 0.95)</td><td>~10 m</td></tr>
-      <tr><td>Penumbra edges</td><td>~0.6 km</td></tr>
-      <tr><td>Terminator lemniscates</td><td>~60 m</td></tr>
-      <tr><td>Pre-1900</td><td>ΔT-limited</td></tr>
-      <tr><td>Post-2050</td><td>Increasing (ΔT extrapolation)</td></tr>
-    </table>
-    <p style="color:var(--muted); font-size:.88rem;">Medians against Xavier Jubier’s independent paths (53 eclipses, same Besselian elements, his ΔT removed). Worst cases are larger: up to ~0.2 km on tightly curved polar grazers, and a few km where a limb meets the horizon.</p>
+    <h4>Accuracy</h4>
+    <p style="color:var(--muted); font-size:.88rem;">Every curve is computed to within a few metres of its exact geometric definition — centreline, umbral and penumbral limits, sunrise/sunset curves and the maximum-on-horizon curve, all ~3 m or better. Between drawn points a line can bow a little further, up to ~10 m.</p>
+    <p style="color:var(--muted); font-size:.88rem;">Eclipses before 1900 or after 2050 are subject to variability in ΔT.</p>
     <p style="color:var(--muted); font-size:.88rem;">No lunar limb correction is applied.</p>
 
     <h3>Settings</h3>

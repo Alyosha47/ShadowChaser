@@ -1,7 +1,6 @@
 /* ── Map ─────────────────────────────────────────────────────────────── */
 
 /* `map` and `mapReady` are AppState properties; see js/state.js. */
-var pathCache      = {};
 /* `pathMarkers` are bound to the selected eclipse (e.g. greatest-eclipse dot)
    and only change when selectedEntry changes. `mapMarkers` are bound to the
    observer location and may be cleared independently when the user clicks. */
@@ -1102,53 +1101,7 @@ function updateMapState() {
   }
 }
 
-/* Path chunks are gzipped JSON keyed by cat_no.
-   We decompress with the native DecompressionStream (Chrome 80+, Firefox 113+,
-   Safari 16.4+). No third-party library required, which keeps the app fully
-   offline-capable. If we ever need to support older browsers, vendor pako
-   locally and add a fallback here. */
-var _pathMiss = {}, _pathPending = {};
-var PATH_MISS_TTL = 30000;   /* remember a failure for 30s, then allow one retry */
-
-function loadPathChunk(entry) {
-  var chunkName = entry._chunk;
-  if (!chunkName) return Promise.resolve(null);
-  if (pathCache[chunkName]) return Promise.resolve(pathCache[chunkName]);
-  /* A FAILURE IS A RESULT AND MUST BE REMEMBERED. Only successes were cached, so
-     every caller refetched a chunk that had already failed — 14 identical
-     attempts in one offline session. Each one stalls before failing, a search
-     walks ~30 chunks, and the tab freezes for a minute. It also disables the
-     Average layer, whose _render catches the failure and turns itself off.
-     One in-flight promise per chunk, and the miss is remembered for MISS_TTL so
-     a genuine reconnection still recovers without a reload. */
-  var now = Date.now();
-  if (_pathMiss[chunkName] && now - _pathMiss[chunkName] < PATH_MISS_TTL) {
-    return Promise.resolve(null);
-  }
-  if (_pathPending[chunkName]) return _pathPending[chunkName];
-  var url = DATA_BASE+'/paths/paths_'+chunkName+'.json.gz?v='+BUILD;
-  var p = fetch(url).then(function (r) {
-    if (!r.ok) return null;
-    /* Pipe the gzipped body through DecompressionStream, then parse as JSON. */
-    var ds = new DecompressionStream('gzip');
-    var stream = r.body.pipeThrough(ds);
-    return new Response(stream).json();
-  }).then(function (d) {
-    if (d) { pathCache[chunkName] = d; delete _pathMiss[chunkName]; }
-    else   { _pathMiss[chunkName] = Date.now(); }
-    delete _pathPending[chunkName];
-    return d;
-  }).catch(function (err) {
-    /* Logged ONCE per TTL, not once per caller. The repeated identical error was
-       most of the noise that made the real fault hard to see. */
-    if (!_pathMiss[chunkName]) console.error('loadPathChunk failed for', chunkName, err);
-    _pathMiss[chunkName] = Date.now();
-    delete _pathPending[chunkName];
-    return null;
-  });
-  _pathPending[chunkName] = p;
-  return p;
-}
+/* Paths are computed on the device: loadPath / loadPathChunk live in paths.js. */
 
 /* HTML markers (observer dot, greatest-eclipse dot) are DOM overlays. MapLibre
    v5 fades an occluded marker to opacityWhenCovered (default 0.2) but leaves it

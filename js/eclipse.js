@@ -3,7 +3,7 @@
  * ──────────────────────────────────────────────────────────────────────────
  * Solar eclipse local circumstances — Besselian element calculator.
  *
- * Implements the method of O'Byrne, McCann, Meeus, and Jubier, as described
+ * Implements the method of O'Byrne, McCann and Meeus, as described
  * in Meeus "Astronomical Algorithms" Ch. 54 (Willmann-Bell, 2nd ed. 1998)
  * and the NASA Five Millennium Canon of Solar Eclipses (Espenak & Meeus).
  *

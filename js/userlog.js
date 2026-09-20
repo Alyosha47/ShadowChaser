@@ -86,6 +86,8 @@ function scLogToggle(entry) {
   }
   scLogSave();
   scLogRefreshAll();
+  /* the t-shirt draws every logged eclipse: have its path ready */
+  if (log.entries[k] && typeof warmPaths === 'function') warmPaths([entry]);
   return !!log.entries[k];
 }
 

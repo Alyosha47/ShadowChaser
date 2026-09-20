@@ -20,6 +20,18 @@ fetch(DATA_BASE + '/index.json?v=' + BUILD)
       onSearchChanged();
       selectNextEclipse();
     }
+    /* Paths are computed on the device (paths.js). Once the page has settled,
+       compute and cache in idle time the eclipses a user is likeliest to open,
+       so they are instant, offline too: the logged ones and the next six. */
+    setTimeout(function () {
+      if (typeof warmPaths !== 'function') return;
+      var now = new Date(), y = now.getUTCFullYear(), m = now.getUTCMonth() + 1, d = now.getUTCDate();
+      var next = eclipseIndex.filter(function (e) {
+        return e.year > y || (e.year === y && (e.month > m || (e.month === m && e.day >= d)));
+      }).slice(0, 6);
+      var logged = (typeof scLogRows === 'function') ? scLogRows().map(function (r) { return r.rec; }) : [];
+      warmPaths(logged.concat(next));
+    }, 4000);
     /* Silently request geolocation to pre-populate coords */
     if (navigator.geolocation && !currentFilter.coords) {
       navigator.geolocation.getCurrentPosition(function (pos) {

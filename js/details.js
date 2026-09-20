@@ -447,6 +447,9 @@ function maxDurationRows(e) {
          + row('Longest totality', fmtDur(e.max_duration_secs) + ' \u00b7 computed')
          + row('Longest at', coordStr(e.max_duration_lat, e.max_duration_lon));
   }
+  /* The catalogue's exact figure where it has one: its text field is whole
+     seconds, so a 0.4 s hybrid (-1747-11-10) read "00m00s". */
+  if (e.duration_secs != null && e.duration_secs > 0) return row('Max duration', fmtDur(e.duration_secs));
   return e.central_duration ? row('Max duration', e.central_duration) : '';
 }
 
@@ -497,15 +500,28 @@ function lookupElevationAndTz(lat, lon) {
     }
   }
 
-  /* Elevation — Open-Elevation API (online only). Skip entirely when offline:
-     the request would just fail and surface a network error on map click. The
-     tz lookup above is fully local and has already run. */
+  /* Elevation — Open-Meteo, with Open-Elevation as the fallback (online only).
+     Skip entirely when offline: the request would just fail and surface a
+     network error on map click. The tz lookup above is fully local and has
+     already run. Open-Elevation was primary until 2026-09-20: it reissues its
+     certificate every few hours and is briefly invalid each time, so every
+     other map click logged ERR_CERT_DATE_INVALID even though the fallback
+     answered. */
   if (isOffline()) return;
-  fetch('https://api.open-elevation.com/api/v1/lookup?locations=' + lat + ',' + lon)
+  function openElevation() {
+    return fetch('https://api.open-elevation.com/api/v1/lookup?locations=' + lat + ',' + lon)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { return d && d.results && d.results[0] ? d.results[0].elevation : null; })
+      .catch(function () { return null; });
+  }
+  fetch('https://api.open-meteo.com/v1/elevation?latitude=' + lat + '&longitude=' + lon)
     .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (d) {
-      if (!d || !d.results || !d.results[0]) return;
-      var elev = Math.round(d.results[0].elevation);
+    .then(function (d) { return d && d.elevation && d.elevation.length ? d.elevation[0] : null; },
+          function () { return null; })
+    .then(function (e) { return e != null ? e : openElevation(); })
+    .then(function (e) {
+      if (e == null || key !== _lastLookupCoords) return;   /* nothing, or the user moved on */
+      var elev = Math.round(e);
       if (elev <= 0) return;
       _lookedUpAlt = elev;
       updateCoordsStatus();

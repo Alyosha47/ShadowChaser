@@ -33,17 +33,26 @@ upload**; git does not deploy (§4).
 
 ## 0. START HERE — the ten lines a new session needs
 
-> **PATH GENERATOR, as of 2026-09-18 (full story §9.5).** Generator `2026-09-18d`, READY for the final
-> regeneration: ONE engine for
-> every central eclipse — grazers, thin corridors and hybrids included. The user's `17a` full regeneration (commit 96414d5) was a TEST, not a release, and is NOT
-> deployed: he wants ONE engine and ONE final regeneration, no piecemeal patching. **Do not regenerate
-> until he agrees it is ready.** Agreed plan (2026-09-18): finish every OUTPUT-changing item first
-> (N/S naming: settled, no change; old-frame helpers: DONE in `18c`), then ONE regeneration,
-> which is the final one. If it logs zero FIELD FALLBACK, the fallback route is dead code: delete it
-> afterwards — that cannot change output, so no second run. **Never ask him for a test run whose only
-> purpose is to license a code deletion.** Compare any regeneration with `check_regen.py` against the
-> deployed data (NOT in git: git's 08-04 `13j` chunks + the 22 spliced chunks; download from the live
-> site if the sandbox copy is gone).
+> ## ⛔ THE USER DOES NOT RUN NODE. NEVER HAND HIM ANYTHING THAT NEEDS NODE. ⛔
+> No `node …`, no `npm …`, no "run this script from the repo root", no test tools for him to run.
+> He has a browser, git and a text editor. Anything that must run, YOU run in the container and
+> report the result; anything he must run himself is a web page he opens in his browser.
+> Broken 2026-09-19 (handed him `pathgen_vs_repo.js` with `node` instructions after he had said
+> it repeatedly). He has had to repeat this many times. Read it twice.
+
+> **ECLIPSE PATHS ARE COMPUTED ON THE DEVICE (2026-09-20, BUILD `2026-09-20a`).** `js/pathgen.js` is
+> the path engine: a JavaScript port of `gen_eclipse_paths.py` (18d), run in a Web Worker
+> (`js/pathgen-worker.js`) and loaded through `js/paths.js` — `loadPath(entry)` (memory → IndexedDB
+> `sc-paths`, keyed `cat_no|PathGen.VERSION` → compute), `loadPathChunk(entry)` kept as the old
+> `{cat_no: path}` shape, `warmPaths()` for idle precompute (logged eclipses + next 6). While computing,
+> the map status reads "Calculating eclipse path…". **`data/paths/` is no longer read by the app**;
+> the user deletes it after the deploy is confirmed. **To change a path: edit `js/pathgen.js` and bump
+> `PATHGEN_VERSION` inside it** (that invalidates every device cache) — no regeneration exists any more.
+> Verification of the port, all run in the container: every one of 11,898 eclipses vs the final 18d
+> data — 11,743 identical, 153 last-digit/tolerance cases (maths-library last-bit differences deciding
+> a tolerance), 0 unexplained (§9.6). Then deliberately improved: traced ovals, pinch fixes, 985-07-20
+> horizon ends (§9.6). Tests: `tools/checks/test_paths.js`. The Python generator is now the reference
+> only (and is imported by the country-index tools).
 
 > **The cloud feature is CLOSED as of 2026-08-22c.** Photo's repeating tiles — the bug that ran for
 > six threads — were the SERVICE WORKER, not the map (§10A.8d, §12.1). What remains in `Photo` and
@@ -1394,6 +1403,96 @@ FIELD FALLBACK, delete the old route from `build_path` — `perpendicular_limits
 block with `_polish_terminus` and `_max_magnitude`, `_terminate_on_green`, `_despur_segment`, and
 `umbral_limits_valid`'s fallback branch. Check each with grep before deleting; `umbral_pts` stays
 (it seeds the tracer).
+
+### 9.6 Paths computed on the device — `js/pathgen.js` (2026-09-19/20)
+
+**Why.** Every path can be computed from the Besselian data the app already precaches, so all
+11,898 eclipses work offline (the old files covered two centuries offline), 290 MB of path files go,
+and a fix ships as code instead of a regeneration. Measured cost: a full path takes 0.3–1.8 s in the
+browser here (4× CPU throttle, as a mid-range phone: limits alone ≤ 1.8 s); results are cached.
+
+**The port.** `js/pathgen.js` is a line-by-line port of `gen_eclipse_paths.py` (18d) with Python
+semantics made explicit: `pmod` (Python `%`), `pyround` (Python `round`, ties to even), for-else,
+first-maximum ties, negative indexing. Wrapped in an IIFE: only `PathGen` is global (it defines ~60
+helpers such as `unwrap`, `clamp`, `poly` that would otherwise overwrite the app's). Each piece was
+checked against Python as it was added (green line, penumbra, terminators, ovals, GE, build_path).
+**Full check vs the final 18d data, all 11,898 eclipses:** 11,743 identical; 59 one-unit last-digit
+roundings; 93 green-line-only differences of 300–550 m (its tracer accepts |sun alt| < 0.02°, both
+versions equally good — checked field by field); 2 simplification near-ties (−1850-12-09: a point at
+10.09 vs 9.89 m from the chord, threshold 10 m; 2508-09-26: a different one of two near-equal points,
+both lines within 9.5 m of the limit); 1 pinch point 1.3 m (2209-05-05); **0 errors, 0 unexplained.**
+Root of every difference: V8's and CPython's maths libraries differ in the last bit, and a tolerance
+test tips. `eclipse.js` agrees with the path engine exactly: 5,056 points 30 m either side of the
+limits on five hard eclipses, same answer every time (same frame, ΔT; `eclipse.js` adds elevation).
+
+**Improvements made after the port (so output now differs from the old files, deliberately):**
+- *Ovals* re-built as traced contours of the instantaneous umbral depth at each time, cut by the
+  sunrise/sunset line (a great circle in geodetic lat/lon, so the cut is closed exactly along it; each
+  open end first carried onto the horizon). Old ray-cast ovals: straight facets 0.7–4.8 km off
+  (2026-08-12), a spike to the green line (−297-11-29), and 5 tiny ovals silently dropped (1948-05-09).
+  New: vertices within the 4-dp rounding (≤ 7 m), straight-edge gap ≤ 15 m. A failed trace draws
+  nothing rather than a chord.
+- *Limits beside hybrid pinches never cross* (were 3–11 crossings on 1804-02-11, −1747-11-10,
+  1585-04-29): both limbs share one centreline fill grid per pinch (~2 km); an end within 1 m of a
+  pinch snaps onto it; simplification tolerance ≤ ¼ of the distance to the other limb's segments; a
+  tracer step that lands on the other side of the track is retried at half the step.
+- *Thin corridors traced to the horizon*: the 50 m stop applies only beside a pinch or below the
+  horizon. 985-07-20's western limb ends were 4 km / 0.6 km short; tracing on into the night had
+  crawled 20,000 steps (3–4 s). Now every near-hybrid total's limbs end at sun altitude 0.0000°.
+
+- *Terminator curves (sunrise/sunset "lemniscates") re-built exactly* (2026-09-20c, PATHGEN_VERSION
+  `2026-09-20`). The horizon at an instant is exactly a great circle about the sub-solar point (geodetic
+  lat/lon, as `sun_sin_alt` defines it), so the curve's two branches are the two roots of ONE function of
+  one angle — penumbral depth round that circle — and a tip is where that function's maximum touches 0
+  (bisection in time). The old 2-D Newton solve failed as the branches merged; a general fallback
+  (tip chain gap > 220 km → unpolished points) then drew rough tips: 2017-08-21's were 940/1,100 km gaps,
+  a zigzag over Norway and a tip ~100 km from where the N penumbra limit ends. Measured exactness (sun on
+  the horizon ⇒ on the penumbra's edge): old p99 18–51 km off at tips (even 2024-04-08), median 27 km on
+  −1870-07-25; new median AND p99 0.000 km on every eclipse tested; every penumbra-limit end lies on a new
+  loop (≤ 0.15 km). Removed as dead: rs_exact, rs_ring_solve, term_tangent_point, term_tangency_time,
+  f2g_term, gcd_m, bisect_umbra_at_t. Terminators take 77 ms on average.
+- *Green (maximum-on-horizon) curve ends* (2026-09-20d, PATHGEN_VERSION `2026-09-20b`): the trace stopped
+  one 35 km step past a fixed radius (L1 at mid-eclipse + 0.5 %), overshooting the penumbral limit by 4–85 km
+  (2017-08-21: 67 km at Norway, 85 km at the Kara Sea). Now it tests each point's own penumbral edge and
+  bisects the end onto it: ends within 0.03–3 km of the limit's end. The remaining ≤ 3 km is a real
+  difference of definition, not an error: the green curve's horizon is taken at MAXIMUM eclipse, the limit's
+  at the LAST CONTACT; near the horizon those moments differ slightly. Not snapped together, deliberately.
+- *Green curve accuracy* (2026-09-20f, PATHGEN_VERSION `2026-09-20c`): it accepted a point when the sun's
+  altitude at maximum was within 0.003 deg (~330 m on the ground), stepped 35 km (chords bowing ~110 m) and
+  was stored at 3 dp (~110 m) — all sized for a curve that used to ship in files. Now 1e-5 deg, 20 km steps,
+  5 dp: **its points are 1 m from the true curve, chord midpoints 2–4 m.** vs Jubier it went 128 → 85 m
+  median, and the rest is HIS: at his green points the sun's altitude at maximum is 35–323 m off zero.
+- *Verified against Jubier, all 53 references* (median/p95 m, old data → new engine): N limit 5/16 → 5/16,
+  S limit 7/17 → 7/17, central line 4/13 → 4/13, sunrise/sunset E 58/272 → 59/158, W 63/248 → 63/162,
+  green 128/672 → 85/543, penumbra limits 369–770 m median (unchanged).
+- *Whose error is the residual? His.* Measured by evaluating each curve's own exact definition AT HIS
+  POINTS and at ours, on all 53 references: penumbral limits — his points sit 13–1,962 m off the limit
+  (median per eclipse), **ours 0–5 m**; green curve — his 35–323 m, ours 1 m. So the remaining
+  disagreement is his sampling, not our accuracy. **No open accuracy question on this module.** The
+  public tolerance TABLE was replaced (2026-09-20h) by one sentence — every curve within a few metres
+  (~3 m or better) of its exact definition, ~10 m between drawn points — plus the ΔT and lunar-limb lines.
+  **The reference paths are a private benchmark: index.html and the manual must not cite them as a
+  source.** Removed 2026-09-20h. **Kept by the user's decision (2026-09-20i):** the
+  "as does Jubier, from the same data" line in the 94-no-central-line note (restored) and his own
+  "Merci, M. Jubier!" thanks in About. **Removed at his request:** the name from eclipse.js's method
+  attribution header (now "O'Byrne, McCann and Meeus"). eclipse.js's internal verification comments
+  (contact times, the V-column convention) still name him as the benchmark they were checked against —
+  that is benchmark use, which is what he is for.
+- *Why his penumbral limits differ by ~0.6 km when his umbral ones match to 5 m.* Not the classic
+  perpendicular construction (his points are 12–130 km from it) and not a spherical Earth (far worse).
+  It is sensitivity: measured |grad depth| at the penumbral limit is 0.18–0.46 m per m of ground vs 0.87–0.93
+  at the umbral limit, so **100 m of difference in the adopted shadow radius slides the penumbral limit
+  0.2–0.6 km** (umbral: 0.11 km). His residual corresponds to tens of metres in L1 — a small input
+  difference (his ephemeris vs the catalogue's elements), amplified by the shallow geometry. Ours is
+  exactly consistent with the elements we ship.
+- *Duration display* (2026-09-20b): under 10 s shows tenths; "Max duration" uses `duration_secs` (a 0.4 s
+  hybrid read "00m00s"). Elevation: **Open-Meteo is primary since 2026-09-20e**, Open-Elevation
+  the fallback. Open-Elevation reissues its certificate every few hours (seen 11:59 and 15:58 GMT the same
+  day) and is briefly invalid each time, so map clicks logged ERR_CERT_DATE_INVALID even though the
+  fallback answered — the browser logs a failed request whatever the code does with it.
+
+**Offered, not built:** equal-magnitude curves (Jubier draws 0.2/0.4/0.6/0.8 N and S in 24 of the
+53 reference KMZs) — same field-and-tracer method, ~0.3 s per curve.
 
 **Final generator vs `13j`, against Jubier, ΔT removed, umbral limits (median / worst):**
 ```
@@ -3111,6 +3210,19 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-20h** — Public accuracy text: table → one sentence (~3 m or better); reference-path citations removed from index.html and the manual (benchmark only, not a source). §9.6.
+- **2026-09-20g** — Tolerance tables in index.html and the manual rewritten: they now state distance from each curve's own exact definition (~1 m), with the Jubier comparison as a note. §9.6.
+- **2026-09-20f** — Green curve tightened (1 m from the true curve, was ~330 m tolerance); verified the whole engine against all 53 Jubier references. PATHGEN_VERSION 2026-09-20c. §9.6.
+- **2026-09-20e** — Elevation: Open-Meteo primary, Open-Elevation fallback (its certificate rolls every few hours; the failures were logged on every map click). §9.6.
+- **2026-09-20d** — Green curve ends on the penumbral limit (was 4–85 km past it). PATHGEN_VERSION 2026-09-20b. §9.6.
+- **2026-09-20c** — Terminator curves exact (1-D roots on the horizon great circle); 2017-08-21 jag and tip
+  offset fixed; dead terminator code removed; PATHGEN_VERSION 2026-09-20 (devices recompute). §9.6.
+- **2026-09-20b** — Sub-10 s durations in tenths; Max duration from `duration_secs`; elevation fallback.
+  `.htaccess` (user's) now gzips JSON: a Besselian century 188 → 95 KB on the wire.
+- **2026-09-20a** — **Paths computed on the device** (§0, §9.6): `js/pathgen.js` + `js/pathgen-worker.js`
+  + `js/paths.js`; map.js's chunk loader removed; t-shirt reads per-eclipse paths; logged eclipses and the
+  next six warmed in idle time; sw precaches the engine, not `data/paths`. Ovals re-traced, pinch
+  crossings and 985-07-20 fixed. New suite `test_paths`; all 14 pass; checked live in headless Chromium.
 - **2026-09-19b** — **Generator cleanup, output byte-identical** (35 eclipses of every class, before vs
   after). Removed the dead old umbral route: `perpendicular_limits`, `dep_local`, `_gt_inst`,
   `_terminate_on_green`, `_despur_segment`, `_umbral_limb_endpoints`, `_cone_sun_alt`, `_round_coords`,
