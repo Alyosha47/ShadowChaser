@@ -90,24 +90,24 @@ scan.forEach(function (e) { tally[e.local_type] = (tally[e.local_type] || 0) + 1
      count(t) === (tally[t] || 0), count(t) + ' vs ' + (tally[t] || 0));
 });
 
-console.log('\n3. the LIST ICON must agree with the FILTER');
-/* search-list.js draws typeCode(local_type || eclipse_type). If it ever goes
-   back to the global type, these counts diverge and the panel contradicts
-   itself: 115 hybrid icons that "hybrid" cannot find. */
+console.log('\n3. the LIST ICON is the ECLIPSE\'S OWN TYPE, and the row shows the local view');
+/* Decided 2026-09-21, reversing 2026-09-13. The icon names the eclipse: 1999-08-11
+   is a total eclipse even read from Paris, where it was a 99% partial. The old
+   contradiction that drove the earlier decision (from St. Louis the list drew 115
+   hybrid icons while "hybrid" returned 0) is resolved instead by the row SHOWING
+   the local fact in its third column, so both meanings are on screen at once. */
+var listSrc = fs.readFileSync(path.join(ROOT, 'js/search-list.js'), 'utf8');
+ok('search-list.js draws the GLOBAL type',
+   /var tc\s*=\s*typeCode\(e\.eclipse_type \|\| 'P'\)/.test(listSrc));
+ok('the row shows the local obscuration when a location is set',
+   /local_osc/.test(listSrc));
 var iconTally = {};
 scan.forEach(function (e) {
-  var c = String(e.local_type || e.eclipse_type).charAt(0).toUpperCase();
+  var c = String(e.eclipse_type).charAt(0).toUpperCase();
   iconTally[c] = (iconTally[c] || 0) + 1;
 });
-var listSrc = fs.readFileSync(path.join(ROOT, 'js/search-list.js'), 'utf8');
-ok('search-list.js draws the LOCAL type',
-   /typeCode\(e\.local_type \|\| e\.eclipse_type/.test(listSrc));
-ok('icon counts equal filter counts, type by type',
-   (iconTally.T || 0) === count('total') &&
-   (iconTally.A || 0) === count('annular') &&
-   (iconTally.P || 0) === count('partial') &&
-   (iconTally.H || 0) === count('hybrid'),
-   JSON.stringify(iconTally));
+ok('a total eclipse keeps its total icon from a place that saw a partial',
+   (iconTally.T || 0) > count('total'), JSON.stringify(iconTally) + ' vs total=' + count('total'));
 
 console.log('\n4. an obscuration range does NOT change what a type means at a point');
 ok('"partial >70" includes 2017-08-21 (100% partial at St. Louis)',

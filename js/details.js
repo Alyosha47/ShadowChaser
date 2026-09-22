@@ -21,10 +21,13 @@ function buildContactRows(rec, res, lbl, tz) {
      whichever mode is active, with a (±Nd) suffix for events that fall on a
      different calendar day than tMax. */
   var anchor = res.tMax;
-  function fmtTime(ut) {
+  /* Seconds-long totality/annularity: show tenths on the contacts that bound it,
+     or C2 and C3 print the same second (or, rounded apart, a whole second). */
+  var _dec = (res.durCentral && res.durCentral < 10) ? 1 : 0;
+  function fmtTime(ut, dec) {
     return _timeMode === 'ut'
-      ? fmtUTAnchored(ut, anchor)
-      : fmtLocalAnchored(ut, tz, anchor);
+      ? fmtUTAnchored(ut, anchor, dec)
+      : fmtLocalAnchored(ut, tz, anchor, dec);
   }
 
   function pushContact(phase, c, cls) {
@@ -34,7 +37,7 @@ function buildContactRows(rec, res, lbl, tz) {
         '<tr' + (cls ? ' class="' + cls + ' ct-row"' : ' class="ct-row"')
       + ' onclick="scOnContactRow(' + c.ut + ')">'
       + '<td>' + contactIcon(phase, type, c.v) + ' ' + phase + '</td>'
-      + '<td>' + fmtTime(c.ut)       + '</td>'
+      + '<td>' + fmtTime(c.ut, (phase === 'C2' || phase === 'C3') ? _dec : 0) + '</td>'
       + '<td>' + fmtAng(s.alt)       + '</td>'
       + '<td>' + fmtAng(s.az)        + '</td>'
       + '</tr>' });
@@ -44,7 +47,7 @@ function buildContactRows(rec, res, lbl, tz) {
   pushContact('C2', res.C2, 'row-umbral');
   rows.push({ ut: res.tMax, html:
       '<tr class="row-max ct-row" onclick="scOnContactRow(' + res.tMax + ')"><td>' + contactIcon('MAX', type, null) + ' MAX</td>'
-    + '<td>' + fmtTime(res.tMax)     + '</td>'
+    + '<td>' + fmtTime(res.tMax, _dec) + '</td>'
     + '<td>' + fmtAng(res.sun.alt)   + '</td>'
     + '<td>' + fmtAng(res.sun.az)    + '</td></tr>' });
   pushContact('C3', res.C3, 'row-umbral');
@@ -94,7 +97,7 @@ function renderData(rec, _tz, _lat, _lon) {
   var panel = document.getElementById('data-panel');
   var inner = document.getElementById('data-inner');
   var tz    = getTzOffset();
-  var tzStr = tz >= 0 ? 'UTC+' + tz : 'UTC' + tz;
+  var tzStr = fmtTzOffset(tz);
 
 
   /* ΔT — use besselian chunk values when loaded (after computeLocal),

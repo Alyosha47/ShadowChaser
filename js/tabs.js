@@ -189,9 +189,14 @@ function getAutoTzOffset() {
       if (off) {
         var m = off.value.match(/GMT([+-])(\d+)(?::(\d+))?/);
         if (m) {
-          var h = parseInt(m[2], 10) * (m[1] === '-' ? -1 : 1);
+          /* Sign FIRST, then add the minutes: `h = 0 * -1` is -0, and -0 < 0 is
+             false, so a GMT-0:16 zone came out as +0:16. Pre-1900 eclipses hit
+             this every time — before standard zones the database gives local
+             mean time, e.g. Ouagadougou is GMT-0:16:08 (seen as UTC+0.2666…). */
+          var sgn = m[1] === '-' ? -1 : 1;
+          var h = parseInt(m[2], 10);
           var min = m[3] ? parseInt(m[3], 10) / 60 : 0;
-          return h + (h < 0 ? -min : min);
+          return sgn * (h + min);
         }
       }
     } catch(e) {}

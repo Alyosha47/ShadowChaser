@@ -254,12 +254,15 @@ console.log('\n4a. the corridor mask must never EXCLUDE real corridor');
    real, which would drop stretches of path with no error at all.
    Built from the module's own source, so the two cannot drift. */
 (function () {
-  var zlib = require('zlib'), gz = path.join(ROOT, 'data/paths/paths_2001_2100.json.gz');
-  if (!fs.existsSync(gz)) {
-    console.log('  SKIP  path chunks absent (they are build artefacts)');
-    return;
+  /* Paths are computed here as the app computes them on the device
+     (js/pathgen.js); data/paths no longer exists. */
+  var PathGen = require(path.join(ROOT, 'js/pathgen.js'));
+  console.warn = function () {};
+  var BESS = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/besselian/2001_2100.json'), 'utf8'));
+  function pathFor(y, m, d) {
+    var b = BESS.find(function (x) { return x.year === y && x.month === m && x.day === d; });
+    return b ? PathGen.eclipse_path(JSON.parse(JSON.stringify(b))) : null;
   }
-  var paths = JSON.parse(zlib.gunzipSync(fs.readFileSync(gz)));
   var body = src.match(/var MASK_DEG[\s\S]*?function _near\(lat, lon\) \{[\s\S]*?\n  \}/);
   ok('the mask code is findable in the module', !!body);
   if (!body) return;
@@ -268,11 +271,7 @@ console.log('\n4a. the corridor mask must never EXCLUDE real corridor');
 
   [[2026,8,12,'2026-08-12 polar'], [2027,8,2,'2027-08-02'],
    [2028,7,22,'2028-07-22'], [2031,11,14,'2031-11-14 hybrid']].forEach(function (t) {
-    var r = rec(t[0], t[1], t[2]), ep = null, k;
-    for (k in paths) {
-      var e = paths[k];
-      if (e.year === t[0] && e.month === t[1] && e.day === t[2]) { ep = e; break; }
-    }
+    var r = rec(t[0], t[1], t[2]), ep = pathFor(t[0], t[1], t[2]);
     if (!r || !ep) { console.log('  SKIP  ' + t[3] + ' not in this chunk'); return; }
     f.set(f.build(ep));
     var inside = 0, missed = 0;

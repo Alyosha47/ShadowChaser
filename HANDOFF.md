@@ -3210,6 +3210,24 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-21c** — **Search semantics, list icon, timezone sign.** (1) The LIST ICON is the eclipse's own
+  type again: 1999-08-11 is a TOTAL eclipse read from Paris, where it was 99% partial; calling it partial
+  renames it. The 2026-08-29w contradiction (115 hybrid icons from St. Louis that `hybrid` cannot find) is
+  answered instead by the row showing the LOCAL obscuration in its third column — and a partial never reads
+  100% (Oslo 1954 is 99.7%, not totality; the total path missed it). (2) **With an obscuration range a type
+  word matches EITHER meaning**: `1950-1960 total >50% oslo` (a TOTAL eclipse of which Oslo saw half — the
+  About link, dead since 2026-08-29w) and `partial >70` from St. Louis (what St. Louis SAW, 2017) are both
+  wanted; without a range a point stays narrow (`total oslo` = totality AT Oslo, 15 results, 1954 excluded).
+  (3) **Timezone offsets lost their sign between -1 and 0**: `h = 0 * -1` is -0 and `-0 < 0` is false, so
+  Ouagadougou's pre-1900 GMT-0:16:08 displayed as `UTC+0.26666666666666666`. Fixed, and offsets now print as
+  UTC±H:MM (`fmtTzOffset`). NOTE: before ~1900 the tz database gives LOCAL MEAN TIME — India 1868 is
+  UTC+5:53, London 1715 UTC-0:01 — which is correct and deliberate; label it LMT if it confuses.
+- **2026-09-20j** — Contact times show tenths when the central event is under 10 s (C2/C3/MAX only;
+  -1747-11-10 read 35 / 36 for a 0.4 s totality, now 35.3 / 35.7). `data/paths` deleted by the user:
+  `test_tshirt` and `test_favorability` now compute their fixtures with `js/pathgen.js` — tshirt's two
+  whole-catalogue scans became a curated sample (the historical failures + the highest-|gamma| eclipses of
+  7 centuries, 48 paths, 62 s instead of 198 s), and favorability's corridor-mask check had been SILENTLY
+  SKIPPING since the deletion and now runs again.
 - **2026-09-20h** — Public accuracy text: table → one sentence (~3 m or better); reference-path citations removed from index.html and the manual (benchmark only, not a source). §9.6.
 - **2026-09-20g** — Tolerance tables in index.html and the manual rewritten: they now state distance from each curve's own exact definition (~1 m), with the Jubier comparison as a note. §9.6.
 - **2026-09-20f** — Green curve tightened (1 m from the true curve, was ~330 m tolerance); verified the whole engine against all 53 Jubier references. PATHGEN_VERSION 2026-09-20c. §9.6.

@@ -8,25 +8,30 @@ var MONTHS = ['','Jan','Feb','Mar','Apr','May','Jun',
 
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
 
-function fmtUT(h) {
+/* `dec` adds decimals to the seconds. The contact table asks for one when the
+   event is seconds long: a 0.4 s totality has C2 and C3 in the same second, and
+   rounding each to the nearest second made them look 1 s apart. */
+function fmtUT(h, dec) {
   if (h === null || h === undefined || isNaN(h)) return '--';
   h = ((h % 24) + 24) % 24;
   var hh = Math.floor(h);
   var mm = Math.floor((h - hh) * 60);
-  var ss = Math.round(((h - hh) * 60 - mm) * 60);
+  var raw = ((h - hh) * 60 - mm) * 60;
+  var ss = dec ? Math.round(raw * Math.pow(10, dec)) / Math.pow(10, dec) : Math.round(raw);
   if (ss >= 60) { ss -= 60; mm++; }
   if (mm >= 60) { mm -= 60; hh++; }
-  return pad(hh % 24) + ':' + pad(mm) + ':' + pad(ss);
+  var sstr = dec ? (ss < 10 ? '0' : '') + ss.toFixed(dec) : pad(ss);
+  return pad(hh % 24) + ':' + pad(mm) + ':' + sstr;
 }
 
 /* Day-aware time formatter. Renders `h` (decimal hours) as HH:MM:SS, and
    appends ` (±Nd)` when the floor-divided day differs from `anchor`'s day.
    Used by the contact-times table so events that fall on the previous or
    next calendar day relative to the eclipse maximum are unambiguous. */
-function fmtUTAnchored(h, anchor) {
+function fmtUTAnchored(h, anchor, dec) {
   if (h === null || h === undefined || isNaN(h)) return '--';
   var dayOff = Math.floor(h / 24) - Math.floor((anchor != null ? anchor : h) / 24);
-  var s = fmtUT(h);
+  var s = fmtUT(h, dec);
   if (dayOff !== 0) {
     var sign = dayOff > 0 ? '+' : '\u2212';   /* real minus, not hyphen */
     s += '<sup class="day-off">' + sign + Math.abs(dayOff) + '</sup>';
@@ -37,9 +42,9 @@ function fmtUTAnchored(h, anchor) {
 function fmtLocal(h, off) {
   return (h === null || h === undefined) ? '--' : fmtUT(h + off);
 }
-function fmtLocalAnchored(h, off, anchor) {
+function fmtLocalAnchored(h, off, anchor, dec) {
   return (h === null || h === undefined) ? '--'
-    : fmtUTAnchored(h + off, anchor != null ? anchor + off : null);
+    : fmtUTAnchored(h + off, anchor != null ? anchor + off : null, dec);
 }
 
 function fmtDur(s) {
@@ -50,6 +55,22 @@ function fmtDur(s) {
   var m   = Math.floor(s / 60);
   var sec = Math.round(s % 60);
   return m > 0 ? m + 'm\u2009' + pad(sec) + 's' : sec + 's';
+}
+
+/* Offsets are not whole hours everywhere, and before ~1900 the timezone
+   database gives local mean time (Ouagadougou GMT-0:16:08), so an offset can be
+   any number of minutes. "UTC+0.26666666666666666" was the raw number. */
+function fmtTzOffset(off) {
+  if (off === null || off === undefined || isNaN(off)) return 'UTC';
+  var sgn = off < 0 ? '-' : '+', a = Math.abs(off);
+  var h = Math.floor(a + 1e-9), m = Math.round((a - h) * 60);
+  if (m >= 60) { m -= 60; h++; }
+  /* Standard zones are whole quarter-hours. Anything else is local mean time,
+     which is what the timezone database gives before standard time reached a
+     place (India 1868: UTC+5:53; London 1715: UTC-0:01) — correct, and labelled
+     so it does not read as a glitch. */
+  var lmt = Math.abs(Math.round(a * 60) % 15) > 0;
+  return 'UTC' + sgn + h + (m ? ':' + pad(m) : '') + (lmt ? ' LMT' : '');
 }
 
 function fmtAng(a) {

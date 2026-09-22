@@ -1035,6 +1035,19 @@ function updateMapState() {
     drawEclipsePath(ep);
     setMapStatus(null);
 
+    /* Then the equal-magnitude curves, which are computed second. Redraw only if
+       this is still the selected eclipse; clear the path markers first, since a
+       redraw re-adds the greatest-eclipse diamond. */
+    if (!ep.magnitude_curves && typeof loadMagCurves === 'function') {
+      var _want = selectedEntry;
+      loadMagCurves(_want).then(function (mc) {
+        if (!mc || selectedEntry !== _want) return;
+        ep.magnitude_curves = mc;
+        clearPathMarkers();
+        drawEclipsePath(ep);
+      });
+    }
+
     /* CAMERA. A new eclipse re-frames the view: back out to the resting zoom so
        the whole path is visible, centred on the pinned location if there is one,
        otherwise on the eclipse itself (greatest-eclipse point, or the path's mean
@@ -1393,7 +1406,7 @@ function showMapPopupLoading(lat,lon) {
 
 function showMapPopup(lat,lon,result,rec) {
   var tz=getTzOffset();
-  var tzStr=tz>=0?'UTC+'+tz:'UTC'+tz;
+  var tzStr=fmtTzOffset(tz);
   var latS=lat>=0?lat.toFixed(4)+'\u00b0N':Math.abs(lat).toFixed(4)+'\u00b0S';
   var lonS=lon>=0?lon.toFixed(4)+'\u00b0E':Math.abs(lon).toFixed(4)+'\u00b0W';
   document.getElementById('map-popup-title').textContent=latS+'\u2002'+lonS;
@@ -1839,6 +1852,27 @@ function drawEclipsePath(ep) {
     }));
   }
 
+  /* ── Equal-magnitude curves — 0.2 / 0.4 / 0.6 / 0.8, north and south ──
+     Computed after the path (paths.js loadMagCurves), so on a first view they
+     appear a moment later. Quieter than the penumbra limits they sit inside,
+     and unlabelled (the user's call, 2026-09-21). */
+  if (ep.magnitude_curves && ep.magnitude_curves.length) {
+    var magSegs = [];
+    ep.magnitude_curves.forEach(function (c, i) {
+      if (!c.line || c.line.length < 2) return;
+      segsToPathData([c.line], 'mag' + i).forEach(function (d) { magSegs.push(d); });
+    });
+    if (magSegs.length) layers.push(new DeckGL.PathLayer({
+      id: 'magnitude-lines',
+      data: magSegs,
+      getPath: function(d) { return d.path; },
+      getColor: PAL.penumbra.slice(0, 3).concat([120]),
+      getWidth: 1,
+      widthUnits: 'pixels',
+      widthMinPixels: 1,
+    }));
+  }
+
   /* ── Greatest eclipse point — pixel-space marker (zoom-invariant) ─── */
   if (ep.ge && ep.ge[0] != null) {
     addGEMarker(ep.ge[1], ep.ge[0]);
@@ -1846,4 +1880,5 @@ function drawEclipsePath(ep) {
 
   setDeckLayers(layers);
 }
+
 

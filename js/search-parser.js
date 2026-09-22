@@ -570,14 +570,25 @@
          excluded from St. Louis, where it was a 100% partial and the single
          most interesting answer. A point is not ambiguous. Local always. */
       if (filter.types && filter.types.length) {
-        var raw;
+        var raws = [];
         if (cRow) {
-          raw = filter.obscRange ? (e.eclipse_type || '')
-                                 : (cRow.central ? (e.eclipse_type || '') : 'P');
+          raws = [filter.obscRange ? (e.eclipse_type || '')
+                                   : (cRow.central ? (e.eclipse_type || '') : 'P')];
+        } else if (filter.obscRange) {
+          /* WITH A RANGE the type may be EITHER the eclipse's own or the local
+             one, because the two readings are both wanted and both sensible:
+             "1950-1960 total >50% oslo" means a TOTAL eclipse of which Oslo saw
+             over half (Oslo has never had totality), while "partial >70" from
+             St. Louis means what ST. LOUIS SAW — 2017 was a 100% partial there
+             and is the single most interesting answer. Asking for one reading
+             only loses the other. Without a range, "total oslo" keeps its
+             narrow meaning: totality AT Oslo. */
+          raws = [(e.local_type || e.eclipse_type) || '', (e.eclipse_type || '')];
         } else {
-          raw = (e.local_type || e.eclipse_type) || '';
+          raws = [(e.local_type || e.eclipse_type) || ''];
         }
-        var full = TYPE_MAP[raw.charAt(0).toUpperCase()] || raw.toLowerCase();
+        var fulls = raws.map(function (r) { return TYPE_MAP[r.charAt(0).toUpperCase()] || r.toLowerCase(); });
+        var full = fulls[0];
         /* A HYBRID SATISFIES BOTH `total` AND `annular`. Decided 2026-09-13.
            Hybrid literally means total along part of the path and annular along
            the rest, so a chaser who searches "total" and is shown nothing has
@@ -587,9 +598,11 @@
            Only reached when the type is the GLOBAL one. With a location set,
            `e.local_type` already decides it at the point, and eclipse.js
            promotes a hybrid there deliberately so the badge stays right. */
-        var ok = filter.types.indexOf(full) >= 0
-              || (full === 'hybrid' && (filter.types.indexOf('total') >= 0
-                                     || filter.types.indexOf('annular') >= 0));
+        var ok = fulls.some(function (f) {
+          return filter.types.indexOf(f) >= 0
+              || (f === 'hybrid' && (filter.types.indexOf('total') >= 0
+                                  || filter.types.indexOf('annular') >= 0));
+        });
         if (!ok) return false;
       }
 

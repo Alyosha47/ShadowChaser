@@ -1204,6 +1204,116 @@ function oval_at(rec, t, cl) {
   return ring;
 }
 
+/* ── Equal-magnitude curves ────────────────────────────────────────────────
+   Contours of the greatest magnitude a place sees (0.2, 0.4, 0.6, 0.8 by
+   default), north and south of the shadow's track, over the part of the Earth
+   where that maximum happens with the sun up. Each ends where the maximum
+   happens exactly at sunrise or sunset — on the maximum-on-horizon curve. Same
+   method as every other curve here: a field, seeds, the contour tracer. */
+var MAG_LEVELS = [0.2, 0.4, 0.6, 0.8];
+function mag_at_max(rec, lat, lon) {
+  /* magnitude at this point's maximum eclipse (closest approach to the axis),
+     and the sun's altitude (deg) at that moment */
+  var tmin = rec.tmin, tmax = rec.tmax, N = 44, bt = tmin, bd = 1e18, i;
+  function at(t) {
+    var b = bstate(rec, t), f = fund_true(lat, lon, b[4], b[5], b[6]);
+    return Math.hypot(f[0] - b[0], f[1] - b[2]);
+  }
+  for (i = 0; i <= N; i++) { var t = tmin + (tmax - tmin) * i / N, d = at(t); if (d < bd) { bd = d; bt = t; } }
+  var a = Math.max(tmin, bt - (tmax - tmin) / N), c = Math.min(tmax, bt + (tmax - tmin) / N);
+  for (i = 0; i < 40; i++) { var m1 = a + (c - a) / 3, m2 = c - (c - a) / 3; if (at(m1) < at(m2)) c = m2; else a = m1; }
+  var ts = (a + c) / 2, b = bstate(rec, ts), f = fund_true(lat, lon, b[4], b[5], b[6]);
+  var m = Math.hypot(f[0] - b[0], f[1] - b[2]);
+  var L1p = b[7] - f[2] * rec.tan_f1, L2p = b[8] - f[2] * rec.tan_f2;
+  var mag = m >= L1p ? 0 : (L1p - m) / (L1p + L2p);
+  var alt = Math.asin(clamp(sun_sin_alt(lat, lon, b[4], b[5], b[6]), -1, 1)) / DEG;
+  return [mag, alt, ts];
+}
+function magnitude_curves(rec, levels) {
+  levels = levels || MAG_LEVELS;
+  var tmin = rec.tmin, tmax = rec.tmax, out = [];
+  /* Seeds: at sample times, from the ground point nearest the axis, march
+     perpendicular to the shadow's motion (side +1 = left of motion = north
+     for an eastward track); every level is crossed on the way out. */
+  var seeds = {}, K = 10, STEP = 100e3, MAXD = 7000e3;
+  levels.forEach(function (L) { seeds[L + '|1'] = []; seeds[L + '|-1'] = []; });
+  for (var k = 1; k < K; k++) {
+    var t = tmin + (tmax - tmin) * k / K, dtt = (tmax - tmin) / 200;
+    var p = umb_deep_pt(rec, t), a = umb_deep_pt(rec, t - dtt), b = umb_deep_pt(rec, t + dtt);
+    if (!p || !a || !b) continue;
+    var brg = gc_bearing(a, b);
+    [1, -1].forEach(function (side) {
+      var bb = brg - side * Math.PI / 2, prev = mag_at_max(rec, p[0], p[1]), pd = 0;
+      for (var d = STEP; d <= MAXD; d += STEP) {
+        var q = gc_step(p[0], p[1], bb, d), cur = mag_at_max(rec, q[0], q[1]);
+        levels.forEach(function (L) {
+          if (prev[1] > 0 && cur[1] > 0 && prev[0] >= L && cur[0] < L) {
+            var lo = pd, hi = d;
+            for (var it = 0; it < 30; it++) {
+              var mid = (lo + hi) / 2, qm = gc_step(p[0], p[1], bb, mid);
+              if (mag_at_max(rec, qm[0], qm[1])[0] >= L) lo = mid; else hi = mid;
+            }
+            seeds[L + '|' + side].push(gc_step(p[0], p[1], bb, (lo + hi) / 2));
+          }
+        });
+        if (cur[0] <= 0) break;
+        prev = cur; pd = d;
+      }
+    });
+  }
+  levels.forEach(function (L) {
+    /* One set of curves per level. A curve can be reached from either side's
+       seeds (it wraps round the end of the track), so de-duplicate across both
+       sides, then name each curve by where it lies: the same side-of-track test
+       that names the umbral limits (umb_side, positive = north). */
+    var comps = [];
+    function field(la, lo) { var r = mag_at_max(rec, la, lo); return r[1] > 0 ? r[0] - L : null; }
+    function near(pt) {
+      for (var i = 0; i < comps.length; i++) for (var j = 0; j < comps[i].length; j++)
+        if (gc_dist(pt, [comps[i][j][1], comps[i][j][0]]) < 60e3) return true;
+      return false;
+    }
+    function onc(pt) {                   /* Newton onto mag = L, ignoring the horizon */
+      var la = pt[0], lon = pt[1];
+      for (var i = 0; i < 12; i++) {
+        var f = mag_at_max(rec, la, lon)[0] - L, H = 500, g1, g2, s;
+        if (Math.abs(f) < 1e-7) break;
+        s = gc_step(la, lon, 0, H); g1 = (mag_at_max(rec, s[0], s[1])[0] - L - f) / H;
+        s = gc_step(la, lon, Math.PI / 2, H); g2 = (mag_at_max(rec, s[0], s[1])[0] - L - f) / H;
+        var gm = Math.hypot(g1, g2); if (gm < 1e-15) break;
+        s = gc_step(la, lon, Math.atan2(g2, g1), -f / gm); la = s[0]; lon = s[1];
+      }
+      return [la, lon];
+    }
+    function to_horizon(pq, q) {         /* along the curve from sunlit q to where the max is at the horizon */
+      var brg = gc_bearing([pq[1], pq[0]], [q[1], q[0]]), lo = 0, hi = 60e3, x = null;
+      for (var j = 0; j < 30; j++) {
+        var mid = (lo + hi) / 2, c = onc(gc_step(q[1], q[0], brg, mid));
+        if (mag_at_max(rec, c[0], c[1])[1] > 0) { lo = mid; x = c; } else hi = mid;
+      }
+      return x ? [x[1], x[0]] : q;
+    }
+    seeds[L + '|1'].concat(seeds[L + '|-1']).forEach(function (sd) {
+      if (near(sd)) return;
+      var tr = trace_zero(field, sd, { step_km: 25.0, min_km: 2.0, maxpts: 3000, tol: 1e-7, accept: 1e-6 });
+      var pts = tr[0];
+      if (pts.length < 3) return;
+      if (!tr[1]) { pts.unshift(to_horizon(pts[1], pts[0])); pts.push(to_horizon(pts[pts.length - 2], pts[pts.length - 1])); }
+      comps.push(pts);
+    });
+    comps.forEach(function (pts) {
+      var north = 0, n = 0;
+      for (var i = 0; i < pts.length; i += Math.max(1, Math.floor(pts.length / 15))) {
+        var ts = mag_at_max(rec, pts[i][1], pts[i][0])[2];
+        north += umb_side(rec, pts[i][1], pts[i][0], ts) > 0 ? 1 : 0; n++;
+      }
+      out.push({ level: L, side: north * 2 > n ? 'n' : 's',
+                 line: pts });
+    });
+  });
+  return out;
+}
+
 /* ── Simplification, pole split, rounding ──────────────────────────────── */
 function dp_perp(p, a, b) {
   var dx = b[0] - a[0], dy = b[1] - a[1];
@@ -1268,7 +1378,12 @@ function round_path(path) {
   var result = {};
   Object.keys(path).forEach(function (k) {
     var v = path[k];
-    if (k === 'green_curve' && Array.isArray(v))      /* 5 dp like the other exact curves */
+    if (k === 'magnitude_curves' && Array.isArray(v))
+      result[k] = v.map(function (c) {
+        return { level: c.level, side: c.side,
+                 line: c.line.map(function (p) { return [pyround(p[0], 5), pyround(p[1], 5)]; }) };
+      });
+    else if (k === 'green_curve' && Array.isArray(v))      /* 5 dp like the other exact curves */
       result[k] = v.map(function (p) { return p === null ? null : [pyround(p[0], 5), pyround(p[1], 5)]; });
     else if (k in PREC && Array.isArray(v)) {
       var dp = PREC[k];
@@ -1500,11 +1615,21 @@ function build_path(rec) {
 /* The finished path exactly as the generator writes it. */
 function eclipse_path(rec) { return round_path(build_path(rec)); }
 
+/* The equal-magnitude curves, computed separately (they cost as much as the
+   rest of the path together, and are drawn second): simplified like the other
+   exact curves and stored to 5 dp (~1 m). */
+function eclipse_magnitude_curves(rec) {
+  return magnitude_curves(rec).map(function (c) {
+    return { level: c.level, side: c.side,
+             line: unwrap(simplify_dp(c.line, 9e-5)).map(function (p) { return [pyround(p[0], 5), pyround(p[1], 5)]; }) };
+  });
+}
+
 var api = {
   VERSION: PATHGEN_VERSION,
   bstate: bstate, f2g: f2g, centreline_pt: centreline_pt,
   umbral_limits_field: umbral_limits_field, umbral_limits_valid: umbral_limits_valid, umb_depth: umb_depth,
-  green_curve: green_curve, penumbra_both: penumbra_both, pyround: pyround, terminators_test: terminators_test, umbra_ovals: umbra_ovals, compute_ge: compute_ge, eclipse_path: eclipse_path, umb_g: umb_g, sun_sin_alt: sun_sin_alt, oval_at: oval_at, gc_dist: gc_dist
+  green_curve: green_curve, magnitude_curves: magnitude_curves, penumbra_both: penumbra_both, pyround: pyround, terminators_test: terminators_test, umbra_ovals: umbra_ovals, compute_ge: compute_ge, eclipse_path: eclipse_path, eclipse_magnitude_curves: eclipse_magnitude_curves, umb_g: umb_g, sun_sin_alt: sun_sin_alt, oval_at: oval_at, gc_dist: gc_dist
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 root.PathGen = api;

@@ -52,19 +52,34 @@ function renderList() {
   var shown = items.slice(start, start + 500);
 
   var html = shown.map(function (e, idx) {
-    /* Show the type AS SEEN FROM THE SELECTED LOCATION when there is one.
-       The filter already matches on local_type (search-parser.js), so showing
-       the GLOBAL type here made the list contradict its own search box: from
-       St. Louis the list drew 115 hybrid icons while "hybrid" returned 0,
-       because every one of those hybrids is a partial from there. Same object,
-       same word, two different meanings. Now they agree. */
-    var tc  = typeCode(e.local_type || e.eclipse_type || 'P');
+    /* The icon is the ECLIPSE'S OWN TYPE, always: 1999-08-11 is a total eclipse
+       even read from Paris, where it was a 99% partial. (It showed the local
+       type from 2026-09-13 to fix a real contradiction — from St. Louis the
+       list drew 115 hybrid icons while "hybrid" returned 0 — but the cure was
+       worse: it renamed the eclipse. The contradiction is instead resolved by
+       the row SHOWING what the location saw, below.) */
+    var tc  = typeCode(e.eclipse_type || 'P');
     var ico = typeIcon(tc, e.magnitude);
     var sel = selectedEntry
            && selectedEntry.year===e.year
            && selectedEntry.month===e.month
            && selectedEntry.day===e.day;
-    var dur = e.duration_secs > 0 ? fmtDur(e.duration_secs) : '--';
+    /* Third column: with a location set, what that location gets — its own
+       totality/annularity if the central path crosses it, else the obscuration
+       it sees. Without a location, the eclipse's own central duration. */
+    var dur;
+    if (e.local_osc != null) {
+      var lt = typeCode(e.local_type || 'P');
+      /* A partial must never read 100%: Oslo's 99.7% in 1954 rounded to "100%"
+         and looked like totality. Keep a tenth near the top of the range. */
+      var osc = e.local_osc >= 99.5 ? (Math.floor(e.local_osc * 10) / 10).toFixed(1)
+                                    : String(Math.round(e.local_osc));
+      dur = (lt === 'T' || lt === 'A' || lt === 'H') && e.duration_secs > 0
+          ? fmtDur(e.duration_secs)
+          : osc + '%';
+    } else {
+      dur = e.duration_secs > 0 ? fmtDur(e.duration_secs) : '--';
+    }
     return '<div class="eclipse-item' + (sel ? ' selected' : '') + '"'
          + (start + idx === anchor ? ' data-anchor="1"' : '')
          + (sel ? '' : ' onclick="selectEclipse(' + e.year + ',' + e.month + ',' + e.day + ')"')

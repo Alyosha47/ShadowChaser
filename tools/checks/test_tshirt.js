@@ -69,9 +69,35 @@ ok('no segment spans the seam',
 ok('a non-crossing path stays whole', I.splitEdge([[10,0],[20,1],[30,2]]).length === 1);
 
 console.log('\n5. end to end on real catalogue data');
-const chunk = JSON.parse(zlib.gunzipSync(fs.readFileSync(ROOT + '/data/paths/paths_2001_2100.json.gz')));
-const recs = Object.keys(chunk).filter(k => k !== '__meta').map(k => chunk[k])
-  .filter(r => 'TAH'.includes((r.type || '')[0]) && r.umbra_n && r.umbra_s).slice(0, 5);
+/* Paths are computed here exactly as the app computes them on the device
+   (js/pathgen.js); data/paths no longer exists. */
+const PathGen = require(ROOT + '/js/pathgen.js');
+console.warn = () => {};
+const BESS = {};
+function besselian(chunkName) {
+  if (!BESS[chunkName]) BESS[chunkName] = JSON.parse(fs.readFileSync(`${ROOT}/data/besselian/${chunkName}.json`, 'utf8'));
+  return BESS[chunkName];
+}
+const PATHS = {};
+function pathFor(chunkName, y, m, d) {
+  const key = `${y},${m},${d}`;
+  if (!PATHS[key]) {
+    const rec = besselian(chunkName).find(r => r.year === y && r.month === m && r.day === d);
+    PATHS[key] = rec ? PathGen.eclipse_path(JSON.parse(JSON.stringify(rec))) : null;
+  }
+  return PATHS[key];
+}
+function pathsIn(chunkName, n) {          /* the first n central eclipses of a century */
+  const out = [];
+  for (const r of besselian(chunkName)) {
+    if (!'TAH'.includes((r.eclipse_type || '')[0])) continue;
+    const p = pathFor(chunkName, r.year, r.month, r.day);
+    if (p && p.umbra_n && p.umbra_s) out.push(p);
+    if (out.length === n) break;
+  }
+  return out;
+}
+const recs = pathsIn('2001_2100', 5);
 const bands = I.buildBands(recs);
 /* One-limit eclipses (A+, An, As, Tn, Ts, T+, T- — ~187 of them) have only one
    umbral edge, so no band can be built and they are excluded by design. The
@@ -87,8 +113,8 @@ ok('every band has pieces', bands.every(b => b.pieces.length > 0));
 ok('types mapped to palette keys', bands.every(b => ['total','annular','hybrid'].includes(b.type)));
 ok('sorted by date', bands.map(b => b.date).join() === bands.map(b => b.date).sort().join());
 /* Partials have no umbral band and must be dropped, not drawn empty. */
-const partial = Object.keys(chunk).filter(k => k !== '__meta').map(k => chunk[k])
-  .find(r => (r.type || '')[0] === 'P');
+const partialRec = besselian('2001_2100').find(r => (r.eclipse_type || '')[0] === 'P');
+const partial = partialRec && pathFor('2001_2100', partialRec.year, partialRec.month, partialRec.day);
 if (partial) ok('partials are excluded', I.buildBands([partial]).length === 0);
 
 console.log('\n6. SVG output');
@@ -183,30 +209,22 @@ const earthPct = b => {
   }
   return A / 720 * 100;
 };
-const allRecs = Object.keys(chunk).filter(k => k !== '__meta').map(k => chunk[k]);
-const byDate = (recs, y, m, d) => recs.find(r => r.year===y && r.month===m && r.day===d);
-const load = f => JSON.parse(zlib.gunzipSync(fs.readFileSync(`${ROOT}/data/paths/${f}.json.gz`)));
-
-ok('every piece is a quad', I.buildBands([byDate(allRecs, 2017, 8, 21)])[0]
+ok('every piece is a quad', I.buildBands([pathFor('2001_2100', 2017, 8, 21)])[0]
      .pieces.every(q => q.length === 4));
 
 /* The limbs are sampled independently and a limb running off the disc is much
    shorter than its partner — 109-02-17 has 564 north points to 90 south.
    Pairing by array-index fraction joined unrelated points and made quads 357
    degrees wide. The walk pairs by position instead. */
-const b109 = I.buildBands([byDate(Object.keys(load('paths_101_200'))
-  .filter(k => k !== '__meta').map(k => load('paths_101_200')[k]), 109, 2, 17)])[0];
+const b109 = I.buildBands([pathFor('101_200', 109, 2, 17)])[0];
 ok('109-02-17 (564 vs 90 points) is sane', earthPct(b109) < 3, earthPct(b109).toFixed(2) + '%');
 
 /* The three cases reported broken, in order. */
-for (const [file, y, m, d, label] of [
-      ['paths_2001_2100', 2015, 3, 20, 'ends at the pole'],
-      ['paths_2701_2800', 2753, 7, 22, 'encircles the pole'],
-      ['paths_2801_2900', 2806, 4, 10, 'encircles the pole']]) {
-  const ch = load(file);
-  const rec = Object.keys(ch).filter(k => k !== '__meta').map(k => ch[k])
-    .find(r => r.year===y && r.month===m && r.day===d);
-  const b = I.buildBands([rec])[0];
+for (const [chunkName, y, m, d, label] of [
+      ['2001_2100', 2015, 3, 20, 'ends at the pole'],
+      ['2701_2800', 2753, 7, 22, 'encircles the pole'],
+      ['2801_2900', 2806, 4, 10, 'encircles the pole']]) {
+  const b = I.buildBands([pathFor(chunkName, y, m, d)])[0];
   ok(`${b.date} (${label}) covers a plausible area`, earthPct(b) < 3, earthPct(b).toFixed(2) + '%');
   /* Longitude width is meaningless at a pole, where every longitude is the
      same place — a legitimate polar quad spans a wide lon range. The real test
@@ -218,27 +236,41 @@ for (const [file, y, m, d, label] of [
 
 /* An ordinary band's quads are a couple of degrees across; if that ever grows,
    the pairing has drifted. */
-const b2017 = I.buildBands([byDate(allRecs, 2017, 8, 21)])[0];
+const b2017 = I.buildBands([pathFor('2001_2100', 2017, 8, 21)])[0];
 ok('an ordinary band has narrow quads',
    Math.max(...b2017.pieces.map(q => {
      const xs = q.map(p => p[0]); return Math.max(...xs) - Math.min(...xs);
    })) < 5);
 
-/* No band anywhere may flood the map. This is the check that would have caught
-   every failure in this feature's history. */
-let over = [];
-for (const f of fs.readdirSync(`${ROOT}/data/paths`)
-                  .filter(x => x.endsWith('.gz') && !x.includes('kinked'))) {
-  const ch = JSON.parse(zlib.gunzipSync(fs.readFileSync(`${ROOT}/data/paths/${f}`)));
-  for (const r of Object.keys(ch).filter(k => k !== '__meta').map(k => ch[k])) {
-    const b = I.buildBands([r])[0];
-    if (b && areaPct(b) > 8) over.push(b.date);
+/* No band may flood the map. This is the check that would have caught every
+   failure in this feature's history. It used to read every path file; paths are
+   computed on the device now, so instead it uses the cases that cause the
+   failures — the historical ones, plus every high-|gamma| eclipse (grazing and
+   polar, where the band geometry is hardest) from a spread of centuries. */
+const SAMPLE = (() => {
+  const chunks = ['-1199_-1100', '101_200', '1001_1100', '1901_2000', '2001_2100', '2701_2800', '2801_2900'];
+  const picked = [['2001_2100', 2017, 8, 21], ['2001_2100', 2015, 3, 20], ['101_200', 109, 2, 17],
+                  ['2701_2800', 2753, 7, 22], ['2801_2900', 2806, 4, 10], ['-1199_-1100', -1180, 6, 16]];
+  const seen = new Set(picked.map(p => p.slice(1).join(',')));
+  for (const c of chunks) {
+    const central = besselian(c).filter(r => 'TAH'.includes((r.eclipse_type || '')[0]));
+    central.sort((a, b) => Math.abs(b.gamma) - Math.abs(a.gamma));
+    for (const r of central.slice(0, 6)) {
+      const k = [r.year, r.month, r.day].join(',');
+      if (!seen.has(k)) { seen.add(k); picked.push([c, r.year, r.month, r.day]); }
+    }
   }
+  return picked.map(([c, y, m, d]) => pathFor(c, y, m, d)).filter(Boolean);
+})();
+let over = [];
+for (const r of SAMPLE) {
+  const b = I.buildBands([r])[0];
+  if (b && areaPct(b) > 8) over.push(b.date);
 }
 /* An eclipse band is a thin corridor; anything covering a large share of the
    map is wrong. 6% leaves room for the widest genuine near-polar bands, which
    look large in lon/lat because area there is compressed. */
-ok('NO band in the whole catalogue covers over 8% of the map',
+ok(`NO band covers over 8% of the map (${SAMPLE.length} hardest eclipses)`,
    over.length === 0, over.slice(0, 5).join(', '));
 
 /* The band may reach past its limbs, but only INTO THE CORRIDOR. Two real cases
@@ -258,10 +290,8 @@ const angSepR = (a, b) => Math.acos(Math.max(-1, Math.min(1,
 const nearest = (p, line) => { let bi = 0, bd = Infinity;
   line.forEach((q, i) => { const d = angSepR(p, q); if (d < bd) { bd = d; bi = i; } }); return [bi, bd]; };
 let invented = [], bare = [];
-for (const f of fs.readdirSync(`${ROOT}/data/paths`)
-                  .filter(x => x.endsWith('.gz') && !x.includes('kinked'))) {
-  const ch = JSON.parse(zlib.gunzipSync(fs.readFileSync(`${ROOT}/data/paths/${f}`)));
-  for (const r of Object.keys(ch).filter(k => k !== '__meta').map(k => ch[k])) {
+{
+  for (const r of SAMPLE) {
     const b = I.buildBands([r])[0];
     if (!b) continue;
     const bandMax = Math.max(...b.pieces.map(q => Math.max(...q.map(x => Math.abs(x[1])))));

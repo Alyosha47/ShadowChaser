@@ -292,12 +292,14 @@ function _kmzDoc(entry, ep, rec, appBase) {
        centreline  2.6  opaque      — the thing you navigate to
        umbra       1.8  opaque red  — the only non-orange, it bounds totality
        penumbra    1.3  ~80%        — outer limits, present but recessive
-       horizon     1.5  opaque      — sunrise/sunset maximum */
+       horizon     1.5  opaque      — sunrise/sunset maximum
+       magnitude   1.0  ~60%        — equal-magnitude curves, quietest of all */
   + '<Style id="centre"><LineStyle><color>ff0080ff</color><width>2.6</width></LineStyle></Style>\n'
   + '<Style id="umbra"><LineStyle><color>ff2020e0</color><width>1.8</width></LineStyle></Style>\n'
   + '<Style id="penumbra"><LineStyle><color>cc40a0ff</color><width>1.3</width></LineStyle></Style>\n'
   + '<Style id="horizon"><LineStyle><color>ff30b0ff</color><width>1.5</width></LineStyle></Style>\n'
   + '<Style id="oval"><LineStyle><color>ff00ffff</color><width>1.1</width></LineStyle></Style>\n'
+  + '<Style id="magnitude"><LineStyle><color>9940a0ff</color><width>1.0</width></LineStyle></Style>\n'
   /* hotSpot 0.5/0.5 on BOTH marker styles. Google Earth anchors a custom icon
      at its BOTTOM CENTRE by default — correct for a pushpin whose tip is the
      point, wrong for a symmetrical diamond, which then floats half its height
@@ -332,6 +334,19 @@ function _kmzDoc(entry, ep, rec, appBase) {
      delimiters; _kmzNormSegs handles the shape. */
   var horizon = _kmzLines(ep.green_curve, 'horizon', 'Maximum eclipse at sunrise/sunset');
   if (horizon) kml += '<Folder><name>Maximum on the horizon</name>\n' + horizon + '</Folder>\n';
+
+  /* Equal-magnitude curves (0.2/0.4/0.6/0.8, north and south): where the
+     eclipse reaches that magnitude at its greatest. Collapsed, like the
+     footprints: many long lines. Google Earth shows line names only in its
+     sidebar, so they are named here though the map leaves them unlabelled. */
+  if (ep.magnitude_curves && ep.magnitude_curves.length) {
+    var mag = '';
+    ep.magnitude_curves.forEach(function (c) {
+      mag += _kmzLines([c.line], 'magnitude',
+                       'Magnitude ' + c.level.toFixed(1) + (c.side === 'n' ? ' (north)' : ' (south)'));
+    });
+    if (mag) kml += '<Folder><name>Equal magnitude</name><open>0</open>\n' + mag + '</Folder>\n';
+  }
 
   /* The umbra's own footprint at intervals — the shadow itself, rather than the
      track it sweeps. Collapsed: it clutters the path at low zoom. */
@@ -405,10 +420,12 @@ function downloadKmz() {
 
   var appBase = location.origin + location.pathname;
 
-  Promise.all([loadPathChunk(entry), loadChunk(entry._chunk)]).then(function (res) {
+  Promise.all([loadPathChunk(entry), loadChunk(entry._chunk),
+               typeof loadMagCurves === 'function' ? loadMagCurves(entry) : null]).then(function (res) {
     var pathData = res[0], chunk = res[1];
     var ep = pathData && pathData[String(Math.round(entry.cat_no))];
     if (!ep) throw new Error('path data unavailable');
+    if (res[2]) ep = Object.assign({}, ep, { magnitude_curves: res[2] });
 
     var rec = null;
     for (var i = 0; i < chunk.length; i++) {
