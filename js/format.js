@@ -77,10 +77,16 @@ function fmtAng(a) {
   return (a !== null && a !== undefined) ? a.toFixed(1) + '\u00b0' : '--';
 }
 
+/* The catalogue uses ASTRONOMICAL years: year 0 is 1 BCE, -1 is 2 BCE, -762 is
+   763 BCE (the Assyrian eclipse of 15 June 763 BCE is stored as -762). There is
+   no year 0 in BCE/CE, so a year <= 0 is (1 - year) BCE. This read |year| until
+   2026-09-24, which showed "0 ce" and put every BCE date one year late. */
+function fmtYear(y) {
+  return y <= 0 ? (1 - y) + '\u202fbce' : y + '\u202fce';
+}
+
 function fmtDate(e) {
-  var y = e.year < 0
-    ? Math.abs(e.year) + '\u202fbce'
-    : e.year + '\u202fce';
+  var y = fmtYear(e.year);
   return MONTHS[e.month] + '\u2009' + e.day + ',\u2009' + y;
 }
 

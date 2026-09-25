@@ -16,9 +16,9 @@
 const fs = require('fs');
 const path = require('path');
 
-/* The bail may be written as a regex test, so the SOURCE TEXT is `sat\.php`,
-   not `sat.php`. Allow the backslash. */
-const SATPHP = /sat\\?\.php/;
+/* The bail covers EVERY .php (sat.php, sat-clearsky.php — both keyed by their
+   query). It is written as a regex test, so the SOURCE TEXT is `\.php$`. */
+const SATPHP = /\\\.php\$/;
 
 const SW = path.resolve(__dirname, '../../sw.js');   // suites live in tools/checks/
 let pass = 0, fail = 0;
@@ -43,28 +43,32 @@ const satIdx   = body.search(SATPHP);
 const matchIdx = body.search(/caches\.match\(\s*req\s*,\s*\{\s*ignoreSearch/);
 
 /* 1. The bail exists inside the fetch handler. */
-ok('fetch handler bails on sat.php', satIdx !== -1);
+ok('fetch handler bails on every .php', satIdx !== -1);
 
 /* 2. It comes BEFORE the cache-first branch, or it protects nothing. */
-ok('sat.php bail precedes the ignoreSearch cache-first match',
+ok('the .php bail precedes the ignoreSearch cache-first match',
    satIdx !== -1 && matchIdx !== -1 && satIdx < matchIdx,
    'satIdx=' + satIdx + ' matchIdx=' + matchIdx);
 
 /* 3. It actually RETURNS (passes through), not just mentions it in a comment. */
 const satLine = body.split('\n')
   .filter(l => SATPHP.test(l) && /\breturn\b/.test(l) && !/^\s*[*/]/.test(l));
-ok('the sat.php line passes the request through with a bare return',
-   satLine.length > 0, 'no non-comment line matching sat.php + return');
+ok('the .php line passes the request through with a bare return',
+   satLine.length > 0, 'no non-comment line matching .php + return');
+/* 3b. And the pattern really matches both endpoints, and not ordinary assets. */
+const bailRe = satLine.length ? new RegExp(/\/(.+)\/\.test\(url\.pathname\)/.exec(satLine[0])[1]) : /$^/;
+['/sat.php', '/sat-clearsky.php'].forEach(p => ok('bail matches ' + p, bailRe.test(p)));
+['/js/cloud-now.js', '/index.html', '/data/besselian/2001_2100.json'].forEach(p =>
+  ok('bail leaves ' + p + ' to the cache', !bailRe.test(p)));
 
 /* 4. ignoreSearch must SURVIVE for everything else — it is what makes
       foo.js?v=BUILD match cached foo.js (HANDOFF §12.1). Deleting it would fix
       this bug and re-open the phantom-cache-miss one. */
 ok('ignoreSearch still used for ordinary same-origin assets', matchIdx !== -1);
 
-/* 5. No OTHER same-origin dynamic endpoint may appear without the same bail. */
-const otherPhp = (src.match(/[A-Za-z0-9_-]+\.php/g) || []).filter(s => s !== 'sat.php');
-ok('sat.php is the only .php endpoint referenced in sw.js', otherPhp.length === 0,
-   otherPhp.join(', '));
+/* 5. Every .php in the repo root is covered by that one bail. */
+fs.readdirSync(path.resolve(__dirname, '../..')).filter(f => /\.php$/.test(f))
+  .forEach(f => ok(f + ' is bailed (never cached with its query ignored)', bailRe.test('/' + f)));
 
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

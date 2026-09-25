@@ -8,7 +8,7 @@ rule, and the per-pixel disagreement.
 """
 import sys, json, math, base64, datetime
 import numpy as np
-sys.path.insert(0, '/home/claude/main/tools/checks')
+import os; HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 from calib import goes, eum
 
 R = 6378137.0
@@ -21,7 +21,7 @@ SATS = {
                    layer='Himawari_AHI_Band13_Clean_Infrared'),
 }
 GA, GB = -0.38598, 57.2375
-cm = np.array(json.load(open('/home/claude/main/tools/checks/cmap.json')), float)
+cm = np.array(json.load(open(os.path.join(HERE, 'cmap.json'))), float)
 cold = cm[cm[:, 3] < -11.5]
 
 def temp(a):

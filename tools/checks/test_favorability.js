@@ -671,5 +671,38 @@ ok('an in-flight render is abandoned if the eclipse changed under it',
 ok('_swap has a three-way state, not a boolean',
    /showDetail === true/.test(code) && /showDetail === false/.test(code));
 
+/* A SELF-INFLICTED SWITCH-OFF MUST REACH THE BUTTON (2026-09-24). The layer
+   turns itself off when its data cannot be prepared or a render throws; the
+   button and legend were only told on a click, so the icon stayed lit over no
+   overlay and the next click turned it back ON. Runs the shipped disable. */
+(function () {
+  var calls = [];
+  var sbx = { window: {}, console: { log: function () {}, warn: function () {} }, Math: Math };
+  sbx.window.FavorBar = { sync: function () { calls.push('sync'); }, render: function () { calls.push('render'); } };
+  sbx.FavorBar = sbx.window.FavorBar;
+  vm.createContext(sbx); vm.runInContext(src, sbx);
+  sbx.window.Favorability.disable();
+  ok('disable() tells the button and the legend', calls.indexOf('sync') >= 0 && calls.indexOf('render') >= 0,
+     calls.join(','));
+})();
+
+/* THE DRAWN BOX STAYS ON THE WORLD (2026-09-24). Dragging west across the
+   antimeridian gave getBounds() west = -244, and a box centred on the path
+   (126 E, i.e. -234) past -180; the canvas source was placed on the
+   tile under the box centre (x = -1), MapLibre threw, and the layer switched
+   itself off mid-drag. Runs the shipped _bbox() against those bounds. */
+(function () {
+  var hooked = src.replace('function _bbox() {', 'window.__bbox = function () { return _bbox(); };\n  function _bbox() {');
+  ok('bbox test hook installed', hooked !== src);
+  var sbx = { window: {}, console: { log: function () {}, warn: function () {} }, Math: Math,
+              map: { getBounds: function () { return { getWest: function () { return -300; }, getEast: function () { return -150; },
+                                                       getSouth: function () { return -60; }, getNorth: function () { return 10; } }; } } };
+  vm.createContext(sbx); vm.runInContext(hooked, sbx);
+  var box = sbx.window.__bbox(), c = (box.w + box.e) / 2;
+  ok('a view past the antimeridian gives a box centred on the world (-180..180)', c >= -180 && c < 180,
+     JSON.stringify(box));
+  ok('... shifted, not cropped: still at least the 150 degrees asked for', box.e - box.w >= 150, box.e - box.w);
+})();
+
 console.log('\n' + (fail ? fail + ' FAILURE(S)' : 'all ' + pass + ' passed'));
 process.exit(fail ? 1 : 0);

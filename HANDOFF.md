@@ -85,7 +85,7 @@ cost to him.
 
 1. **Clone fresh from `main`, deep.** He applies changes by hand, so the repo may lag what he is
    actually running — and the *live site* may lag both. Check all three before believing any of them.
-2. **`npm i jsdom`, then `node tools/checks/run.js`.** Expect **all 13 suites to pass** (since
+2. **`npm i jsdom`, then `node tools/checks/run.js`.** Expect **all 16 suites to pass** (since
    2026-09-16a — `test_tshirt`'s 3 long-standing failures are fixed, §11.4). Any FAIL is a regression. The runner separates
    `CANNOT RUN` (setup) from `FAIL` (regression) — **if you see CANNOT RUN, fix that first.** Three
    suites were reported as failing for a week when they were only missing `jsdom`.
@@ -235,8 +235,9 @@ someone should DO, it belongs in TODO; if it is something someone should KNOW, i
 
 ### What is deployed
 
-`BUILD 2026-09-08a`. `cloud-average.js 2026-09-08a`, `cloud-now.js 2026-08-20a`,
-`cloud-photo.js 2026-08-20a`, `cloud-ui.js 2026-08-20a`.
+Repo (2026-09-25): `BUILD 2026-09-25j`. `cloud-average.js 2026-09-13a`,
+`cloud-now.js 2026-09-23c`, `cloud-photo.js 2026-09-23a`, `cloud-ui.js 2026-09-23b`. What is LIVE
+may lag this — the user deploys by hand.
 *(This line said `2026-08-20u` for a fortnight while five commits landed. It is the one fact in this
 file most likely to be stale — check `index.html` before believing it.)*
 The map, offline mode, terrain shadows, the user log and the poster are all shipped and working.
@@ -304,9 +305,8 @@ ignore rule obsolete.)*
   it supposedly lived, is gone). But Cesium still exists in the user's working copy and the `cesium`
   branch is untested — before that branch is ever published, restrict the token to
   `followtheshadow.com` in the ion console, or rotate it.
-- **`data/basemap/states.geojson.gz`** is precached in `sw.js` (CORE) but `map.js` never references
-  it. Either a layer was dropped and the precache entry left behind, or it is pending use. Worth one
-  look before the next `sw.js` change.
+- **`data/basemap/states.geojson.gz`** — resolved: `map.js` fetches it (line ~304) and draws it as
+  `states-line`; the precache entry is correct (change log, `states-line`).
 
 ### The open task list lives in `TODO.md`
 Open bugs, the feature pool, queued polish and deferred infrastructure were all moved there on
@@ -454,13 +454,14 @@ ShadowChaser/
 │   │                   (antimeridian-split), lakes, rivers, cities, states  (.gz)
 │   ├── besselian/      per-century element records — SOURCE OF TRUTH, git-tracked
 │   ├── cloud/          96 cloud_MM_HH.webp climatology slices (§10)
-│   └── paths/          generated *.json.gz corridors — NOT git-tracked (build artifacts)
-├── data build tools/   gen_eclipse_paths.py — the canonical generator
-│                       noncentral_durations.py (§9.6); gen_cloud_climatology.py +
+│                       (no paths/ — computed on the device since 2026-09-20, §9.6)
+├── data build tools/   gen_eclipse_paths.py — the Python reference (js/pathgen.js is the engine)
+│                       noncentral_durations.py (§9.10); gen_cloud_climatology.py +
 │                       encode_cloud.py (cloud pipeline); delta_t / update_dt / verify_dt;
-│                       validate_paths.py, validate_terminators.py, inspect_term_gaps.py
-│                       ⚠ audit_paths.py is MISSING from the repo (§9.7)
-│                       ⚠ gen_eclipse_paths_13f.py is a DUPLICATE GENERATOR (§9)
+│                       validate_paths.py, pathdump.js, check_regen.py (§9.6);
+│   (root)              sat.php (imagery proxy), sat-clearsky.php (Now's reference, §10A.4)
+│                       validate_terminators.py, inspect_term_gaps.py, audit_paths.py (§9.7);
+│                       WHAT-EACH-FILE-DOES.md is the index
 ├── tools/              set_build.js — the only way to bump BUILD (§4)
 │                       checks/ — headless test suites + run.js (§13); the depth
 │                       matters, they resolve paths two levels up
@@ -1236,7 +1237,8 @@ against both limits together.
 Horizon curves 2024-04-08 984 → 208 m, 2017-08-21 645 → 97 m, 1999-08-11 422 → 93 m, 2023-10-14
 1,233 → 314 m, 2003-11-23 193 → 122 m. Worst points (the tips) unchanged at up to ~16 km.
 
-**`data build tools/check_regen.py`** compares a regenerated catalogue with the deployed one:
+**`data build tools/check_regen.py`** *(re-pointed 2026-09-22: it now compares two `pathdump.js`
+outputs, i.e. two versions of `js/pathgen.js` — §9.6)* compares a regenerated catalogue with the deployed one:
 inventory, structure (only issues NEW has that BASE lacks), per-curve shift buckets with the largest
 movers and N/S swaps, and every reference KMZ with ΔT removed. Loads both catalogues whole: needs
 ~3 GB free (the sandbox's 3 GB is not enough for 50 + 50 chunks — run it per century there).
@@ -1491,8 +1493,28 @@ limits on five hard eclipses, same answer every time (same frame, ΔT; `eclipse.
   day) and is briefly invalid each time, so map clicks logged ERR_CERT_DATE_INVALID even though the
   fallback answered — the browser logs a failed request whatever the code does with it.
 
-**Offered, not built:** equal-magnitude curves (Jubier draws 0.2/0.4/0.6/0.8 N and S in 24 of the
-53 reference KMZs) — same field-and-tracer method, ~0.3 s per curve.
+**Equal-magnitude curves (0.2/0.4/0.6/0.8, N and S) — SHIPPED 2026-09-22a** (commit `2227720`).
+Contours of the greatest magnitude a place sees, over the part of the Earth where that maximum happens
+with the sun up; each ends on the maximum-on-horizon curve. Same field + seeds + tracer as the other
+curves (`magnitude_curves` in `pathgen.js`). They cost about as much as the rest of the path, so they
+are computed SECOND: `eclipse_magnitude_curves(rec)` is a separate entry point, `paths.js`
+`loadMagCurves()` computes and caches them on their own key (`mag:` + the path key), and `map.js` draws
+the path first, then redraws with the `magnitude-lines` PathLayer if the eclipse is still selected.
+Drawn quieter than the penumbra limits and **unlabelled (user's call, 2026-09-21)**. `kmz.js` writes
+them named, in a collapsed folder (Google Earth shows names only in its sidebar).
+**Verified 2026-09-22 against all 181 Jubier magnitude curves** (`validate_paths.py --all`): median of
+medians 6.7 m. Worst medians 150–190 m (2045-08-12 S, 2042-04-20 S) are HIS: evaluated with
+`eclipse.js`'s independent `computeEclipse().mag`, his points there sit 134–199 m off the level, ours
+read the level exactly.
+
+**Validation tools (re-pointed 2026-09-22, no path files needed).** All assistant-only (Node).
+`validate_paths.py --all` — every curve type, every `reference kmz/` file, ΔT removed, ours computed
+fresh by `pathgen.js`. Its figures reproduce the table below (centreline 3.8 m, umbra 5.6 m, terminators
+59 m, green 93 m, penumbra 620 m, medians of medians). `pathdump.js <pathgen.js> <dir> [from to]` writes
+any engine version's catalogue as chunks (~1.1 s per eclipse here, so the whole catalogue is hours; use
+a year range); `check_regen.py --base A --new B` compares two dumps. Control run: HEAD against itself,
+2001–2030 — zero change in every bucket, as it must be. **Before bumping `PATHGEN_VERSION`: dump
+`git show HEAD:js/pathgen.js` and the edited file, compare, look at the movers.**
 
 **Final generator vs `13j`, against Jubier, ΔT removed, umbral limits (median / worst):**
 ```
@@ -1518,9 +1540,12 @@ Centreline and terminators unchanged (±10 m). Penumbra unchanged within ±50 m.
   maximum magnitude reaches zero, the standard definition; his line sits just inside it. Why is
   not known without his code. Invisible in practice (magnitude ≤ 0.0004).
 
-**Open:** 2023-10-14 and 2024-04-08 are ~20 m NARROWER than Jubier on both limbs (every other
-reference is within 4–9 m); limb ends near the horizon can be ~1 km off (a horizon-definition
-question). Cost: 6–22 s per eclipse, ~2× `13j`.
+**Settled 2026-09-22 — the ~20 m is Jubier's, not ours.** 2023-10-14 and 2024-04-08 read ~20 m
+narrower than Jubier on both limbs. Measured by evaluating the exact umbral field (`umb_depth`,
+converted to ground metres by its gradient) at his limit points and at ours: his lie INSIDE the umbra
+by a median 26 m (2023-10-14), 19 m (2024-04-08), 14 m (2017-08-21), 9 m (1999-08-11), 3 m
+(2026-08-12); ours lie 0.1–0.3 m from it. Same sign everywhere, so a small input difference on his
+side, as with the penumbra. Limb ends near the horizon (~1 km) were not re-measured. Cost: 6–22 s per eclipse, ~2× `13j`.
 
 **The defect.** 33 of 11,898 records (28 plain `A`) had an umbral limit bridged by one straight step
 of 300 km or more — worst 2654-12-01 at 1,958 km, 1979-08-22 at 1,178 km. Rendered, each chord
@@ -1556,7 +1581,7 @@ Also: structural audit unchanged (the two `A+` ONELIMB only); all 33 ends within
 green line; longest stored step 170 km (DP's 200 km cap); `test_tshirt` output identical, and
 `test_country`/`test_favorability` pass. All 33 were rendered and looked at.
 
-### 9.6 Non-central eclipse durations — SHIPPED
+### 9.10 Non-central eclipse durations — SHIPPED
 `data build tools/noncentral_durations.py` (stdlib only; run from the repo root). **Already run with `--write`;
 `data/index.json` is patched.** Re-running is safe and idempotent.
 
@@ -1782,7 +1807,7 @@ truth for a hillside.
 
 ---
 
-### 10.5 The overlay is drawn for ONE eclipse — and twice it showed the wrong one
+### 10.8 The overlay is drawn for ONE eclipse — and twice it showed the wrong one
 
 `_covered()` decides whether the canvas on screen can be reused. It tested the drawn BOX and the
 zoom, and nothing else — so it could not tell a valid canvas from one drawn for a different eclipse.
@@ -1909,9 +1934,49 @@ across recent frames — specifically the **second**-warmest, so one bad scan li
   the storm was measured against its own tops and hollowed out. Drawn area 29.1% at four days,
   **36.2% at ten**, and the large holes close. The published method (bispectral composite threshold,
   Jedlovec et al.) uses twenty days; ten is a compromise with the request count.
-- **`BG_TTL` is 6 hours**, not 30 minutes — it is built from frames a day apart, so half an hour was
-  far shorter than anything it measures and just made an idle browser refetch ten frames per
-  satellite for no change. The long TTL is what makes ten frames affordable.
+- **The reference is HOURLY, blended to the displayed frame's time (since BUILD 2026-09-23c).** One
+  reference per satellite per clock hour (ten frames, same hour on past days); the two either side of
+  the frame's time are blended linearly (`hourRef`, `background(sat, at)`). Measured 2026-09-22 with
+  `bgtest.py` (share of pixels whose cloud/clear call changes vs a reference for the exact time):
+  6 h old at midday 29% (cloud 69% → 41%); 30 / 60 min old 3–10% / 4–12% (dawn, morning, afternoon);
+  **hourly blend at its worst point (mid-hour) 1–3%**; half-hourly blend 1–3%, no better — that is
+  the floor. Keyed to the FRAME, not the clock: GIBS publishes 18–50 min late, and the one-build
+  2026-09-22b version keyed to the clock sat that far from the picture. History: 6-hour TTL ("the
+  ground does not move" — its temperature does) until 2026-09-22b. Cost while `Now` is on screen:
+  ten frames per satellite per hour, ~13 MB/h. Only the two hours in use are kept (~2.3 MB each).
+  **Cold start waits for the NEARER hour only** (10 frames, as before); the other is requested after
+  it and blended in at the next render (pan or 5-min refresh). A failed hour uses the other; both
+  failed keeps the last field; never none. `test_satellite` §12
+  checks the blend by value on the real `background()`. Hour-aligned stamps verified live for all
+  five satellites. Not measured: midday itself (dark at the time of testing); one day of samples.
+  **Live-checked 2026-09-23 (BUILD 23c):** headless browser, all five satellites drawn in 7 s, none
+  missing; the user saw blending in `Satellite.diagnose().bg`. A transient "no Himawari" that day was
+  GIBS answering 500/504 (its error pages lack CORS headers, so the console says CORS); it cleared on
+  its own. That is the ~1-in-5 drop §10A already describes, not the reference code.
+- **The reference is built on the SERVER when it can (`sat-clearsky.php`, BUILD 2026-09-23e).** One
+  request per satellite-hour, `?s=<id>&h=YYYY-MM-DDTHH` → gzip of int16 LE, 1024×566, tenths of °C,
+  −32768 = no data, header `X-Clearsky-Grid` (the phone refuses any other grid). Built on first
+  request with the frames fetched in parallel (~2.5 s measured locally), cached in
+  `sys_get_temp_dir()/satclearsky` under a lock, swept after 3 days. A build missing TODAY's frame
+  is provisional (15 min); a day missing from the archive is not. ~200 kB per satellite-hour
+  against ~3.4 MB of frames. **The phone falls back to building it itself on ANY failure** (offline,
+  local-disk copy with no PHP, no `DecompressionStream`, wrong grid, truncated file) —
+  `test_satellite` §14 covers each. `Satellite.diagnose().bg[].from` says `server` or `phone`.
+  **The decode in the PHP is a COPY** of `tempOf`/`buildCube` and their tables; `test_clearsky`
+  compares them over 636k colours and all Meteosat greys, plus grid, BBOX and satellite list.
+  **Verified end to end 2026-09-23** in Chromium against a local PHP server: server-built vs
+  phone-built reference for the same satellite-hour, all five satellites — identical data masks,
+  differences ≤ 0.05 °C (the int16 rounding). **`sw.js` now bails on EVERY `.php`**: with
+  `ignoreSearch` the SW would otherwise have served one satellite's reference for all five
+  (`test_sw`).
+  **Live 2026-09-23 (BUILD 23e):** all five satellites, both hours, `from: server`, blended.
+- **A satellite that went missing is retried at 30 s and again at 90 s** (`cloud-ui.js`
+  `retryMissing`, since BUILD 2026-09-23d), through `invalidate()` — the only call that also clears
+  `_hostFails` (two failures block the whole GIBS host until then). Stops as soon as nothing is
+  missing; at most two per scheduled refresh; skipped when hidden or not in Now. Live-tested with a
+  simulated 20 s Himawari outage (Playwright serving the new files over the deployed site): missing
+  at 6 s, drawn at 39 s. In an earlier run the 30 s retry did not recover it (cause not captured;
+  the 90 s one was not observed). `test_satellite` §13.
 - **The grid is the WHOLE WORLD at `BG_W = 1024`.** Sized to the satellite (`lon ± 80°`) it wrapped
   past 180° for Himawari and both GOES, and the wrap fallback then requested the world at the *same
   pixel width* — three of five satellites measuring cloud against a field four times coarser than
@@ -2526,11 +2591,10 @@ the footprints (yellow) — blue and green were tried and **vanish against Googl
 basemap**, which is nothing like this app's dark globe. **A graticule folder was built and then
 removed on request**; do not re-add it.
 
-### Not yet verified
-Everything above was verified by running the generator in Node — zip integrity (`unzip -t`), KML
-parses, PNG round-trips byte-intact, balloon contents spot-checked against `computeEclipse`. **The
-browser path has never executed**: `atob`, `CompressionStream`, the blob download and the button
-wiring. Click the button before trusting it.
+### Verified in the browser 2026-09-22
+The user downloaded one from the Details panel and opened it in Google Earth: it opens and matches
+Jubier's. Before that, everything was verified by running the generator in Node — zip integrity (`unzip -t`), KML
+parses, PNG round-trips byte-intact, balloon contents spot-checked against `computeEclipse`.
 
 ---
 
@@ -2724,9 +2788,13 @@ overshoots, 8 bare centrelines, 1 flood):
   sharp bend don't cancel under nonzero fill). Rays, not nearest vertex — the green line runs
   obliquely, and nearest-vertex gave spiky edges. Exactly 46 bands change; all rendered old/new.
   **Illustration grade, not a chart.** Two (-916-04-09, 361-02-21) now show a hole where the
-  path hooks — truer than the old solid band, arguably odder to look at. **The chord cases are fixed in the
-  data (§9.5, 2026-09-17); whether they now skip `centreEdges` has not been checked. The
-  horizon-bounded ones still need it.**
+  path hooks — truer than the old solid band, arguably odder to look at. **Checked 2026-09-22 on the
+  engine's paths:** the former chord records (1979-08-22, 2654-12-01, -797-11-07, -1801-04-15) and the two
+  hook cases (-916-04-09, 361-02-21) now draw as ordinary ribbons — no chord, no dropped steps — so none
+  takes `centreEdges`. `hasChord` can no longer fire at all: the engine caps a stored step at 200 km,
+  the chord test is 300 km. The horizon-bounded grazers still need it (807-02-11: 384 steps dropped;
+  1547-11-12: 590). -1038-10-03 and 936-09-18 are one-limit types (`As`, `An`) and draw no band by
+  design. Not rendered.
 
 **Two approaches tried and REJECTED, do not re-attempt without reading why:**
 - *One closed polygon, fill it.* Looks obviously right; produces a huge wrong wedge with the centreline
@@ -3100,6 +3168,12 @@ evidence — do not keep investigating the part they share.**
 
 ## 14. QUICK GOTCHA INDEX
 
+- **There is no corridor polygon, and none should be built.** Rasters ask "is this cell central?"
+  per cell (`m < |L2'|`, §9.0). Four polygon attempts each fixed one case and broke polar paths.
+- **Eclipse paths are drawn at height 0.** Any lift parallaxes them across the ground (2.5 km lift =
+  4.3 km error at 60°), corrupting the one measurement the app exists to make.
+- **Safety-rail constants can become the dominant term** (a screen floor overriding a ground cap).
+  Check the arithmetic at both zoom extremes (§2).
 - `eclipse_type` — first letter uppercase, drives icon selection. Magnitudes: totals ~1.00–1.08,
   annulars ~0.85–0.99, partials 0–1.
 - `rec.t0` is **TDT decimal hours**, not UT. `UT = t0 + t − dT/3600`; dT in seconds.
@@ -3156,7 +3230,7 @@ evidence — do not keep investigating the part they share.**
 - Don't set `position` on a MapLibre marker wrapper (§7.9).
 - Nothing pushes to `mapMarkers`/`pathMarkers` except `registerMarker` (§7.4).
 - Low ΔT-era agreement in `noncentral_durations.py` is the ΔT upgrade working, not a bug. Gate on the
-  USNO rows (§9.6).
+  USNO rows (§9.10).
 - `sw.js` matches same-origin with `ignoreSearch`, so any URL whose QUERY is its identity collapses to
   one cache entry. `/sat.php` is bailed out ahead of it; a new dynamic endpoint needs the same (§12.1).
 - The banner mark was removed entirely (2026-08-23) after the redraw work in the old §11.7 never
@@ -3210,6 +3284,187 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-25j** — Manual sections renamed (headings and contents): 1. Syzygy, 2. Search, 3. Map, 4. Details,
+  5. Log, 6. Info. Anchors (#what-it-is, #search…) unchanged. BUILD 2026-09-25j.
+- **2026-09-25i** — Lo-res (1x) manual logo: the user chose the 48-ray version (width ×2.2) over 64. Same
+  geometry and renderer as 25h. BUILD 2026-09-25i.
+- **2026-09-25h** — Manual logo for normal (1x) screens re-drawn from the logo's MEASURED geometry
+  (splash art: 96 rays 3.75° apart, constant width 0.0239 R, inner radius R, per-ray outer length;
+  a 96-ray re-render matched the original within anti-aliasing) with 64 evenly spaced rays at ~1 px,
+  outer lengths interpolated. `icons/manual-logo-64.png` only; the 2x/3x files are unchanged (user:
+  retina fine). Options sheet also rendered 48/40/32 rays (fewer lose the short lower-left rays).
+  BUILD 2026-09-25h.
+- **2026-09-25g** — App About (Info tab) gains the Potosi line too, "hilltop" linking `#e=9496&q=(-19.61000, -65.75000)`,
+  same form as its other eclipse links. BUILD 2026-09-25g.
+- **2026-09-25e** — Manual edits (user's list): Accuracy moved above Maps; GIBS credit trimmed and
+  Meteosat folded into the Now/Pic item; Thanks removed; About gains "Six months later, I was on a
+  hilltop outside Potosi, Bolivia…" (hilltop → `#e=9496&q=(-19.61000, -65.75000)`, an app-link);
+  overlay icons are now the Instructions' own SVGs at their size (1.5em), poster icon is the app's
+  "Make map" folded map (was the old t-shirt); the favorability formula (as in the Instructions)
+  replaces the "Three criteria" bullet; h2/h3 sizes swapped (h2 1.02rem, h3 .95rem; h4 unchanged at .9rem). App About NOT changed (asked). Lo-res logo still open. BUILD 2026-09-25e.
+- **2026-09-25c** — Manual on phones was 543 px wide on a 390 px screen: the unbroken credits URL
+  (tilezen/joerd) widened the page. Now a link, and `p, li, td` wrap long strings. Measured with an
+  iPhone-sized viewport: page width = screen width. Logo size still open (user: only 96 px reads,
+  but too big; 80–96 comparison sent). BUILD 2026-09-25c.
+- **2026-09-25b** — **Search now does what the Instructions print.** Every example in the Instructions
+  and manual was typed as printed (Node and the real search field): five failed. (1) En dashes — the
+  Instructions print "2026–2030", "1994–", "10BCE–10CE", "95–" with en dashes, which matched nothing;
+  the parser now reads – — − as "-". (2) "50+" and "95–" are listed as OBSCURATION but were read as
+  years (50 CE onward); a plain 0–100 with +/− is now obscuration, and a small year takes an era
+  ("50ce+") or a word ("after 50"). (3) "1994-now" meant today-onward (the today rule took "now"
+  first); "N-now" now runs before it. (4) before/after, N+, N−, N-now accept eras: "before 500 bce",
+  "after 44bc", "500bce+" (they took plain numbers only; "before 500 bce" matched nothing). (5)
+  `filterToString` writes before/after BCE with eras. Days alone ("28") still need a month, as
+  designed. `test_years` §5 checks every printed example (9 fail on the pre-change parser); all round-trip
+  through the rewrite. BUILD 2026-09-25b.
+- **2026-09-24k** — Search written back (`filterToString`, used by every map tap, GPS, log jump and URL):
+  a year range touching BCE came out as astronomical numbers, e.g. "2bce 1ce" → "-1-1 (lat, lon)", which
+  reads back as nothing. Exact years and BCE ranges are now written with eras as a user types them
+  ("2bce-1ce", "763bce", "5ce"); CE-only ranges, bare years and before/after are unchanged. Checked in
+  the real app: select Dec 26 2 BCE from "2bce 1ce", tap the map → "2bce-1ce (-76.22282, 107.28814)",
+  same eclipse, list intact. `test_years` §4 round-trips every form (5 fail on the old parser). Not done:
+  "before 500 bce" / "after 500bce" are not understood by the parser (before/after take astronomical
+  numbers: "before -499"). BUILD 2026-09-25a.
+- **2026-09-24j** — Search: a range written with eras ("1bce-1ce", "1 bce – 1 ce") left its joining dash
+  as free text, which matched nothing, so the list was empty (the 24i note that it worked was checked
+  only on the parsed years, not on the list — wrong check). The dash is now dropped when two
+  era-marked years are given. "to" is NOT a range word ("to" is the prefix for "total"). Checked in the
+  real search field (phone layout): 1bce-1ce and "1 bce 1 ce" list the five eclipses of 1 BCE–1 CE,
+  "1 ce" the two of 1 CE. `test_years` §3 runs queries end to end (4 fail without the fix). BUILD 2026-09-24j.
+- **2026-09-24i** — **BCE years were off by one everywhere.** The catalogue uses ASTRONOMICAL years
+  (0 = 1 BCE; the Assyrian eclipse of 15 June 763 BCE is stored as −762, Thales' 585 BCE as −584), but
+  `fmtDate` printed |year| — so year 0 showed as "0 ce" and every BCE date read a year late. Now
+  `fmtYear(y)`: y ≤ 0 → (1 − y) BCE. KMZ file names likewise. Search: "1 ce" also matched 1 BCE
+  (an explicit era was still paired like a bare year); an explicit era now means that year only; a
+  bare "974" still means 974 CE or BCE. New suite `test_years` (fails on the old code). Poster labels
+  keep ISO astronomical dates (−762-06-15), which is ISO 8601's own convention. BUILD 2026-09-24i.
+- **2026-09-24h** — Manual logo back to 64 px (the 112 px of 24g was too large). The moire was
+  RESAMPLING, not size: the ~100 rays are finer than a pixel at 64 px, and a plain resize aliases them
+  into beat patterns. `icons/manual-logo-64/128/192.png` are now pre-filtered (Gaussian blur of half an
+  output pixel, then area averaging) from the splash art; checked magnified on a 2x render — rays
+  clean, no beating. The splash screens never hit this because they draw the logo hundreds of px wide.
+  Phone: logo stays beside the title, which scales (min(2.1rem, 5.4vw)). 112/224/336 files removed.
+  BUILD 2026-09-24h.
+- **2026-09-24g** — Manual logo now 112 px (`icons/manual-logo-112/224/336.png`; the 64/128/192 set
+  removed): at 64 px its ~100 rays cannot be resolved and shimmer however it is resampled (compared at
+  64/96/112/128 px, pixels magnified). On screens under 560 px the logo stacks above the title and the
+  title scales (it overflowed a 390 px phone). Intro sentence under "USER MANUAL" removed. BUILD 2026-09-24g.
+- **2026-09-24f** — Manual: logo re-cut from the splash art (`icons/manual-logo-64/128/192.png`,
+  transparent, served by srcset at 1x/2x/3x so the browser never resamples the fine rays; the 192 px
+  icon shrunk to 64 shimmered), precached in `sw.js`. §7 Offline reference removed (with its TOC entry
+  and spacer). "and don't stare at the sun!" italic. BUILD 2026-09-24f.
+- **2026-09-24e** — Manual: the Info tab's moon-sun-moon spacer between its sections (`.ornament`,
+  1.25rem vs the app's 0.95rem). BUILD 2026-09-24e.
+- **2026-09-24d** — **Manual dressed as the app, one manual tab.** Manual now uses the app's fonts
+  (Cormorant Garamond title, JetBrains Mono body, same @font-face as index.html) and palette (gold on
+  #0a0c0f); header is the v2 icon (`icons/icon-192-v2.png`, also the favicon) + "FOLLOWTHESHADOW" in the
+  banner's serif/letterspacing + "USER MANUAL" in the section-header style; h2 in the app's section-header
+  style. "← Back to the app" moved to the bottom. **The manual no longer closes itself** when an About
+  link steers the app; the app's manual link reuses the one tab (`window.open('', 'ftsmanual')` returns
+  the open tab without reloading it; a new blank one is sent to the manual). Tested in Chromium: Oslo
+  selects 1954-06-30 in the app, the manual stays, a second click opens no new tab and keeps the
+  manual's scroll. Logo and fonts are already precached, so it all works offline. BUILD 2026-09-24d.
+- **2026-09-24c** — **Favorability cause found and fixed: the antimeridian.** The user's console line
+  (Brave): `[favorability] x=-1, y=2, z=2 outside of bounds`. Dragging west across ±180 makes
+  `getBounds()` report unwrapped longitudes (west −244); the corridor box followed, its centre went
+  below −180, and MapLibre places a canvas source on the tile under the centre → tile x = −1 → throw →
+  the render's catch switched the layer off. `_bbox()` now shifts the box by ±360 until its centre is in
+  −180…180 (same place on the globe; mask and score already wrap longitude); `_covered()`/`_stillCovers()`
+  compare on the same world copy. Reproduced in Chromium with the old file (off on the first drag) and
+  fixed with the new (on through five drags, overlay drawn — screenshot checked). `test_favorability`
+  covers it (fails on the old file). `favorability.js` 2026-09-24b. BUILD 2026-09-24c.
+- **2026-09-24b** — **Favorability: a self-inflicted switch-off now reaches the button.** User report
+  (2028-07-22, desktop): enable with the path on the far side, rotate back → no overlay; "This view" →
+  legend vanishes, icon stays lit; one click → overlay appears. That is exactly what the old code does
+  when the layer turns ITSELF off (`_prepare` not ok, or a render that throws → `_disable()`): only a
+  click told the button. Reproduced by forcing a render failure in Chromium (old: on=false, icon lit,
+  legend showing; new: icon and legend follow). `_disable()` now calls `FavorBar.sync()`+`render()`;
+  `test_favorability` covers it (fails on the old file). **The underlying failure is NOT yet found**:
+  could not trigger it here on 2028-07-22 in Chromium; waiting for the user's `[favorability]` console
+  line. `favorability.js`/`favorability-ui.js` 2026-09-24a. BUILD 2026-09-24b.
+- **2026-09-24a** — **Central-country rebuild shipped.** The user ran the fixed `central_countries.py`
+  (built 2026-09-23T22:57Z): 44 countries added across 41 eclipses, 0 removed. Mostly high latitude
+  (Canada 7, Greenland 6, Russia 4, Norway 4, Finland 3, Antarctica 3…), plus 11 elsewhere — every one
+  of those 11 confirmed independently by `crosscheck_central.js` (eclipse.js), e.g. 2070-04-11 now
+  includes the Philippines. Merged with `apply_central.py` (44 flags set, nothing lifted or un-flagged;
+  second run changes 0). −1682-11-12 Greenland: 16 → −16 (central). BUILD 2026-09-24a.
+- **2026-09-23i** — **`central_countries.py`: longitude reach scaled by latitude** (`lon_pad`). It
+  compared longitude distances against a pad in degrees of LATITUDE, so at high latitude it discarded
+  countries the corridor reaches (268 km = 2.4° lat but 8.8° lon at 74°N). −1682-11-12 now 39
+  countries incl. Greenland, matching `crosscheck_central.js`. Can only ADD countries (the final test
+  is unchanged). 1901–2000 rebuilt: no change. Full rebuild (~1 h) handed to the user to run locally;
+  the result is to be diffed against the old file before shipping.
+- **2026-09-23h** — **Duplicate downloads, DATA half: none. Closed.** First visit in Chromium with the
+  service worker on, counted at the server: each of the 50 besselian and 96 cloud files fetched exactly
+  once. (Shell files showed twice, but only because the local PHP dev server sends no Last-Modified, so
+  the precache's `cache: 'default'` cannot reuse the page's copy; Bluehost sends Last-Modified. The shell
+  half was verified live 2026-09-13.)
+- **2026-09-23g** — Instructions and manual text edits (user's list). App: "click a location"; overlay
+  sentence ends at "favorability score"; "Combine any of these, in any order:"; Details paragraph
+  reordered; Cloud header moved above "For on-the-day…", now "three different ways"; link reads "For
+  much more thorough instructions and information, click here". Manual: Search range section, Settings
+  section and §8 Tips removed (setting gone since 2026-08-29v); city/country example is now
+  `armenia` (city in Colombia) vs `armenia country` (Natural Earth has both); "other two overlay
+  buttons"; contact rows "jump the sky-tracker (and terrain-shadow scrubber, if it's open)" — checked,
+  `scOnContactRow` drives both; several sentences cut; Save & share icons reordered to the app's order
+  (globe, share, star); Accuracy text in the body font; "Street & Satellite". **Manual ↔ app links:**
+  the manual's About regained its five eclipse links (`a.app-link`, href `./#e=…`) plus "← Back to the
+  app". Opened from the app in a browser (`window.open`, keeps the opener), a link sets the app's hash
+  and closes the manual — tested in Chromium: 1954-06-30 selected, manual closed. Installed app
+  (standalone) opens the manual in the same window; links then navigate back. **Manual precached** in
+  `sw.js` CORE for offline. BUILD 2026-09-23i.
+- **2026-09-23f** — Instructions (Info tab) end with "For complete instructions and information, click
+  here", linking `followtheshadow-manual.html` in a new tab. The manual is NOT precached by `sw.js`, so
+  the link needs a connection. BUILD 2026-09-23h.
+- **2026-09-23e** — **Attribution applied** (user-approved draft). Info tab Sources: brief credits +
+  pointer to the manual (the 94-eclipse paragraph kept). Manual "Data — sources & accuracy": full
+  sources, licences and required notices (Copernicus notice + disclaimer, GIBS acknowledgement,
+  © EUMETSAT, Mapzen/USGS/NOAA, OSM, Natural Earth by Patterson & Kelso). On the map: cloud bar
+  `Now`/`Pic` "NASA GIBS · © EUMETSAT <year>"; `Average` gains a credit line "ERA5 · Copernicus C3S"
+  and its note is shortened to "Eclipse-hour mean, 1991–2020" so the bar keeps its height (44 px
+  desktop, 58 phone, measured); Sat basemap credit "Esri, Maxar, Earthstar Geographics, and the GIS
+  User Community"; OpenTopoMap credit with OSM data; terrain shadow adds "Terrain: Mapzen, USGS, NOAA
+  · © OpenStreetMap contributors" to the map attribution while on (`shadow-ui.js`
+  `_syncShadowCredit`, an empty attributed source; checked on/off/on in Chromium). New
+  `fonts/OFL.txt` (official OFL text, both fonts' copyright lines). No Jubier in the new text; the
+  existing "Merci" line and 94-eclipse note unchanged. BUILD 2026-09-23g. All 15 suites pass.
+- **2026-09-23d** — Safari geolocation reported working by the user; TODO item closed. Attribution
+  draft written for review (not applied).
+- **2026-09-23c** — **"Too many central countries" is NOT a bug; closed.** The TODO item (worst 42,
+  39, 38, 35, 34 countries) described the retired corridor-polygon method; the shipped file comes from
+  `central_countries.py`, which builds no polygon. The big counts are wide annular paths (320–940 km)
+  crossing Europe and the Middle East. Verified independently with `eclipse.js` on country boundaries
+  and interior grids (new `data build tools/crosscheck_central.js`): the five worst match exactly
+  (42/42, 39/39, 35/35, 34/34, 34/34), and a random 30 match except one grid artefact at a path end.
+  One real miss found: Greenland for -1682-11-12 at sun ~2° (TODO §3).
+- **2026-09-23b** — **`Now`'s clear-sky reference built on the server** (`sat-clearsky.php`, new) with
+  the phone as fallback (§10A.4). First load ~5 × 200 kB instead of ~13.5 MB. `sw.js` bails on every
+  `.php`. `cloud-now.js` 2026-09-23b; new suite `test_clearsky`; `test_satellite` §14; `test_sw`
+  rewritten for the general bail. Bluehost probed first (PHP 8.0, GD, curl, 512 MB, 60 s raisable).
+  BUILD 2026-09-23e. All 15 suites pass.
+- **2026-09-23a** — `Now`: a missing satellite is retried at 30 s and 90 s instead of waiting for the
+  5-minute refresh (§10A.4). `cloud-ui.js` 2026-09-23a; `test_satellite` §13. BUILD 2026-09-23d.
+- **2026-09-22f** — **`Now`'s reference: hourly, blended to the displayed frame's time** (§10A.4),
+  replacing the per-step rebuild of 22e an hour after it was written. Same accuracy floor (1–3% of
+  pixels), ~13 MB/h instead of ~80, and keyed to the picture instead of the clock. Cold start still
+  10 frames per satellite (nearer hour first). `cloud-now.js` 2026-09-23a; `test_satellite` §12
+  rewritten (fails on 22e). BUILD 2026-09-23c (22b/22c/23a/23b never deployed); `Satellite.diagnose().bg` shows each reference. All suites pass.
+- **2026-09-22e** — **`Now`'s clear-sky reference rebuilt every satellite step, not every 6 hours**
+  (§10A.4): a 6-hour-old reference measured 69% → 41% cloud at midday. `js/cloud-now.js` (`bgSlot`,
+  version 2026-09-22a); `test_satellite` §12 (fails on the old code); `bgtest.py` hardcoded paths
+  fixed. BUILD 2026-09-22b. All 14 suites pass.
+- **2026-09-22d** — KMZ export confirmed in the browser and Google Earth (§10B). TODO: the "more Jubier
+  KMZs" item removed — all eight were already in `reference kmz/`.
+- **2026-09-22c** — Chores. `validate_paths.py` rewritten onto `pathgen.js` (ΔT removed, green and
+  magnitude curves added, `--all`); new `pathdump.js`; `check_regen.py` re-pointed to compare engine
+  versions. Equal-magnitude curves documented and verified (§9.6). Jubier's ~20 m narrower umbra settled
+  as his (§9.5). Poster chord question answered (§11.4). §3 `states.geojson` and §5 tree corrected.
+- **2026-09-22b** — TODO rewritten from scratch, every item checked against `2227720`. Dropped as done
+  or obsolete: splash images (29 files + tags present), path unification (the device engine), RDP
+  thinning / pre-1000 drop / download-everything / Git-LFS (no path files), `_13f` (gone), legacy
+  generator notes, Cesium-only traps. Three gotchas moved here from TODO (§14).
+- **2026-09-22** — Docs only: §3 deployed line brought to BUILD 2026-09-22a; 14 suites; duplicate
+  headings renumbered (non-central durations §9.6 → §9.10, stale-overlay §10.5 → §10.8); TODO pruned.
 - **2026-09-21c** — **Search semantics, list icon, timezone sign.** (1) The LIST ICON is the eclipse's own
   type again: 1999-08-11 is a TOTAL eclipse read from Paris, where it was 99% partial; calling it partial
   renames it. The 2026-08-29w contradiction (115 hybrid icons from St. Louis that `hybrid` cannot find) is
@@ -4686,7 +4941,7 @@ One line per session. **The knowledge lives in the topical sections above; this 
   lost all four offline; `test_hygiene` now compares that list against index.html's script tags. Dead
   harness files `mkphoto.py` and `photopreview.js` deleted — they drove the compositor that no longer
   exists. Also: `cloud-average.js` had a **duplicate `_key()`** shadowing the slice-cache key, which
-  disabled the Average layer outright (§10.5); `test_hygiene` now rejects any function declared twice
+  disabled the Average layer outright (§10.8); `test_hygiene` now rejects any function declared twice
   in a file. BUILD `2026-08-21d`.
 - **2026-08-21** — Banner mark and favicon rebuilt from the lockscreen icon's MEASURED geometry with
   every second ray dropped (§11.7 — the mark itself was removed 2026-08-23, but the measurement
@@ -4694,7 +4949,7 @@ One line per session. **The knowledge lives in the topical sections above; this 
   lockscreen icon itself, applied as a CSS mask so it kept `--gold` and the glow (§11). Favicon options generated. **`sw.js` was precaching
   `icons/icon-192.png` and `icons/icon-512.png`, NEITHER OF WHICH HAS EVER EXISTED** — the real files
   carry `-v1`/`-v2` — so every install fetched two 404s inside an atomic `addAll` (§12). Fixed, and
-  `icons/mark.png` added. **Average overlay went stale when jumping from the log** (§10.5). BUILD
+  `icons/mark.png` added. **Average overlay went stale when jumping from the log** (§10.8). BUILD
   `2026-08-21a`.
 - **2026-08-20** — Documentation consolidated to **two files**: `START-HERE.md` was folded into §0,
   §2 and §3 and deleted, after it and §6 gave opposite answers about which branch was live within a
@@ -4750,6 +5005,6 @@ One line per session. **The knowledge lives in the topical sections above; this 
 - **2026-08-05** — User log shipped (§11.3); visual language decided and test-enforced (§11.5); catalogue
   audit run and passed (§9.7); test suites (§13). Commit `cd7601d`.
 - **2026-07-29** — One style, no `setStyle` (§7.1); NE2 offline relief (§7.2); on-map basemap picker
-  (§7.5); adaptive path colours (§7.6); non-central durations (§9.6). Commit `b3e0ef2`.
+  (§7.5); adaptive path colours (§7.6); non-central durations (§9.10). Commit `b3e0ef2`.
 - **2026-07-28** — Terrain shadows wired into the app (§8.6). Commits `a1f0a53`, `3327bee`.
 - **2026-07-18** — Cesium reverted; MapLibre restored (§6). Commit `b53dfc1`.

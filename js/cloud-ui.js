@@ -72,10 +72,38 @@
   var _missedTick = false; /* a refresh fell due while the tab was hidden     */
   var _framesWired = false;/* Satellite.onFrame pushes only — register once   */
   var _photoWired = false;/* same for Imagery                                */
+  var _retry = null;       /* pending retry of a satellite that went missing   */
+  var _retries = 0;        /* retries used since the last scheduled refresh    */
 
   function map() { return (typeof window.map !== 'undefined') ? window.map : null; }
 
   function offline() { return typeof isOffline === 'function' && isOffline(); }
+
+  /* A SATELLITE THAT WENT MISSING IS RETRIED SOON, not at the next five-minute
+     refresh. GIBS answers ~1 request in 5 with a 500/504 (HANDOFF 10A); when the
+     ones that fail are all of one satellite's, its band is blank — "No Himawari"
+     — for five minutes, and blank reads as clear sky. Seen live 2026-09-23; the
+     same request succeeded seconds later. So: after a pass that left anything
+     missing, one retry at 30 s and one more at 90 s, through invalidate() (the
+     only call that also unblocks a host that failed). Not a second refresh loop:
+     it stops as soon as nothing is missing, spends at most two retries per
+     scheduled refresh, and does nothing while the tab is hidden or the mode is
+     not Now. */
+  var RETRY_MS = [30 * 1000, 90 * 1000];
+  function retryMissing() {
+    if (_mode !== 'now' || !window.Satellite || !Satellite.missing) return;
+    if (!Satellite.missing().length) {
+      _retries = 0;
+      if (_retry) { clearTimeout(_retry); _retry = null; }
+      return;
+    }
+    if (_retry || _retries >= RETRY_MS.length) return;
+    _retry = setTimeout(function () {
+      _retry = null; _retries++;
+      if (_mode !== 'now' || document.visibilityState === 'hidden') return;
+      Satellite.invalidate().then(render);
+    }, RETRY_MS[_retries]);
+  }
 
   /* ------------------------------------------------------------ availability */
 
@@ -120,7 +148,7 @@
          and a long session ended up redrawing the strip once per stale closure.
          The listener is harmless when the mode is not 'now' — render() returns
          immediately in that case. */
-      if (!_framesWired) { _framesWired = true; Satellite.onFrame(function () { render(); }); }
+      if (!_framesWired) { _framesWired = true; Satellite.onFrame(function () { render(); retryMissing(); }); }
       if (Satellite.isOn() && Satellite.show) { Satellite.show(); render(); }
       else Satellite.on(map()).then(render);
     }
@@ -199,8 +227,10 @@
                  '<span class="cloudbar-end">clear</span>' +
                  '<span class="cloudbar-ramp" style="background:' + gradientCss() + '"></span>' +
                  '<span class="cloudbar-end">cloudy</span></div>');
-      parts.push('<div class="cloudbar-note">Mean cloud at the eclipse hour · ' +
-                 'ERA5 1991&ndash;2020</div>');
+      parts.push('<div class="cloudbar-note">Eclipse-hour mean, 1991&ndash;2020</div>');
+      /* Copernicus requires CLEAR, VISIBLE attribution where its data is shown,
+         not only in the credits; the full notice is in the Info tab and manual. */
+      parts.push('<div class="cloudbar-note cloudbar-credit">ERA5 \u00b7 Copernicus C3S</div>');
     } else {
       /* Both live modes report the same three things — frame time, missing
          satellites, credit — so the caption asks whichever one is showing. */
@@ -309,7 +339,7 @@
       var lv = (_mode === 'photo') ? window.Imagery : (_mode === 'now' ? window.Satellite : null);
       if (!lv) return;
       if (document.visibilityState === 'hidden') { _missedTick = true; return; }
-      _missedTick = false;
+      _missedTick = false; _retries = 0;
       lv.invalidate().then(render);
     }, 5 * 60 * 1000);
 
@@ -332,7 +362,7 @@
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. */
   window.CloudBar = {
-    version: '2026-09-08g',
+    version: '2026-09-23b',
     handleButton: handleButton,
     setMode: setMode,
     /* CALLED WHEN CONNECTIVITY CHANGES. Now and Photo are drawn `disabled` while

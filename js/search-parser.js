@@ -203,7 +203,9 @@
 
     if (!str || !str.trim()) return filter;
 
-    var s = str;
+    /* The Instructions print ranges with an en dash ("2026–2030", "1994–",
+       "95–"), and a copied example must work as typed with a hyphen. */
+    var s = String(str).replace(/[\u2013\u2014\u2212]/g, '-');
 
     /* 1. Coordinates — extract (…) blocks first */
     s = s.replace(/\(([^)]+)\)/g, function (match, inner) {
@@ -243,6 +245,21 @@
       filter.saros = parseInt(n, 10); return ' ';
     });
 
+    /* A year, with or without an era, for the range rules below. */
+    var YR = '(-?\\d{1,4})(?:\\s*(bce?|bc|ce|ad))?';
+    var ey = function (n, era) {
+      var y = parseInt(n, 10);
+      return era && /^b/i.test(era) ? -(y - 1) : y;
+    };
+
+    /* "1994-now" / "1994-today" / "44bc-now" — from a year up to the present.
+       BEFORE the today rule: that rule used to take the "now" first, so the
+       manual's own example "1994-now" meant "today onward" (2026-09-25). */
+    s = s.replace(new RegExp('\\b' + YR + '-(?:now|today)\\b', 'gi'), function (_, y, era) {
+      filter.years = { min: ey(y, era), max: now.getFullYear() };
+      return ' ';
+    });
+
     /* 4. Today / now (+ optional trailing +) — "now" is a synonym. */
     s = s.replace(/\b(?:today|now)\+?/gi, function () {
       filter.today = true;
@@ -257,23 +274,30 @@
 
     /* 5. Year ranges — BEFORE obscuration */
     if (!filter.today) {
-      s = s.replace(/\bafter\s+(-?\d{1,4})\b/gi, function (_, y) {
-        filter.years = { min: parseInt(y, 10), max: 3000 }; return ' ';
+      /* Each of these takes a year WITH OR WITHOUT an era — "before 500",
+         "before 500 bce", "after 44bc", "500bce+", "10bce-" — as the manual
+         lists them. They used to take plain numbers only, so "before 500 bce"
+         read as before 500 CE with "bce" left over as a word that matched
+         nothing (2026-09-25). BCE is astronomical: 500 BCE = -499. */
+      s = s.replace(new RegExp('\\bafter\\s+' + YR + '\\b', 'gi'), function (_, y, era) {
+        filter.years = { min: ey(y, era), max: 3000 }; return ' ';
       });
-      s = s.replace(/\bbefore\s+(-?\d{1,4})\b/gi, function (_, y) {
-        filter.years = { min: -1999, max: parseInt(y, 10) }; return ' ';
-      });
-      /* "1994-now" / "1994-today" — from a year up to the present. */
-      s = s.replace(/\b(-?\d{1,4})-(?:now|today)\b/gi, function (_, y) {
-        filter.years = { min: parseInt(y, 10), max: now.getFullYear() };
-        return ' ';
+      s = s.replace(new RegExp('\\bbefore\\s+' + YR + '\\b', 'gi'), function (_, y, era) {
+        filter.years = { min: -1999, max: ey(y, era) }; return ' ';
       });
       /* "1994+" — that year onward. "1994-" — up to that year. */
-      s = s.replace(/\b(-?\d{1,4})\+/g, function (_, y) {
-        filter.years = { min: parseInt(y, 10), max: 3000 }; return ' ';
+      /* A plain 0-100 with + or - is an OBSCURATION ("50+", "95-" in the
+         Instructions), not a year: it is left for step 6. Years that small
+         take an era ("50ce+") or a word ("after 50"). Until 2026-09-25 "50+"
+         meant "the year 50 onward". */
+      var smallNoEra = function (y, era) { return !era && y.charAt(0) !== '-' && parseInt(y, 10) <= 100; };
+      s = s.replace(new RegExp('\\b' + YR + '\\+', 'gi'), function (m, y, era) {
+        if (smallNoEra(y, era)) return m;
+        filter.years = { min: ey(y, era), max: 3000 }; return ' ';
       });
-      s = s.replace(/\b(-?\d{1,4})-(?!\d)/g, function (_, y) {
-        filter.years = { min: -1999, max: parseInt(y, 10) }; return ' ';
+      s = s.replace(new RegExp('\\b' + YR + '-(?![\\d\\s]*\\d)', 'gi'), function (m, y, era) {
+        if (smallNoEra(y, era)) return m;
+        filter.years = { min: -1999, max: ey(y, era) }; return ' ';
       });
       s = s.replace(/\b(\d{1,4})-(\d{1,4})\b/g, function (full, a, b) {
         var ya = parseInt(a, 10), yb = parseInt(b, 10);
@@ -331,14 +355,15 @@
 
     /* 9. Bare numbers — years and days */
     var yearBuf = [];
+    var eraGiven = false;   /* "1 ce" / "10 bc": the era is stated, so no CE/BCE pairing */
 
     /* BCE/BC → negative astronomical year (10BC → -9); AD/CE → positive.
        Must be before bare-number parsing so "10BC" doesn't partially match. */
     s = s.replace(/\b(\d{1,4})\s*(?:bce?|bc)\b/gi, function (_, n) {
-      yearBuf.push(-(parseInt(n, 10) - 1)); return ' ';
+      yearBuf.push(-(parseInt(n, 10) - 1)); eraGiven = true; return ' ';
     });
     s = s.replace(/\b(\d{1,4})\s*(?:ad|ce)\b/gi, function (_, n) {
-      yearBuf.push(parseInt(n, 10)); return ' ';
+      yearBuf.push(parseInt(n, 10)); eraGiven = true; return ' ';
     });
 
     /* Negative years: -1500, -500 etc — must be handled before bare positive numbers */
@@ -378,7 +403,9 @@
         /* A bare positive year matches both CE and BCE equivalents.
            974 CE = astronomical year 974; 974 BCE = astronomical year -973.
            Store both as explicit year values rather than a range. */
-        filter.years = y > 0
+        /* ...but NOT when the era was typed: "1 ce" means year 1 only (it
+           also matched 1 BCE — year 0 — until 2026-09-24). */
+        filter.years = (y > 0 && !eraGiven)
           ? { min: -(y - 1), max: y, exactPair: true }
           : { min: y, max: y };
       } else if (yearBuf.length >= 2 && !filter.years) {
@@ -390,6 +417,14 @@
     }
 
     if (!filter.months) filter.days = null;
+
+    /* A range written with eras — "1bce-1ce", "500 bc – 100 ad" — leaves its
+       joining dash behind once both years are consumed, and that stray "-"
+       became free text that matched nothing (2026-09-24). ("to" is not a range
+       word here: it is already the prefix for "total".) */
+    if (eraGiven && yearBuf.length >= 2) {
+      s = s.replace(/(^|\s)(?:-|\u2013|\u2014)(?=\s|$)/g, ' ');
+    }
 
     /* 10. Remaining → freetext */
     filter.text = s.replace(/\s+/g, ' ').trim();
@@ -670,6 +705,9 @@
 
   /* ── Filter → canonical string ───────────────────────────────────────── */
 
+  /* Astronomical year -> the form a user types: 0 -> "1bce", -761 -> "762bce", 5 -> "5ce". */
+  function eraTok(y) { return y <= 0 ? (1 - y) + 'bce' : y + 'ce'; }
+
   function filterToString(filter) {
     var parts = [];
 
@@ -679,13 +717,21 @@
       if (filter.years.exactPair) {
         parts.push(String(filter.years.max));  /* emit the bare positive year */
       } else if (filter.years.min === filter.years.max) {
-        parts.push(String(filter.years.min));
+        /* An exact year is written WITH its era, as it would be typed:
+           "-1" read back as "minus one" and a bare "5" would re-pair with 5 BCE. */
+        parts.push(eraTok(filter.years.min));
       } else if (filter.years.min === -1999) {
-        parts.push('before ' + filter.years.max);
+        parts.push('before ' + (filter.years.max <= 0 ? eraTok(filter.years.max) : filter.years.max));
       } else if (filter.years.max === 3000) {
-        parts.push('after ' + filter.years.min);
+        parts.push('after ' + (filter.years.min <= 0 ? eraTok(filter.years.min) : filter.years.min));
       } else {
-        parts.push(filter.years.min + '-' + filter.years.max);
+        /* A range touching BCE is written with eras ("2bce-1ce"). Written as
+           astronomical numbers it came out "-1-1", which reads back as nothing
+           (2026-09-24: pick an eclipse from "2bce 1ce", tap the map, and the
+           rewritten search lost the year). CE-only ranges stay "1900-1905". */
+        parts.push(filter.years.min <= 0 || filter.years.max <= 0
+          ? eraTok(filter.years.min) + '-' + eraTok(filter.years.max)
+          : filter.years.min + '-' + filter.years.max);
       }
     }
 

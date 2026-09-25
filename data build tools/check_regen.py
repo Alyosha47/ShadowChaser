@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""check_regen.py -- compare a freshly generated path catalogue with the deployed one.
+"""check_regen.py -- compare the path catalogue from two versions of js/pathgen.js.
 
-Read-only. Run it after a full regeneration, BEFORE deploying:
+Read-only. Paths are computed on the device now, so there are no path files: dump each engine
+version with pathdump.js first (see its header), then, before bumping PATHGEN_VERSION:
 
-    python3 "data build tools/check_regen.py" --new data/paths --base /path/to/deployed/paths
+    python3 "data build tools/check_regen.py" --base /tmp/base --new /tmp/new
 
 Four sections, each a plain report:
 
@@ -248,6 +249,7 @@ def section_d(new, base, kmz_dir, bess_dir):
         placemarks = VP.collect_placemarks(VP.open_kml(kmz))
         line = [f'  {y}-{mo:02d}-{d:02d} {rn.get("type", "?"):3s}']
         for ct, (fields, names) in VP.CURVE_TYPES.items():
+            if not fields: continue             # 'magnitude': not in path records
             seen, jpts = set(), []
             for nm, pts in placemarks:          # exact names, first placemark of each, as validate_paths
                 if nm in names and nm not in seen:
@@ -268,8 +270,8 @@ def section_d(new, base, kmz_dir, bess_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--new', required=True, help='freshly generated data/paths')
-    ap.add_argument('--base', required=True, help='deployed data/paths to compare against')
+    ap.add_argument('--new', required=True, help='chunks from pathdump.js, the changed engine')
+    ap.add_argument('--base', required=True, help='chunks from pathdump.js, the engine before the change')
     ap.add_argument('--kmz-dir', default='reference kmz')
     ap.add_argument('--besselian-dir', default='data/besselian')
     ap.add_argument('--skip', default='', help='comma list of sections to skip, e.g. C,D')

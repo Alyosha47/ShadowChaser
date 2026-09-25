@@ -96,7 +96,9 @@
      218px against the 177px the caption actually has, so it wrapped and made
      `Now` a line taller than `Pic`. Without the word it measures 168px.
      test_satellite asserts the budget so the next edit can't undo it. */
-  var CREDIT = 'NASA EOSDIS GIBS \u00b7 EUMETSAT';
+  /* EUMETSAT asks for "\u00a9 EUMETSAT [year]" under its imagery (attribution
+     review 2026-09-23; manual, Sources). */
+  var CREDIT = 'NASA GIBS \u00b7 \u00a9 EUMETSAT ' + new Date().getUTCFullYear();
 
   /* Both services speak WMS 1.3.0 with CRS=EPSG:3857 and bbox in metres. The
      1.3.0 axis flip applies to EPSG:4326 (lat,lon); using 4326 without swapping
@@ -151,13 +153,22 @@
                  /* the background is smooth, so it is fetched
                                        at a third of the width — four extra
                                        requests at a ninth of the pixels */
-  var BG_TTL = 6 * 60 * 60 * 1000;  /* THE GROUND DOES NOT MOVE, and this is built
-                                       from frames a day apart, so half an hour was
-                                       far shorter than anything it measures — it
-                                       just made a browser left open re-fetch ten
-                                       frames per satellite for no change. Six
-                                       hours still refreshes it several times a day
-                                       and is what makes ten frames affordable. */
+  /* THE REFERENCE IS HOURLY, BLENDED TO THE PICTURE'S OWN TIME. Ground
+     temperature moves with the time of day, and the reference is taken at the
+     same clock time on past days precisely because of that. Measured with
+     tools/checks/bgtest.py (share of pixels whose cloud/clear call changes):
+       six hours old, US plains at midday ........ 29%  (cloud 69% -> 41%)
+       30 / 60 min old, dawn, morning, afternoon .. 3-10% / 4-12%
+       hourly references blended, worst (mid-hour)  1-3%
+       half-hourly blend ........................... 1-3%, no better
+     1-3% is the floor any rebuilt reference shows. So: one reference per
+     satellite per clock HOUR (ten frames), and the two either side of the
+     displayed frame's time blended linearly. The time is the FRAME's, not the
+     clock's: GIBS publishes 18-50 min late, and a reference keyed to the clock
+     sat that far from the picture (the 2026-09-22b build did exactly that).
+     Cost while Now is on screen: ten frames per satellite per hour, ~13 MB/h.
+     Was six hours until 2026-09-22 (HANDOFF 10A.4). */
+  var BG_HOUR = 3600000;
 
   /* --- step 4 constants --------------------------------------------------- */
   var CUT = 0.16;                   /* cos of the limb angle, ~81 degrees */
@@ -639,6 +650,9 @@
      The tabulated grey ramp is linear to within 0.24C over its 138 entries, so
      greys are decoded from that line and extrapolated past its end, and only
      genuinely coloured pixels go through the cube. */
+  /* COPIED IN sat-clearsky.php (the server-built reference): GREY_A/B, CMAP,
+     EUM_T, buildCube() and tempOf(). tools/checks/test_clearsky.js compares the
+     two over every colour. Change one, change both. */
   var GREY_A = -0.38598, GREY_B = 57.2375;
 
   function tempOf(sat, d, p) {
@@ -663,7 +677,7 @@
      background cached from a wide view was then point-sampled by a zoomed-in
      frame, which is where the blocks came from.
      So: one fixed grid per satellite, over that satellite's own useful span,
-     fetched once per BG_TTL and read by longitude and latitude. Panning and
+     fetched once per satellite per hour and read by longitude and latitude. Panning and
      zooming cost nothing. */
   var _bg = {};
   var BG_W = 1024;   /* 0.35 deg — matched to the imagery, not to a guess */
@@ -678,67 +692,148 @@
     return { w: -180, e: 180, s: -70, n: 70 };
   }
 
-  function background(sat) {
-    var have = _bg[sat.id];
-    if (have && (Date.now() - have.at) < BG_TTL) return Promise.resolve(have);
-    if (have && have.pending) return have.pending;
-    /* The last good field, kept for the whole refresh. It used to be thrown away
-       the instant a refresh started (see the bottom of this function), so a
-       refresh that lost its race left the satellite with no background at all —
-       and a satellite with no background is DELETED by the caller, leaving a
-       blank band that reads as clear sky. Clear-sky ground temperature does not
-       meaningfully change between refreshes, so a stale field is a good answer
-       and no field is the one answer this map must never give. */
-    var prev = (have && have.T) ? have : null;
+  /* The reference as sat-clearsky.php built it: gzip of int16 little-endian,
+     tenths of a degree, -32768 = no data, on the grid named in its header — and
+     refused unless that grid is exactly this one. Rejects on any problem; the
+     caller then builds the reference on the phone. */
+  var CLEARSKY = '/sat-clearsky.php';
+  function serverRef(sat, H, bw, bh, box) {
+    if (typeof fetch !== 'function' || typeof DecompressionStream === 'undefined' ||
+        typeof Response === 'undefined') return Promise.reject(new Error('unsupported'));
+    var grid = bw + 'x' + bh + ':' + [box.w, box.e, box.s, box.n].join(',');
+    var h = new Date(H).toISOString().slice(0, 13);
+    return fetch(CLEARSKY + '?s=' + encodeURIComponent(sat.id) + '&h=' + h).then(function (r) {
+      if (!r.ok || r.headers.get('X-Clearsky-Grid') !== grid) throw new Error('clearsky ' + r.status);
+      return new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+    }).then(function (buf) {
+      if (buf.byteLength !== bw * bh * 2) throw new Error('clearsky size ' + buf.byteLength);
+      var dv = new DataView(buf), T = new Float32Array(bw * bh), i, v;
+      for (i = 0; i < T.length; i++) {
+        v = dv.getInt16(i * 2, true);
+        T[i] = v === -32768 ? -999 : v / 10;
+      }
+      return T;
+    });
+  }
+
+  /* One reference for one clock hour H: second-warmest of the frames at H on
+     each of the last BG_FRAMES days. Cached per satellite per hour; a failed
+     build is forgotten so the next call retries it. */
+  var _bgH = {};
+  function hourRef(sat, H) {
+    var hs = _bgH[sat.id] || (_bgH[sat.id] = {});
+    var have = hs[H];
+    if (have) return have.T ? Promise.resolve(have) : have.pending;
     var box = bgBox();
     var bw = BG_W, bh = Math.round(BG_W * (mercY(box.n) - mercY(box.s)) /
                                    (R * (box.e - box.w) * Math.PI / 180));
-    /* The four frames are independent of one another, so they are fetched
-       together. Sequentially they were four round trips per satellite before
-       anything could be drawn — twenty seconds on a cold start. */
-    var reqs = [], n;
-    for (n = 0; n < BG_FRAMES; n++) {
-      var ms = Date.now() - n * BG_GAP_MIN * 60000 - sat.step * 60000;
-      ms = Math.floor(ms / (sat.step * 60000)) * (sat.step * 60000);
-      reqs.push(loadImage(url(sat, stamp(sat, ms), box, bw, bh))
-        .then(function (im) { return readPixels(im, bw, bh); }, function () { return null; }));
-    }
-
-    var pending = Promise.all(reqs).then(function (frames) {
-      var best = null, second = null, i, p, t, fi, d;
-      for (fi = 0; fi < frames.length; fi++) {
-        d = frames[fi];
-        if (!d) continue;
-        if (!best) {
-          best = new Float32Array(bw * bh); second = new Float32Array(bw * bh);
-          for (i = 0; i < best.length; i++) { best[i] = -999; second[i] = -999; }
-        }
-        /* Second warmest, not warmest: one hot outlier or bad scan line would
-           otherwise set a pixel's clear-sky value for the whole cache period.
-           This is what the published composites use. */
-        for (i = 0, p = 0; i < bw * bh; i++, p += 4) {
-          if (d[p + 3] < 250) continue;
-          t = tempOf(sat, d, p);
-          if (t > best[i]) { second[i] = best[i]; best[i] = t; }
-          else if (t > second[i]) second[i] = t;
-        }
+    /* The frames are independent of one another, so they are fetched together.
+       Sequentially they were a round trip each per satellite before anything
+       could be drawn — twenty seconds on a cold start. A frame later than now
+       (today's, for the hour after the picture) does not exist yet: skipped. */
+    function buildHere() {
+      var reqs = [], n;
+      for (n = 0; n < BG_FRAMES; n++) {
+        var ms = H - n * BG_GAP_MIN * 60000;
+        if (ms > Date.now()) continue;
+        reqs.push(loadImage(url(sat, stamp(sat, ms), box, bw, bh))
+          .then(function (im) { return readPixels(im, bw, bh); }, function () { return null; }));
       }
-      /* Nothing came back this time — keep what we had rather than reporting the
-         satellite dead. Only a satellite that has NEVER had a background gives
-         up, and that is a genuine "no data", not a lost race. */
-      if (!best) { if (prev) delete prev.pending; return prev; }
-      for (i = 0; i < best.length; i++) if (second[i] < -900) second[i] = best[i];
-      var rec = { at: Date.now(), w: bw, h: bh, T: second, box: box };
+      return Promise.all(reqs).then(function (frames) {
+        var best = null, second = null, i, p, t, fi, d;
+        for (fi = 0; fi < frames.length; fi++) {
+          d = frames[fi];
+          if (!d) continue;
+          if (!best) {
+            best = new Float32Array(bw * bh); second = new Float32Array(bw * bh);
+            for (i = 0; i < best.length; i++) { best[i] = -999; second[i] = -999; }
+          }
+          /* Second warmest, not warmest: one hot outlier or bad scan line would
+             otherwise set a pixel's clear-sky value for the whole hour. This is
+             what the published composites use. */
+          for (i = 0, p = 0; i < bw * bh; i++, p += 4) {
+            if (d[p + 3] < 250) continue;
+            t = tempOf(sat, d, p);
+            if (t > best[i]) { second[i] = best[i]; best[i] = t; }
+            else if (t > second[i]) second[i] = t;
+          }
+        }
+        if (!best) return null;
+        for (i = 0; i < best.length; i++) if (second[i] < -900) second[i] = best[i];
+        return second;
+      });
+    }
+    /* THE SERVER FIRST, THIS PHONE ONLY IF IT FAILS. sat-clearsky.php builds the
+       same reference once per satellite-hour for everyone; ~200 kB instead of
+       ten ~340 kB frames. Any failure there — offline, a local-disk copy with no
+       PHP, an old browser, a grid mismatch — builds it here exactly as before. */
+    var src = 'server';
+    var pending = serverRef(sat, H, bw, bh, box)
+      .then(null, function () { src = 'phone'; return buildHere(); })
+      .then(function (T) {
+        if (!T) { delete hs[H]; return null; }
+        var rec = { hour: H, w: bw, h: bh, T: T, box: box, src: src };
+        hs[H] = rec;
+        return rec;
+      }, function () { delete hs[H]; return null; });
+    hs[H] = { pending: pending };
+    return pending;
+  }
+
+  /* The clear-sky reference for the frame shown at time `at` (ms): the hourly
+     references either side, blended linearly. Without `at` (the warm-up call
+     before the frame is known) the last frame time seen for this satellite is
+     used, or half an hour ago — GIBS's usual lag — so the right hours are
+     usually already on their way when the frame arrives.
+
+     COLD START COSTS ONE HOUR, NOT TWO. Only the NEARER hour is waited for; the
+     other is fetched after it, so it never competes with the picture for
+     bandwidth, and until it lands the nearer hour is used alone (at most 30 min
+     off: 3-10% of pixels, measured). The next render — a pan, or the
+     five-minute refresh — picks up the blend. */
+  function background(sat, at) {
+    if (at == null) at = (_lastGood[sat.id] && _lastGood[sat.id].at) || (Date.now() - 30 * 60000);
+    var H0 = Math.floor(at / BG_HOUR) * BG_HOUR, H1 = H0 + BG_HOUR, f = (at - H0) / BG_HOUR;
+    var have = _bg[sat.id];
+    if (have && have.frameAt === at && !have.partial) return Promise.resolve(have);
+    var near = f < 0.5 ? H0 : H1, far = near === H0 ? H1 : H0;
+    return hourRef(sat, near).then(function (n) {
+      var farP = hourRef(sat, far);            /* started only now: after the near hour */
+      var hs2 = _bgH[sat.id] || {};
+      if (n && !(hs2[far] && hs2[far].T)) return finish(n, null, true);
+      if (n) return finish(n, hs2[far], false);
+      return farP.then(function (x) { return finish(null, x, false); });
+    });
+
+    function finish(n, x, partial) {
+      var a = near === H0 ? n : x, b = near === H0 ? x : n, T, i;
+      /* A satellite with no background is DELETED by the caller, leaving a blank
+         band that reads as clear sky — the one answer this map must never give
+         by accident. So one hour missing uses the other, and both missing keeps
+         the last reference this satellite had, however old. Only a satellite
+         that has NEVER had one reports no data. */
+      if (!a && !b) {
+        if (have && have.T) return have;
+        var hs3 = _bgH[sat.id] || {}, k;
+        for (k in hs3) if (hs3[k].T) return hs3[k];
+        return null;
+      }
+      if (a && b) {
+        T = new Float32Array(a.T.length);
+        for (i = 0; i < T.length; i++) T[i] = a.T[i] + (b.T[i] - a.T[i]) * f;
+      } else T = (a || b).T;
+      var src = a || b;
+      var rec = { frameAt: at, partial: partial, hours: [a ? H0 : null, b ? H1 : null],
+                  from: [a ? a.src : null, b ? b.src : null],
+                  w: src.w, h: src.h, T: T, box: src.box };
+      /* Only the two hours in use are kept; older ones are the memory a phone
+         notices (~2.3 MB each). Dropped only after a success, so a failure
+         above still has something to fall back on. */
+      var hs4 = _bgH[sat.id];
+      for (var key in hs4) if (+key !== H0 && +key !== H1 && hs4[key].T) delete hs4[key];
       _bg[sat.id] = rec;
       return rec;
-    }, function () { if (prev) delete prev.pending; return prev; });
-    /* Hang the in-flight promise ON the existing record instead of REPLACING it.
-       Replacing was the bug: `have.pending` at the top of this function still
-       dedupes concurrent callers, and `have.at` is left stale so the refresh
-       still happens on schedule. */
-    if (prev) prev.pending = pending;
-    else _bg[sat.id] = { at: 0, pending: pending };
-    return pending;
+    }
   }
 
   /* Bilinear, by geography. Point sampling a coarser grid is what made the field
@@ -1044,7 +1139,7 @@
     }
 
     /* Every satellite's background is started at once, before any imagery is
-       fetched: they are independent, they are cached for half an hour, and
+       fetched: they are independent, they are cached per hour, and
        waiting for them one satellite at a time was most of a cold start.
        They are STARTED here, not waited for: each job awaits its own satellite's
        background, so gating the imagery behind Promise.all(warm) only added the
@@ -1076,7 +1171,7 @@
         if (!fr) { out[idx] = null; return; }
         fr.box = job.box; fr.pw = pw;
         var _bt = Date.now();
-        return background(job.sat).then(function (bg) {
+        return background(job.sat, fr.at).then(function (bg) {
           if (Date.now() - _bt > _tBg) _tBg = Date.now() - _bt;
           /* WITHOUT A CLEAR-SKY BACKGROUND THERE IS NO DEPRESSION TO MEASURE, so
              this satellite has no answer to give and is reported missing rather
@@ -1285,7 +1380,7 @@
   function hasNight() { return true; }
 
   window.Satellite = {
-    version: '2026-08-22a',
+    version: '2026-09-23c',
     CREDIT: CREDIT,
     on: on, off: off, isOn: isOn, refresh: refresh,
     onFrame: onFrame, missing: missing, invalidate: invalidate,
@@ -1298,7 +1393,15 @@
                painted: _painted, frames: _stamps.length, missing: _missing.slice(),
                drawn: _drawn, busy: _busy,
                layer: !!(_map && _map.getLayer(LAYER)),
-               source: !!(_map && _map.getSource(SRC)), error: _err };
+               source: !!(_map && _map.getSource(SRC)), error: _err,
+               /* The clear-sky reference per satellite: the frame time it is
+                  for, the hours it was built from, and whether both are blended
+                  yet (false = the nearer hour alone, until the next render). */
+               bg: Object.keys(_bg).map(function (id) {
+                 var b = _bg[id], iso = function (ms) { return ms == null ? null : new Date(ms).toISOString().slice(11, 16) + 'Z'; };
+                 return { sat: id, frame: iso(b.frameAt), hours: (b.hours || []).map(iso), from: b.from,
+                          blended: !!(b.hours && b.hours[0] != null && b.hours[1] != null) };
+               }) };
     },
     _sats: function () { return SATS.slice(); },
     _weightAt: weightAt,
@@ -1309,6 +1412,8 @@
        reasoned about — see tools/checks/irdecode.js. The coldest storm cores
        reading as clear sky has been the failure mode twice. */
     _tempOf: tempOf, _buildCube: buildCube,
+    /* One hourly reference, for checking the server's against the phone's. */
+    _bgHour: function (id, H) { var h = _bgH[id]; return h && h[H] && h[H].T ? h[H] : null; },
     _viewBox: function (m) { return viewBox(m); }
   };
 })();

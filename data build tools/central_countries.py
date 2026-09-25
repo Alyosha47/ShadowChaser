@@ -243,6 +243,19 @@ def centreline(rec):
     return pts
 
 
+def lon_pad(pad, lat):
+    """The same reach in degrees of LONGITUDE at latitude lat.
+
+    pad is degrees of latitude (km / 111). A degree of longitude is only
+    cos(lat) as long, so the same distance spans more of them: 268 km is
+    2.4 deg of latitude but 8.8 deg of longitude at 74 N. Using pad unscaled
+    rejected countries the corridor really reaches at high latitude
+    (Greenland, -1682-11-12; found 2026-09-23 by crosscheck_central.js).
+    Capped where the scale factor explodes near the poles: whole circle."""
+    c = math.cos(math.radians(min(abs(lat), 89.0)))
+    return min(180.0, pad / max(c, 1e-3))
+
+
 def corridor_pad_deg(rec):
     """Half-width of the umbra in degrees, generously rounded up."""
     w = rec.get('path_width') or 0.0
@@ -277,11 +290,15 @@ def solve(rec, countries, verbose=False):
         for (la, lo, t) in cl:
             if la < s - pad or la > n + pad:
                 continue
-            if lo < w - pad:
-                if lon_delta(lo, w) > pad:
+            # the country edge nearest the equator is where a degree of
+            # longitude is longest, so scale at the smaller |latitude|
+            lp = lon_pad(pad, min(abs(s), abs(n)) if s * n > 0 else 0.0)
+            lp = max(lp, lon_pad(pad, la))
+            if lo < w - lp:
+                if lon_delta(lo, w) > lp:
                     continue
-            elif lo > e + pad:
-                if lon_delta(lo, e) > pad:
+            elif lo > e + lp:
+                if lon_delta(lo, e) > lp:
                     continue
             near.append((la, lo, t))
         if not near:
@@ -336,7 +353,7 @@ def boundary_reaches_umbra(rec, C, near, pad, t_lo, t_hi):
     keep = []
     for (la, lo) in cand:
         for (cla, clo, _t) in near:
-            if abs(la - cla) <= pad and lon_delta(lo, clo) <= pad:
+            if abs(la - cla) <= pad and lon_delta(lo, clo) <= lon_pad(pad, max(abs(la), abs(cla))):
                 keep.append((la, lo))
                 break
     if not keep:

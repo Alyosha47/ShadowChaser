@@ -23,6 +23,9 @@ const CACHE = 'followtheshadow-' + VERSION;
 
 const CORE = [
   'index.html',
+  /* The manual, linked from the Info tab's Instructions: needed in the field too. */
+  'followtheshadow-manual.html',
+  'icons/manual-logo-64.png', 'icons/manual-logo-128.png', 'icons/manual-logo-192.png',
   'favicon.ico',
   /* These were 'icons/icon-192.png' and 'icons/icon-512.png' until 2026-08-20 —
      NEITHER FILE HAS EVER EXISTED. The real names carry a -v1/-v2 suffix, so
@@ -204,8 +207,12 @@ self.addEventListener('fetch', e => {
      so whichever arrived first also poisoned the other: a probe answered with a PNG,
      or every tile answered with a timestamp and the disc rendering nothing.
      ignoreSearch STAYS for everything else — it is what makes foo.js?v=BUILD match
-     cached foo.js (§12.1) — and this is a live proxy that must not be cached anyway. */
-  if (/\/sat\.php$/.test(url.pathname)) return;      // live proxy → untouched, never cached
+     cached foo.js (§12.1) — and this is a live proxy that must not be cached anyway.
+     EVERY .php, not just sat.php: sat-clearsky.php (2026-09-23) is keyed by its
+     query the same way (?s=<satellite>&h=<hour>), and with the search ignored
+     every satellite would have been handed the first satellite's reference.
+     A PHP file is a live endpoint by definition; none belongs in this cache. */
+  if (/\.php$/.test(url.pathname)) return;          // live endpoints → untouched, never cached
 
   /* Shell fallback is for HTML route navigations only. A direct navigation to a
      file with an extension (js, gz, json, png…) must return THAT file (cache-first

@@ -161,9 +161,9 @@
   })();
 
   window.FavorBar = {
-    version: '2026-09-11a',
+    version: '2026-09-24a',
     toggle: toggle, enable: enable, disable: disable,
     setMode: setMode, getMode: function () { return _mode; },
-    render: render
+    render: render, sync: sync
   };
 })();

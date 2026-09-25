@@ -329,6 +329,7 @@ function showShadowAsVeto(timeMs) {
   /* Rebuild rather than recolour: shadowColor and ss are constructor options,
      and ss in particular is not a paint property that can be set later. */
   try { if (map.getLayer('shadow')) map.removeLayer('shadow'); } catch (e) {}
+  _syncShadowCredit();
   _shadowLayer = null;
 
   _shadowArmed = true;
@@ -337,6 +338,7 @@ function showShadowAsVeto(timeMs) {
   _makeShadowLayer(timeMs);
   try {
     if (!map.getLayer('shadow')) map.addLayer(_shadowLayer);
+    _syncShadowCredit();
   } catch (e2) { if (window.__scShowError) window.__scShowError('shadow-veto', String(e2)); }
   _shadowShowing = true;
   /* 'off', NOT 'hide'. _renderTimeline understands 'off' and 'hint' and treats
@@ -384,6 +386,7 @@ function disableShadows() {
   _shadowLayer = null;   /* colour and ss are constructor options: force a rebuild */
   _detachShadowZoom();
   try { if (map && map.getLayer && map.getLayer('shadow')) map.removeLayer('shadow'); } catch (e) {}
+  _syncShadowCredit();
   setMapProjection('globe');
   _shadowLayer  = null;
   _shadowWin    = null;
@@ -424,6 +427,7 @@ function _showShadowNow() {
   }
   try {
     if (!map.getLayer('shadow')) map.addLayer(_shadowLayer);
+    _syncShadowCredit();
   } catch (e) { if (window.__scShowError) window.__scShowError('shadow', String(e)); }
   _shadowShowing = true;
   _renderTimeline(_vetoMode ? 'off' : 'show');
@@ -434,9 +438,35 @@ function _showShadowNow() {
    the user zooms back in. */
 function _hideShadowKeepArmed(mode) {
   try { if (map && map.getLayer && map.getLayer('shadow')) map.removeLayer('shadow'); } catch (e) {}
+  _syncShadowCredit();
   setMapProjection('globe');
   _shadowShowing = false;
   _renderTimeline(mode || 'off');
+}
+
+/* THE SHADOW LAYER'S CREDIT. It draws from AWS Terrain Tiles (Mapzen; USGS and
+   NOAA data) and classifies water from OpenStreetMap tiles, and both ask for
+   credit where the result is shown. A MapLibre custom layer has no source, so
+   it cannot carry an attribution; an empty GeoJSON source with an invisible
+   line layer is added while 'shadow' is on the map, which is what the
+   attribution control counts. Kept in step on every styledata and idle, so
+   every path that adds or removes the layer is covered without touching each
+   one (idle retries if the style was mid-update when styledata fired). */
+var SHADOW_CREDIT = 'Terrain: Mapzen, USGS, NOAA \u00b7 \u00a9 OpenStreetMap contributors';
+function _syncShadowCredit() {
+  if (!map || !map.getLayer) return;
+  var on = !!map.getLayer('shadow'), has = !!map.getSource('shadow-credit');
+  try {
+    if (on && !has) {
+      map.addSource('shadow-credit', { type: 'geojson', attribution: SHADOW_CREDIT,
+        data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({ id: 'shadow-credit', type: 'line', source: 'shadow-credit',
+        paint: { 'line-opacity': 0 } });
+    } else if (!on && has) {
+      if (map.getLayer('shadow-credit')) map.removeLayer('shadow-credit');
+      map.removeSource('shadow-credit');
+    }
+  } catch (e) {}
 }
 
 function _attachShadowZoom() {
@@ -451,12 +481,15 @@ function _attachShadowZoom() {
      Mercator rather than leaving them silently dropped. Attached once. */
   if (!_shadowStyleHooked) {
     _shadowStyleHooked = true;
+    map.on('styledata', _syncShadowCredit);
+    map.on('idle', _syncShadowCredit);
     map.on('style.load', function () {
       if (!_shadowShowing) return;
       setMapProjection('mercator');
       var t = _vetoMode ? _vetoTime : (_shadowWin ? _shadowWin.curms : Date.now());
       _makeShadowLayer(t);
       try { if (!map.getLayer('shadow')) map.addLayer(_shadowLayer); } catch (e) {}
+      _syncShadowCredit();
       if (t != null) setShadowTime(t);
     });
   }

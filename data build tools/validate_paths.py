@@ -2,80 +2,64 @@
 """
 validate_paths.py
 ────────────────────────────────────────────────────────────────────────────
-Cross-track validation of any of our eclipse path curves against Jubier
-KMZ curves. Works for totals, annulars, hybrids, and partials.
+Our eclipse curves against Xavier Jubier's KMZs. Ours are computed fresh by
+the app's own engine, js/pathgen.js (run through node — assistant tool, the
+user has no Node). There are no path files any more.
 
-Usage
+Jubier's longitudes are shifted by the ΔT difference before measuring
+(HANDOFF §9.5): add (ΔT_ours − ΔT_his) × 0.0041781 °/s. Without it every
+curve reads km off even for modern eclipses (2024: 69.2 s vs 74.0 s).
+
+Distance = each of HIS vertices to the nearest of OUR segments, in metres.
+So a residual can be his sampling as much as our error (HANDOFF §9.6).
+
+Usage (from the repo root)
 -----
-List what's in a KMZ first if you're unsure of curve names:
+  python3 "data build tools/validate_paths.py" --kmz "reference kmz/TSE_2024_04_08.kmz"
+  python3 "data build tools/validate_paths.py" --all            # every reference KMZ
+  python3 "data build tools/validate_paths.py" --kmz X.kmz --list
 
-    python3 validate_paths.py --kmz path/to/foo.kmz --list
+The date comes from the KMZ filename (TSE_2024_04_08, ASE_-0797_11_07);
+--year/--month/--day override it.
 
-Validate a specific curve type:
-
-    python3 validate_paths.py \\
-        --kmz   kmz_extracted/TSE_2017_08_21.kmz \\
-        --paths data/paths/paths_2001_2100.json.gz \\
-        --year  2017 --month 8 --day 21 \\
-        --curve centreline
-
-Validate ALL curve types in one go (recommended for full picture):
-
-    python3 validate_paths.py \\
-        --kmz   kmz_extracted/ASE_2023_10_14.kmz \\
-        --paths data/paths/paths_2001_2100.json.gz \\
-        --year  2023 --month 10 --day 14 \\
-        --curve all
-
-Curve types
------------
-  centreline   — central line
-  umbra        — umbra/antumbra N+S limits combined
-  penumbra     — penumbra N+S limits combined
-  terminator   — sunrise/sunset lemniscates
-  all          — every curve type that has data on both sides
-
-Reads .json or .json.gz path files transparently.
+Curve types: centreline, umbra, penumbra, terminator, green, magnitude.
 ────────────────────────────────────────────────────────────────────────────
 """
 
 import argparse
-import gzip
+import html
 import json
 import math
+import re
+import subprocess
 import sys
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import numpy as np
+
+REPO = Path(__file__).resolve().parent.parent
+KMZ_DIR = REPO / 'reference kmz'
+DEG_PER_S = 0.0041781          # Earth's rotation, degrees of longitude per second of ΔT
 
 # ── Curve-type registry ───────────────────────────────────────────────────
-# Maps a curve-type name to:
-#   (path-JSON fields to combine for "ours",
-#    Jubier placemark names to combine for "theirs")
+# name → (our fields, Jubier placemark names). 'magnitude' is handled per level.
 
 CURVE_TYPES = {
-    'centreline': (
-        ['centreline'],
-        ['Central Line'],
-    ),
-    'umbra': (
-        ['umbra_n', 'umbra_s'],
-        ['Northern Limit', 'Southern Limit'],
-    ),
-    'penumbra': (
-        ['penumbra_n', 'penumbra_s'],
-        ['Penumbra Northern Limit', 'Penumbra Southern Limit'],
-    ),
-    'terminator': (
-        ['terminator_first', 'terminator_last'],
-        # Jubier uses two-loop names for typical eclipses, single-loop
-        # name for high-gamma figure-8 cases. Match either.
-        ['Sun Rise/Set Eastern Curve',
-         'Sun Rise/Set Western Curve',
-         'Sun Rise/Set Curve'],
-    ),
+    'centreline': (['centreline'], ['Central Line']),
+    'umbra':      (['umbra_n', 'umbra_s'], ['Northern Limit', 'Southern Limit']),
+    'penumbra':   (['penumbra_n', 'penumbra_s'],
+                   ['Penumbra Northern Limit', 'Penumbra Southern Limit']),
+    # Jubier: two loops normally, one for high-gamma figure-8 cases.
+    'terminator': (['terminator_first', 'terminator_last'],
+                   ['Sun Rise/Set Eastern Curve', 'Sun Rise/Set Western Curve', 'Sun Rise/Set Curve']),
+    'green':      (['green_curve'],
+                   ['Maximum on Horizon Eastern Curve', 'Maximum on Horizon Western Curve',
+                    'Maximum on Horizon Curve']),
+    'magnitude':  (None, None),
 }
+MAG_SIDE = {'n': 'Northern', 's': 'Southern'}
 
 
 # ── KML parsing ───────────────────────────────────────────────────────────
@@ -83,20 +67,6 @@ CURVE_TYPES = {
 def _findall_anywhere(root, tag):
     return [e for e in root.iter()
             if (e.tag.split('}')[-1] if '}' in e.tag else e.tag) == tag]
-
-
-def open_kml(kmz_path):
-    p = Path(kmz_path)
-    if p.suffix.lower() == '.kml':
-        return ET.parse(p).getroot()
-    with zipfile.ZipFile(p) as z:
-        names = z.namelist()
-        kml_names = [n for n in names if n.lower().endswith('.kml')]
-        if not kml_names:
-            sys.exit(f'No .kml inside {kmz_path}')
-        target = 'doc.kml' if 'doc.kml' in kml_names else kml_names[0]
-        with z.open(target) as f:
-            return ET.parse(f).getroot()
 
 
 def parse_coords(coord_text):
@@ -128,179 +98,203 @@ def collect_placemarks(root):
 R_EARTH = 6371008.8
 
 
-def point_to_segment_m(p, a, b):
-    """Wrap-safe local-ENU point-to-segment distance."""
-    lat0 = math.radians(p[1])
-    cos_lat0 = max(0.01, math.cos(lat0))
-    def _wrap_dlon(q_lon_deg):
-        d = (q_lon_deg - p[0] + 180.0) % 360.0 - 180.0
-        return math.radians(d)
-    def proj(q):
-        return (R_EARTH * _wrap_dlon(q[0]) * cos_lat0,
-                R_EARTH * (math.radians(q[1]) - lat0))
-    ax, ay = proj(a); bx, by = proj(b)
-    dx, dy = bx - ax, by - ay
-    seg2 = dx*dx + dy*dy
-    if seg2 < 1e-12:
-        return math.hypot(ax, ay)
-    t = max(0.0, min(1.0, -(ax*dx + ay*dy) / seg2))
-    return math.hypot(ax + t*dx, ay + t*dy)
+def _segments(polys):
+    """All segments of our polylines as two (N,2) arrays of lon/lat."""
+    a, b = [], []
+    for poly in polys:
+        if len(poly) >= 2:
+            q = np.asarray(poly, float)
+            a.append(q[:-1]); b.append(q[1:])
+    return (np.concatenate(a), np.concatenate(b)) if a else (None, None)
+
+
+def distances_m(pts, polys):
+    """Each point to the nearest segment, local-ENU, antimeridian-safe."""
+    A, B = _segments(polys)
+    out = []
+    for lon, lat in pts:
+        c = max(0.01, math.cos(math.radians(lat)))
+        def proj(q):
+            dl = (q[:, 0] - lon + 180.0) % 360.0 - 180.0
+            return np.stack([np.radians(dl) * c, np.radians(q[:, 1] - lat)], 1) * R_EARTH
+        a, b = proj(A), proj(B)
+        ab = b - a
+        L = (ab * ab).sum(1)
+        t = np.where(L > 0, np.clip(-(a * ab).sum(1) / np.where(L > 0, L, 1), 0, 1), 0)
+        d = a + ab * t[:, None]
+        out.append(float(np.sqrt((d * d).sum(1)).min()))
+    return out
 
 
 def min_distance_to_polylines(p, polys):
-    best = float('inf')
-    for poly in polys:
-        if len(poly) < 2:
-            continue
-        for i in range(len(poly) - 1):
-            d = point_to_segment_m(p, poly[i], poly[i+1])
-            if d < best:
-                best = d
-    return best
+    """One point to the nearest segment (used by check_regen.py)."""
+    return distances_m([p], polys)[0]
 
 
-# ── Path JSON loading ─────────────────────────────────────────────────────
+# ── Our curves, from js/pathgen.js ────────────────────────────────────────
 
-def load_paths(paths_json):
-    with open(paths_json, 'rb') as f:
-        head = f.read(2)
-    if head == b'\x1f\x8b':
-        with gzip.open(paths_json, 'rt') as f:
-            data = json.load(f)
-    else:
-        with open(paths_json) as f:
-            data = json.load(f)
-    if isinstance(data, dict):
-        for k in ('eclipses', 'records', 'paths'):
-            if k in data and isinstance(data[k], list):
-                data = data[k]
-                break
+NODE = r"""
+(function () {
+const P = require(process.argv[1] + '/js/pathgen.js');
+const [y, m, d] = process.argv.slice(2).map(Number);
+const fs = require('fs'), dir = process.argv[1] + '/data/besselian/';
+for (const f of fs.readdirSync(dir).filter(f => /^-?\d+_-?\d+\.json$/.test(f))) {
+  const [a, b] = f.replace('.json', '').split(/_(?=-?\d)/).map(Number);
+  if (y < a || y > b) continue;
+  const rec = JSON.parse(fs.readFileSync(dir + f, 'utf8')).find(r => r.year === y && r.month === m && r.day === d);
+  if (!rec) break;
+  const path = P.eclipse_path(JSON.parse(JSON.stringify(rec)));
+  const mag = P.eclipse_magnitude_curves(JSON.parse(JSON.stringify(rec)));
+  process.stdout.write(JSON.stringify({ dt: rec.dt, type: rec.eclipse_type, version: P.VERSION, path, mag }));
+  return;   /* not process.exit(): it truncates a piped stdout at 128 kB */
+}
+process.exitCode = 3;
+})();
+"""
+
+
+def compute(year, month, day):
+    r = subprocess.run(['node', '-e', NODE, str(REPO), str(year), str(month), str(day)],
+                       capture_output=True, text=True)
+    if r.returncode == 3:
+        sys.exit(f'No eclipse {year}-{month:02d}-{day:02d} in data/besselian')
+    if r.returncode:
+        sys.exit('node failed:\n' + r.stderr)
+    return json.loads(r.stdout)
+
+
+def split_flat(line):
+    """green_curve is a FLAT [lon,lat] list with null delimiters (HANDOFF §14)."""
+    segs, cur = [], []
+    for p in line or []:
+        if p is None:
+            if cur: segs.append(cur)
+            cur = []
         else:
-            if all(isinstance(v, dict) for v in data.values()):
-                data = list(data.values())
-    if not isinstance(data, list):
-        sys.exit(f'Unexpected paths JSON structure in {paths_json}')
-    return data
+            cur.append(p)
+    if cur: segs.append(cur)
+    return segs
 
 
-def find_record(paths_data, year, month, day):
-    for rec in paths_data:
-        if rec.get('year') == year and rec.get('month') == month and rec.get('day') == day:
-            return rec
-    sys.exit(f'No eclipse {year:04d}-{month:02d}-{day:02d} in path data')
+def ours_for(res, fields):
+    out = []
+    for f in fields:
+        v = res['path'].get(f) or []
+        if f == 'green_curve':
+            out += split_flat(v)
+        else:
+            out += [s for s in v if s]
+    return out
 
 
-# ── Validation pass ───────────────────────────────────────────────────────
+# ── Jubier side ───────────────────────────────────────────────────────────
 
-def stats(values):
-    if not values:
-        return None
-    s = sorted(values)
-    n = len(s)
-    median = s[n // 2] if n % 2 else 0.5 * (s[n//2 - 1] + s[n//2])
-    p90 = s[min(n - 1, int(round(0.9 * (n - 1))))]
-    return {'n': n, 'median': median, 'p90': p90, 'max': s[-1]}
+def kmz_text(kmz_path):
+    with zipfile.ZipFile(kmz_path) as z:
+        n = [x for x in z.namelist() if x.lower().endswith('.kml')]
+        return z.read('doc.kml' if 'doc.kml' in n else n[0]).decode('utf8', 'replace')
 
 
-def validate_curve_type(rec, placemarks, curve_type):
-    """Returns (header_str, results_str) or (None, skip_reason)."""
-    our_fields, jubier_names = CURVE_TYPES[curve_type]
+def open_kml(kmz_path):
+    """Parsed KML root (used by check_regen.py)."""
+    return ET.fromstring(kmz_text(kmz_path).encode('utf8'))
 
-    ours = []
-    for fld in our_fields:
-        for seg in rec.get(fld) or []:
-            ours.append(seg)
-    if not ours:
-        return None, f'no "{curve_type}" data in record'
 
-    # Substring (case-insensitive) match against Jubier names. Avoid
-    # accidentally matching "Penumbra Northern Limit" when looking for
-    # "Northern Limit": require the Jubier name to START with the target,
-    # OR match exactly. Falls back to substring otherwise.
-    matched = []
-    for target in jubier_names:
-        for (name, pts) in placemarks:
-            if name == target:
-                matched.append((name, pts))
-    if not matched:
-        return None, (f'no Jubier curves named any of '
-                      f'{jubier_names!r} in this KMZ')
+def jubier_dt(text):
+    m = re.search(r'\u0394\s*T[^0-9\-+]*([-+]?[\d,]*\.?\d+)\s*s', html.unescape(text))
+    if not m:
+        sys.exit('No ΔT found in the KMZ description')
+    return float(m.group(1).replace(',', ''))
 
-    seen = set()
-    all_ds = []
-    per_curve = []
-    for (name, pts) in matched:
-        if name in seen:
+
+def date_from_name(kmz_path):
+    m = re.search(r'_(-?\d+)_(\d\d)_(\d\d)', Path(kmz_path).stem)
+    return tuple(map(int, m.groups())) if m else None
+
+
+def stats(v):
+    s = sorted(v); n = len(s)
+    if not n: return None
+    q = lambda f: s[min(n - 1, int(round(f * (n - 1))))]
+    return {'n': n, 'median': q(0.5), 'p95': q(0.95), 'max': s[-1]}
+
+
+def fmt(st):
+    return f'med {st["median"]:9.1f} m   p95 {st["p95"]:9.1f} m   max {st["max"]:10.1f} m'
+
+
+def comparisons(res, placemarks):
+    """Yield (label, jubier_name, n_pts, stats) per Jubier curve we can match."""
+    byname = {}
+    for name, pts in placemarks:
+        byname.setdefault(name, pts)
+    for ct, (fields, names) in CURVE_TYPES.items():
+        if ct == 'magnitude':
+            for c in res['mag']:
+                name = f'{c["level"]:.1f} Magnitude {MAG_SIDE[c["side"]]} Curve'
+                if name in byname and len(c['line']) >= 2:
+                    pts = byname[name]
+                    yield ct, name, len(pts), stats(distances_m(pts, [c['line']]))
             continue
-        seen.add(name)
-        uniq = pts[:-1] if (len(pts) > 1 and pts[0] == pts[-1]) else pts
-        ds = [min_distance_to_polylines(p, ours) for p in uniq]
-        all_ds.extend(ds)
-        per_curve.append((name, len(uniq), stats(ds)))
+        ours = ours_for(res, fields)
+        if not ours:
+            continue
+        for name in names:
+            if name in byname:
+                pts = byname[name]
+                pts = pts[:-1] if len(pts) > 1 and pts[0] == pts[-1] else pts
+                yield ct, name, len(pts), stats(distances_m(pts, ours))
 
-    n_our_pts = sum(len(s) for s in ours)
-    header = (f'  [{curve_type}] our {len(ours)} segment(s)/{n_our_pts} pts  '
-              f'vs Jubier {len(matched)} curve(s)/{len(all_ds)} pts')
-    lines = [header]
-    for name, n, st in per_curve:
-        if st:
-            lines.append(f'    "{name}" ({n} pts): '
-                         f'med {st["median"]:8.1f} m   '
-                         f'90th {st["p90"]:8.1f} m   '
-                         f'max {st["max"]:9.1f} m')
-    if len(per_curve) > 1 and all_ds:
-        st = stats(all_ds)
-        lines.append(f'    overall ({st["n"]} pts):     '
-                     f'med {st["median"]:8.1f} m   '
-                     f'90th {st["p90"]:8.1f} m   '
-                     f'max {st["max"]:9.1f} m')
-    return '\n'.join(lines), None
+
+def validate(kmz_path, date=None, curve='all', quiet=False):
+    text = kmz_text(kmz_path)
+    root = ET.fromstring(text.encode('utf8'))
+    date = date or date_from_name(kmz_path)
+    if not date:
+        sys.exit(f'No date in {kmz_path}; pass --year --month --day')
+    res = compute(*date)
+    shift = (res['dt'] - jubier_dt(text)) * DEG_PER_S
+    placemarks = [(n, [[p[0] + shift, p[1]] for p in pts]) for n, pts in collect_placemarks(root)]
+    rows = [r for r in comparisons(res, placemarks) if curve in ('all', r[0])]
+    if not quiet:
+        y, m, d = date
+        print(f'Eclipse {y}-{m:02d}-{d:02d} ({res["type"]})  vs  {Path(kmz_path).name}'
+              f'   [pathgen {res["version"]}, ΔT shift {shift * 3600 / DEG_PER_S / 3600:+.1f} s]\n')
+        for ct, name, n, st in rows:
+            print(f'  {ct:10s} {name:36s} {n:5d} pts  {fmt(st)}')
+        print()
+    return rows
 
 
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main():
-    ap = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--kmz', required=True)
-    ap.add_argument('--paths')
-    ap.add_argument('--year', type=int)
-    ap.add_argument('--month', type=int)
-    ap.add_argument('--day', type=int)
-    ap.add_argument('--curve', default='all',
-                    choices=list(CURVE_TYPES.keys()) + ['all'],
-                    help='Which curve type to validate (default: all)')
-    ap.add_argument('--list', action='store_true',
-                    help='List every Jubier placemark + vertex count, then exit')
-    args = ap.parse_args()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--kmz')
+    ap.add_argument('--all', action='store_true', help='every KMZ in "reference kmz/"')
+    ap.add_argument('--year', type=int); ap.add_argument('--month', type=int); ap.add_argument('--day', type=int)
+    ap.add_argument('--curve', default='all', choices=list(CURVE_TYPES) + ['all'])
+    ap.add_argument('--list', action='store_true', help='list the KMZ placemarks and exit')
+    a = ap.parse_args()
 
-    root = open_kml(args.kmz)
-    placemarks = collect_placemarks(root)
-
-    if args.list:
-        print(f'Placemarks in {args.kmz}:')
-        for name, pts in placemarks:
+    if a.all:
+        summary = {}
+        for k in sorted(KMZ_DIR.glob('*.kmz')):
+            for ct, name, n, st in validate(k, curve=a.curve):
+                summary.setdefault(ct, []).append(st['median'])
+        print('Per-curve medians across all references (median of medians / worst median):')
+        for ct, v in summary.items():
+            s = sorted(v)
+            print(f'  {ct:10s} {len(v):3d} curves   {s[len(s) // 2]:9.1f} m   {s[-1]:10.1f} m')
+        return
+    if not a.kmz:
+        sys.exit('--kmz or --all required')
+    if a.list:
+        for name, pts in collect_placemarks(ET.fromstring(kmz_text(a.kmz).encode('utf8'))):
             print(f'  {len(pts):5d} pts  "{name}"')
         return
-
-    if not (args.paths and args.year and args.month and args.day):
-        sys.exit('--paths, --year, --month, --day required for validation '
-                 '(or use --list to inspect KMZ)')
-
-    paths_data = load_paths(args.paths)
-    rec = find_record(paths_data, args.year, args.month, args.day)
-    print(f'Eclipse {args.year}-{args.month:02d}-{args.day:02d} '
-          f'({rec.get("type", "?")})  vs  {Path(args.kmz).name}\n')
-
-    types_to_run = list(CURVE_TYPES.keys()) if args.curve == 'all' else [args.curve]
-    for ct in types_to_run:
-        result, skip = validate_curve_type(rec, placemarks, ct)
-        if skip:
-            print(f'  [{ct}] skipped: {skip}')
-        else:
-            print(result)
-        print()
+    date = (a.year, a.month, a.day) if a.year is not None else None
+    validate(a.kmz, date, a.curve)
 
 
 if __name__ == '__main__':

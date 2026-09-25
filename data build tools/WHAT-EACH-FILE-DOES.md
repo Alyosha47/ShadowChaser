@@ -17,11 +17,15 @@ reference only: `js/pathgen.js` is its port (verified on all 11,898 eclipses).
 Still imported by the country-index tools for its geometry helpers. It writes
 `data/paths/paths_*.json.gz`, which the app no longer reads.
 
-**gen_eclipse_paths_13f.py** — an older version, kept as a reference (version
-stamp 2026-07-13f). Not used by anything.
+**validate_paths.py** — checks the app's curves (computed fresh by
+`js/pathgen.js`) against Jubier's KMZs, ΔT difference removed. `--all` runs
+every file in `reference kmz/`. Needs Node — an assistant tool.
 
-**validate_paths.py** — checks our path curves against Jubier's KMZ files.
-Works for totals, annulars, hybrids and partials.
+**pathdump.js** — writes the catalogue from any copy of `js/pathgen.js` as
+chunk files, so two engine versions can be compared.
+
+**check_regen.py** — compares two `pathdump.js` outputs: structure, how far
+each curve moved, Jubier before/after. Run before bumping `PATHGEN_VERSION`.
 
 **validate_terminators.py** — the same idea for the sunrise/sunset curves.
 
@@ -146,7 +150,8 @@ Catalogue and time first, then paths, then countries:
 
 1. `verify_dt.py` → `update_dt.py`
 2. `split_eclipse_data.py`
-3. `gen_eclipse_paths.py`, checked with `validate_paths.py`
+3. Paths: edit `js/pathgen.js`, compare with `pathdump.js` + `check_regen.py`,
+   check with `validate_paths.py`, bump `PATHGEN_VERSION`
 4. `name_countries.js`, `split_remote_units.js`
 5. `central_countries.py` and `obscuration_countries.py`
 6. `build_country_index.py`

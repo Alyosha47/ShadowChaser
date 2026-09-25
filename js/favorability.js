@@ -414,6 +414,19 @@
     var mx = (e - w) * MARGIN, my = (n - s) * MARGIN;
     w -= mx; e += mx; s -= my; n += my;
     if (e - w >= 360) { w = -180; e = 180; }
+    /* BRING THE BOX BACK ONTO THE WORLD. Dragging the globe westward across the
+       antimeridian makes getBounds() report unwrapped longitudes (west -200 and
+       so on). A canvas source is placed on the tile under its CENTRE, and a
+       centre below -180 is tile x = -1: MapLibre throws "x=-1 ... outside of
+       bounds", the render's catch switches the layer off, and the overlay
+       vanished mid-drag (user report 2026-09-24, Brave, 2028-07-22). Shifting
+       the whole box by 360 is the same place on the globe; the mask and the
+       score both wrap longitude, and edges a little past +-180 were already
+       normal (the margin above produces them). */
+    var cx = (w + e) / 2, sh = 0;
+    while (cx + sh < -180) sh += 360;
+    while (cx + sh >= 180) sh -= 360;
+    w += sh; e += sh;
     return { w: w, e: e,
              s: Math.max(-LAT_MAX, Math.min(LAT_MAX, s)),
              n: Math.max(-LAT_MAX, Math.min(LAT_MAX, n)) };
@@ -436,6 +449,11 @@
     var b = map.getBounds();
     var w = b.getWest(), e = b.getEast();
     if (!(e > w) || (e - w) > 355) return _drawn.e - _drawn.w >= 359.9;
+    /* _bbox() moves the drawn box onto -180..180; bring the view to the same
+       world copy before comparing, or every view past the antimeridian reads
+       as "not covered". */
+    var k = Math.round(((_drawn.w + _drawn.e) - (w + e)) / 720) * 360;
+    w += k; e += k;
     return w >= _drawn.w && e <= _drawn.e &&
            b.getSouth() >= _drawn.s && b.getNorth() <= _drawn.n;
   }
@@ -450,6 +468,11 @@
     var b = map.getBounds();
     var w = b.getWest(), e = b.getEast();
     if (!(e > w) || (e - w) > 355) return _drawn.e - _drawn.w >= 359.9;
+    /* _bbox() moves the drawn box onto -180..180; bring the view to the same
+       world copy before comparing, or every view past the antimeridian reads
+       as "not covered". */
+    var k = Math.round(((_drawn.w + _drawn.e) - (w + e)) / 720) * 360;
+    w += k; e += k;
     return w >= _drawn.w && e <= _drawn.e &&
            b.getSouth() >= _drawn.s && b.getNorth() <= _drawn.n;
   }
@@ -1065,6 +1088,14 @@
       if (typeof isVetoArmed === 'function' && isVetoArmed()) restoreShadowMode();
     } catch (e) {}
     _refreshOvals();
+    /* TELL THE BUTTON. This layer also switches ITSELF off (no record, or a
+       render that threw — both log "[favorability]"), and the button and legend
+       used to be told only when the user clicked. So the icon stayed lit over a
+       map with no overlay, "This view" made the legend vanish, and the next
+       click turned it ON (2026-09-24, 2028-07-22 on desktop). */
+    try {
+      if (window.FavorBar) { if (FavorBar.sync) FavorBar.sync(); if (FavorBar.render) FavorBar.render(); }
+    } catch (e) {}
   }
 
   function toggle() { if (_on) _disable(); else _enable(); }
@@ -1121,7 +1152,7 @@
      worker is cache-first with ignoreSearch, so "is this the file I just
      uploaded?" is otherwise unanswerable from the console. */
   window.Favorability = {
-    version: '2026-09-11c',
+    version: '2026-09-24b',
     toggle: toggle, enable: _enable, disable: _disable,
     sampleAt: sampleAt, detailAt: detailAt,
     setMode: setMode, getMode: getMode,

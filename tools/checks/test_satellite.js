@@ -175,5 +175,157 @@ var BUDGET = 28;
      text.length + ' chars (budget ' + BUDGET + '): ' + text);
 });
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+console.log('\n12. the clear-sky reference: hourly, blended to the FRAME\'s time');
+/* It was kept for six hours: a six-hour-old reference read the ground 10.7 C too
+   cold at midday and dropped the cloud found from 69% to 41% (2026-09-22). Then
+   it followed the clock, which sits 18-50 min from GIBS's published frame. Now:
+   one reference per clock hour, the two around the frame's time blended. Runs the
+   SHIPPED background() with only the network and pixel reads stubbed, a clock
+   the test moves, and every stub frame reading as its own hour, so the blend is
+   checkable by value. */
+(async function () {
+  var hooked = src.replace(/\n\}\)\(\);\s*$/,
+    '\n  window.__t = { background: background, hours: function (id) { return Object.keys(_bgH[id] || {}).map(Number); },' +
+    ' setLoad: function (f) { loadImage = f; }, setRead: function (f) { readPixels = f; }, setTemp: function (f) { tempOf = f; } };\n})();\n');
+  ok('test hook installed', hooked !== src);
+  var HR = 3600000, day0 = Date.UTC(2026, 8, 22);
+  var clock = { t: day0 + 12 * HR + 50 * 60000 };
+  var FakeDate = function (x) { return new Date(x === undefined ? clock.t : x); };
+  FakeDate.now = function () { return clock.t; }; FakeDate.UTC = Date.UTC;
+  var sb2 = { window: {}, console: { log: function () {}, warn: function () {} }, Date: FakeDate,
+              fetch: function () { throw new Error('tests must not hit the network'); } };
+  vm.createContext(sb2); vm.runInContext(hooked, sb2);
+  var T = sb2.window.__t, fetches = 0, failing = false, held = {}, release = [];
+  /* An hour listed in `held` never answers until released: proves the first
+     draw does not wait for it. */
+  T.setLoad(function (u) {
+    fetches++;
+    if (failing) return Promise.reject(new Error('x'));
+    var hh = +decodeURIComponent(String(u)).match(/T(\d\d):/)[1];
+    if (held[hh]) return new Promise(function (r) { release.push(function () { r({ u: String(u) }); }); });
+    return Promise.resolve({ u: String(u) }); });
+  function letGo() { held = {}; release.splice(0).forEach(function (f) { f(); }); return new Promise(function (r) { setTimeout(r, 20); }); }
+  T.setRead(function (im, w, h) {
+    var d = new Uint8Array(w * h * 4); for (var i = 3; i < d.length; i += 4) d[i] = 255;
+    var m = decodeURIComponent(im.u).match(/T(\d\d):(\d\d)/); d.hh = +m[1] + m[2] / 60; return d; });
+  T.setTemp(function (sat, d) { return d.hh; });
+  var sat = { id: 'goes-east', step: 10, svc: 'gibs', lon: -75.2, temp: 'cmap' };
+  function near(x, y) { return Math.abs(x - y) < 1e-4; }
+
+  held[13] = true;
+  var a0 = await T.background(sat, day0 + 12 * HR + 20 * 60000);
+  ok('cold start, frame 12:20: drawn from the NEARER hour (12) while hour 13 has not answered',
+     !!a0 && near(a0.T[0], 12), a0 && a0.T[0]);
+  ok('... both hours requested: 10 + 9 (today\'s 13:00 not yet published)', fetches === 19, fetches + ' fetches');
+  await letGo();
+  var a = await T.background(sat, day0 + 12 * HR + 20 * 60000);
+  ok('next render of the same frame: blended a third of the way, 12.333', !!a && near(a.T[0], 12 + 1 / 3) && fetches === 19, a && a.T[0]);
+  var b = await T.background(sat, day0 + 12 * HR + 40 * 60000);
+  ok('frame 12:40: same hours, nothing fetched', fetches === 19, fetches + ' fetches');
+  ok('... blended two thirds: 12.667', !!b && near(b.T[0], 12 + 2 / 3), b && b.T[0]);
+  ok('same frame again: the same field, not rebuilt', (await T.background(sat, day0 + 12 * HR + 40 * 60000)) === b);
+  clock.t = day0 + 13 * HR + 40 * 60000;
+  held[14] = true;
+  var c0 = await T.background(sat, day0 + 13 * HR + 10 * 60000);
+  ok('frame 13:10: nearer hour 13 is cached — drawn at once while hour 14 has not answered', !!c0 && near(c0.T[0], 13), c0 && c0.T[0]);
+  await letGo();
+  var c = await T.background(sat, day0 + 13 * HR + 10 * 60000);
+  ok('... hour 14 fetched behind it (9 frames), then blended: 13.167', fetches === 28 && !!c && near(c.T[0], 13 + 1 / 6), fetches + ' fetches, ' + (c && c.T[0]));
+  ok('only the two hours in use are kept', T.hours('goes-east').sort().join() === [13 * HR + day0, 14 * HR + day0].join(),
+     T.hours('goes-east').map(function (h) { return (h - day0) / HR; }).join());
+  clock.t = day0 + 16 * HR + 40 * 60000; failing = true;
+  var d = await T.background(sat, day0 + 16 * HR + 10 * 60000);
+  ok('both hours fail: the last field is kept (a missing one reads as clear sky)', d === c, String(d));
+  failing = false;
+  var e = await T.background(sat, day0 + 16 * HR + 10 * 60000);
+  ok('... and the next call retries and succeeds', !!e && near(e.T[0], 16), e && e.T[0]);
+
+  console.log('\n13. a satellite that went missing is retried soon (js/cloud-ui.js)');
+  /* GIBS drops ~1 request in 5; when one satellite's all fail its band is blank
+     for five minutes ("No Himawari", seen live 2026-09-23). Runs the SHIPPED
+     retryMissing() with fake timers and a stub Satellite. */
+  var cuSrc = fs.readFileSync(path.join(__dirname, '../../js/cloud-ui.js'), 'utf8');
+  var cuHooked = cuSrc.replace(/function retryMissing\(\) \{/,
+    'window.__cu = { retry: function () { return retryMissing(); }, mode: function (m) { _mode = m; }, n: function () { return _retries; } };\n  function retryMissing() {');
+  ok('cloud-ui test hook installed', cuHooked !== cuSrc);
+  var timers = [], inval = 0, miss = ['Himawari'];
+  var sb3 = { window: {}, console: { log: function () {}, warn: function () {} },
+    document: { readyState: 'loading', visibilityState: 'visible', addEventListener: function () {},
+                getElementById: function () { return null; } },
+    setTimeout: function (f, ms) { timers.push({ f: f, ms: ms }); return timers.length; },
+    clearTimeout: function () {}, setInterval: function () {} };
+  sb3.window.Satellite = { missing: function () { return miss.slice(); },
+    invalidate: function () { inval++; return Promise.resolve(true); } };
+  sb3.Satellite = sb3.window.Satellite;   /* in a browser window IS the global */
+  vm.createContext(sb3); vm.runInContext(cuHooked, sb3);
+  var CU = sb3.window.__cu;
+  CU.mode('now'); CU.retry();
+  ok('missing after a pass: one retry scheduled, at 30 s', timers.length === 1 && timers[0].ms === 30000, JSON.stringify(timers.map(function (t) { return t.ms; })));
+  CU.retry();
+  ok('... not doubled by a second announce', timers.length === 1);
+  timers.shift().f(); await new Promise(function (r) { setTimeout(r, 5); });
+  ok('the retry refreshes through invalidate()', inval === 1, inval);
+  CU.retry();
+  ok('still missing: a second retry, at 90 s', timers.length === 1 && timers[0].ms === 90000);
+  timers.shift().f(); CU.retry();
+  ok('then it stops — two retries per scheduled refresh', timers.length === 0 && inval === 2, inval);
+  miss = []; CU.retry();
+  ok('nothing missing: the count resets', CU.n() === 0);
+  miss = ['Himawari']; CU.mode('avg'); CU.retry();
+  ok('not in Now: no retry', timers.length === 0);
+  CU.mode('now'); CU.retry(); CU.mode('photo'); timers.shift().f();
+  ok('mode changed before it fired: no refresh', inval === 2, inval);
+
+  console.log('\n14. the reference from sat-clearsky.php, and the fallback to the phone');
+  /* The server builds the reference once per satellite-hour; the phone must use
+     it when it is right and build its own on ANY problem, never draw nothing. */
+  var zlib = require('zlib');
+  var BW = 1024, BH = 566, GRID = BW + 'x' + BH + ':-180,180,-70,70';
+  var i16 = new Int16Array(BW * BH);
+  for (var q = 0; q < i16.length; q++) i16[q] = (q % 1000) - 500;
+  i16[7] = -32768;
+  var gzOK = zlib.gzipSync(Buffer.from(i16.buffer));
+  async function run14(resp) {
+    var hooked4 = src.replace(/\n\}\)\(\);\s*$/,
+      '\n  window.__t = { hourRef: hourRef, setLoad: function (f) { loadImage = f; },' +
+      ' setRead: function (f) { readPixels = f; }, setTemp: function (f) { tempOf = f; } };\n})();\n');
+    var urls = [], loads = 0;
+    var sb4 = { window: {}, console: { log: function () {}, warn: function () {} },
+      Response: Response, DecompressionStream: DecompressionStream,
+      fetch: function (u) {
+        urls.push(u);
+        if (!resp) return Promise.reject(new Error('offline'));
+        return Promise.resolve({ ok: resp.status === 200, status: resp.status,
+          headers: { get: function (k) { return k === 'X-Clearsky-Grid' ? resp.grid : null; } },
+          body: new Response(resp.body).body });
+      } };
+    vm.createContext(sb4); vm.runInContext(hooked4, sb4);
+    var T4 = sb4.window.__t;
+    T4.setLoad(function () { loads++; return Promise.resolve({}); });
+    T4.setRead(function (im, w, h) { var d = new Uint8Array(w * h * 4); for (var i = 3; i < d.length; i += 4) d[i] = 255; return d; });
+    T4.setTemp(function () { return 7; });
+    var H = Date.UTC(2026, 8, 22, 12);
+    var rec = await T4.hourRef({ id: 'goes-east', step: 10, svc: 'gibs', temp: 'cmap', layer: 'x' }, H);
+    return { rec: rec, urls: urls, loads: loads };
+  }
+  var a14 = await run14({ status: 200, grid: GRID, body: gzOK });
+  ok('asks sat-clearsky.php for that satellite and hour', a14.urls[0] === '/sat-clearsky.php?s=goes-east&h=2026-09-22T12', a14.urls[0]);
+  ok('server answer used: no frames fetched by the phone', a14.loads === 0 && a14.rec && a14.rec.src === 'server', a14.loads + ' ' + (a14.rec && a14.rec.src));
+  ok('decoded: tenths of a degree, little-endian', a14.rec && a14.rec.T[0] === -50 && Math.abs(a14.rec.T[501] - 0.1) < 1e-6 && Math.abs(a14.rec.T[999] - 49.9) < 1e-5,
+     a14.rec && [a14.rec.T[0], a14.rec.T[501], a14.rec.T[999]].join());
+  ok('-32768 decodes as "no data" (-999), as the phone\'s own build', a14.rec && a14.rec.T[7] === -999);
+  var cases = [['server error 502', { status: 502, grid: GRID, body: gzOK }],
+               ['a different grid', { status: 200, grid: '512x283:-180,180,-70,70', body: gzOK }],
+               ['a truncated file', { status: 200, grid: GRID, body: zlib.gzipSync(Buffer.alloc(1000)) }],
+               ['not gzip at all', { status: 200, grid: GRID, body: Buffer.from('<html>error</html>') }],
+               ['offline', null]];
+  for (var c = 0; c < cases.length; c++) {
+    var r14 = await run14(cases[c][1]);
+    ok(cases[c][0] + ': falls back to building on the phone (10 frames)',
+       r14.rec && r14.rec.src === 'phone' && r14.loads === 10 && r14.rec.T[0] === 7,
+       (r14.rec && r14.rec.src) + ', ' + r14.loads + ' frames');
+  }
+
+  console.log('\n' + pass + ' passed, ' + fail + ' failed');
+  process.exit(fail ? 1 : 0);
+})();

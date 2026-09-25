@@ -46,7 +46,7 @@ var _deckLayers = null; /* last layers array pushed to the overlay */
    MapLibre's {z}/{x}/{y} (row = {y}) substitution: ArcGIS uses {z}/{y}/{x}. */
 var BASEMAPS = {
   esri_street:  { name: 'Esri Street',      attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}' },
-  esri_imagery: { name: 'Esri Satellite',   attr: 'Esri', max: 19, dark: true, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' },
+  esri_imagery: { name: 'Esri Satellite',   attr: 'Esri, Maxar, Earthstar Geographics, and the GIS User Community', max: 19, dark: true, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' },
   esri_topo:    { name: 'Esri Topographic', attr: 'Esri', max: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}' },
   esri_terrain: { name: 'Esri Terrain',     attr: 'Esri', max: 13, dark: false, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}' },
   esri_gray:    { name: 'Esri Light Gray',  attr: 'Esri', max: 16, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}' },
@@ -65,7 +65,7 @@ var BASEMAPS = {
                   url:      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
                   nearFrom: 9.5,
                   nearMax:  17,
-                  nearAttr: '\u00a9 OpenTopoMap (CC-BY-SA)',
+                  nearAttr: 'Map data \u00a9 OpenStreetMap contributors, SRTM \u00b7 style \u00a9 OpenTopoMap (CC-BY-SA)',
                   nearUrl:  'https://tile.opentopomap.org/{z}/{x}/{y}.png' },
   osm:          { name: 'OpenStreetMap',    attr: '\u00a9 OpenStreetMap contributors',   max: 19, url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' }
 };

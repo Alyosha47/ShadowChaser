@@ -274,7 +274,8 @@ function _kmzBalloon(r, lat, lon, entry, appUrl) {
 
 function _kmzFilename(entry) {
   var t = typeCode(entry.eclipse_type);            /* T/A/H/P from 19 variants */
-  var y = entry.year < 0 ? 'bce' + pad(Math.abs(entry.year)) : String(entry.year);
+  /* astronomical year: 0 is 1 BCE, -762 is 763 BCE (see fmtYear, format.js) */
+  var y = entry.year <= 0 ? 'bce' + pad(1 - entry.year) : String(entry.year);
   while (y.length < 4 && entry.year >= 0) y = '0' + y;
   return y + pad(entry.month) + pad(entry.day) + '_' + t + 'SE.kmz';
 }

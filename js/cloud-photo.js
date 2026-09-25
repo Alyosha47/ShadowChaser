@@ -52,7 +52,7 @@
   var GIBS = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best';
   var GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi';
   var EUM  = 'https://view.eumetsat.int/geoserver/wms';
-  var CREDIT = 'NASA GIBS \u00b7 EUMETSAT';
+  var CREDIT = 'NASA GIBS \u00b7 \u00a9 EUMETSAT ' + new Date().getUTCFullYear();   /* \u00a9 [year]: EUMETSAT's terms */
 
   /* One entry per disc. Layer identifiers are VERIFIED against each service's
      GetCapabilities, not remembered: GIBS carries GeoColor for the two GOES only
@@ -621,7 +621,7 @@
   }
 
   window.Imagery = {
-    version: '2026-08-20a',
+    version: '2026-09-23a',
     CREDIT: CREDIT,
     on: on,
     off: off,

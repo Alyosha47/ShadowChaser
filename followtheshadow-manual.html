@@ -4,33 +4,59 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>followtheshadow — User Manual</title>
+<link rel="icon" href="icons/icon-192-v2.png">
 <style>
+  /* The app's own fonts and palette (index.html @font-face, css/app.css tokens),
+     so the manual reads as part of it. accent = --gold, accent2 = --gold2. */
+  @font-face { font-family:'Cormorant Garamond'; font-weight:300; font-style:normal;
+    src: url('./fonts/CormorantGaramond-Light.woff2') format('woff2'); }
+  @font-face { font-family:'JetBrains Mono'; font-weight:400; font-style:normal;
+    src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2'); }
+  @font-face { font-family:'JetBrains Mono'; font-weight:700; font-style:normal;
+    src: url('./fonts/JetBrainsMono-Bold.woff2') format('woff2'); }
   :root{
-    --bg:#0b0e14; --panel:#12161f; --border:#232a38; --text:#dbe2ef;
-    --muted:#8b96ab; --accent:#f2b544; --accent2:#5fb0ff;
+    --bg:#0a0c0f; --panel:#0f1218; --border:#253040; --text:#dde3ec;
+    --muted:#7e8fa0; --accent:#c8a96e; --accent2:#e8c98e;
+    --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+    --serif:'Cormorant Garamond',Georgia,serif;
   }
+  .brand{display:flex; align-items:center; gap:1rem; margin:0 0 .9rem; max-width:100%;}
+  .brand > span{min-width:0;}   /* the title may shrink/wrap; the banner may never push past the screen */
+  .brand img{width:64px; height:64px; flex:0 0 auto;}   /* 2x/3x: cut from the splash art. 1x (manual-logo-64.png): RE-DRAWN from the logo's measured geometry with 48 rays instead of 96 (every other one), each ~1 px wide — at 64 px the 96 real rays are finer than a pixel and can only blur or shimmer (2026-09-25). */
+  .brand .app-title{font-family:var(--serif); font-weight:300; font-size:2.1rem; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--accent2); line-height:1.1;}
+  .brand .subtitle{font-family:var(--mono); font-weight:700; font-size:.8rem; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--accent); margin-top:.25rem;}
+  /* Narrow screens: the title scales to fit beside the logo
+     (FOLLOWTHESHADOW at 2.1rem overflows a 390 px phone). */
+  @media (max-width: 560px){
+    .brand .app-title{font-size:min(2.1rem, 5.4vw);}
+  }
+  .back-to-app{margin:3rem 0 0; padding-top:1.2rem; border-top:1px solid var(--border); font-size:.9rem;}
+  .back-to-app a, a.app-link{color:var(--accent2); text-decoration:none;}
+  .back-to-app a:hover, a.app-link:hover{text-decoration:underline;}
   *{box-sizing:border-box;}
   body{
     margin:0; background:var(--bg); color:var(--text);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-    line-height:1.6;
+    font-family:var(--mono); font-size:.92rem;
+    line-height:1.7;
   }
   .wrap{max-width:840px; margin:0 auto; padding:2.5rem 1.5rem 5rem;}
   header.page{margin-bottom:2.5rem;}
-  header.page h1{font-size:1.9rem; margin:0 0 .25rem; letter-spacing:.02em; color:#fff;}
+  header.page h1{margin:0;}
   header.page p{color:var(--muted); margin:0; font-size:.95rem;}
   nav.toc{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1.1rem 1.4rem; margin:2rem 0 2.5rem;}
-  nav.toc div.title{font-weight:600; color:var(--accent); margin-bottom:.6rem; font-size:.85rem; text-transform:uppercase; letter-spacing:.06em;}
+  nav.toc div.title{font-weight:700; letter-spacing:.18em !important; color:var(--accent); margin-bottom:.6rem; font-size:.85rem; text-transform:uppercase; letter-spacing:.06em;}
   nav.toc ol{margin:0; padding-left:1.2rem; columns:2; column-gap:2rem;}
   nav.toc li{margin-bottom:.35rem; font-size:.92rem;}
   nav.toc a{color:var(--text); text-decoration:none;}
   nav.toc a:hover{color:var(--accent2);}
   section{margin:2.6rem 0;}
-  h2{font-size:1.3rem; color:#fff; border-bottom:1px solid var(--border); padding-bottom:.5rem; margin:0 0 1rem; scroll-margin-top:1rem;}
-  h3{font-size:1.02rem; color:var(--accent2); margin:1.6rem 0 .6rem; scroll-margin-top:1rem;}
+  h2{font-size:1.02rem; font-weight:700; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:.5rem; margin:0 0 1rem; scroll-margin-top:1rem;}
+  h3{font-size:.95rem; color:var(--accent2); margin:1.6rem 0 .6rem; scroll-margin-top:1rem;}
   h4{font-size:.9rem; color:var(--text); margin:1.2rem 0 .4rem; text-transform:uppercase; letter-spacing:.04em;}
   p{margin:.7rem 0;}
-  code{background:#1a2030; border:1px solid var(--border); border-radius:4px; padding:.1rem .35rem; font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:.88em; color:var(--accent);}
+  code{background:#1a2030; border:1px solid var(--border); border-radius:4px; padding:.1rem .35rem; font-family:var(--mono); font-size:.88em; color:var(--accent);}
   table{width:100%; border-collapse:collapse; margin:1rem 0; font-size:.92rem;}
   th, td{text-align:left; padding:.55rem .7rem; border-bottom:1px solid var(--border); vertical-align:top;}
   th{color:var(--accent); font-weight:600; font-size:.82rem; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--accent2);}
@@ -43,7 +69,7 @@
   strong{color:#fff;}
   .callout{background:#161c2b; border-left:3px solid var(--accent2); border-radius:6px; padding:.9rem 1.1rem; margin:1rem 0; font-size:.93rem;}
   .callout.warn{border-left-color:var(--accent);}
-  .pill{display:inline-block; background:#1a2030; border:1px solid var(--border); border-radius:999px; padding:.15rem .7rem; font-size:.85rem; margin:.15rem .25rem .15rem 0; font-family:monospace; color:var(--accent2);}
+  .pill{display:inline-block; background:#1a2030; border:1px solid var(--border); border-radius:999px; padding:.15rem .7rem; font-size:.85rem; margin:.15rem .25rem .15rem 0; font-family:var(--mono); color:var(--accent2);}
   .icon-check{color:#5fd08a;}
   .icon-x{color:#e26a6a;}
   .backtotop{display:block; text-align:right; font-size:.8rem; margin-top:1.2rem;}
@@ -56,10 +82,21 @@
   .device-card ol, .device-card ul{margin:.4rem 0; padding-left:1.2rem;}
   .device-card p{margin:.4rem 0; font-size:.92rem;}
 
-  svg.ic{width:1.15em; height:1.15em; vertical-align:-0.22em; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; fill:none; margin:0 .08em;}
+  svg.ic, svg.inline-icon{width:1.5em; height:1.5em; vertical-align:-0.45em; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; fill:none; margin:0 .08em;}
   svg.ic.filled{fill:currentColor;}
   .icon-row{display:flex; align-items:center; gap:.4rem;}
 
+  /* The Info tab's moon-sun-moon spacer (css/app.css .instructions-ornament),
+     a little larger here, between sections. */
+  .ornament{margin:2.2rem 0 1.6rem; text-align:center; color:var(--accent); font-size:1.25rem;
+    letter-spacing:.35em; padding-left:.35em; line-height:1; user-select:none;}
+  /* Long unbroken strings (a URL in the credits) must wrap, not widen the page:
+     on a 390 px phone one made the page 543 px wide (2026-09-25). */
+  p, li, td{overflow-wrap:break-word;}
+  .formula{font-family:var(--mono); font-size:.85rem; line-height:1.55; background:rgba(255,255,255,.035);
+    border-left:2px solid var(--accent); border-radius:3px; padding:.6rem .8rem; margin:.4rem 0 1rem;
+    overflow-x:auto; white-space:pre;}
+  .formula .k{color:var(--muted);}
   .bio p{margin:.8rem 0;}
   .bio a{color:var(--accent2);}
 
@@ -74,26 +111,23 @@
 <div class="wrap">
 
   <header class="page">
-    <h1>followtheshadow — User Manual</h1>
-    <p>A supplement to the brief in-app Instructions (Info tab). Covers every feature in depth, with examples.</p>
+    <h1 class="brand"><img src="icons/manual-logo-64.png" srcset="icons/manual-logo-64.png 1x, icons/manual-logo-128.png 2x, icons/manual-logo-192.png 3x" width="64" height="64" alt=""><span><span class="app-title">followtheshadow</span><span class="subtitle" style="display:block">User Manual</span></span></h1>
   </header>
 
   <nav class="toc">
     <div class="title">Contents</div>
     <ol>
-      <li><a href="#what-it-is">What is this app?</a></li>
-      <li><a href="#search">Search syntax</a></li>
-      <li><a href="#map">On the map</a></li>
-      <li><a href="#details">Details tab</a></li>
-      <li><a href="#log">Log tab</a></li>
-      <li><a href="#info">Info tab</a></li>
-      <li><a href="#offline">Offline reference</a></li>
-      <li><a href="#tips">Tips</a></li>
+      <li><a href="#what-it-is">Syzygy</a></li>
+      <li><a href="#search">Search</a></li>
+      <li><a href="#map">Map</a></li>
+      <li><a href="#details">Details</a></li>
+      <li><a href="#log">Log</a></li>
+      <li><a href="#info">Info</a></li>
     </ol>
   </nav>
 
   <section id="what-it-is">
-    <h2>1. What is this app?</h2>
+    <h2>1. Syzygy</h2>
     <p>Who doesn't love an eclipse? Earth–Moon–Sun all in a straight line? Amazing. The Sun using the Moon to point at a specific place on land? Even better. So here is a tool to help you get to that spot, where you can witness the sky while, like a giant coronal iris with a razor-sharp pupil at its centre, the sky stares back at you.</p>
     <p>In case you want to go back in time, this app covers ~11,800 solar eclipses — a five-millennium range. Pick an eclipse, click a location, get exact local circumstances — sunrise/set, contact times, sun position, cloud outlook, terrain shadows. Works fully offline once installed, which is the point: it's built for the field.</p>
     <div class="callout">
@@ -101,9 +135,10 @@
     </div>
     <div class="backtotop"><a href="#top">↑ back to top</a></div>
   </section>
+  <div class="ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
 
   <section id="search">
-    <h2>2. Search syntax</h2>
+    <h2>2. Search</h2>
     <p>Rich search is important. I saw an eclipse when I was a kid. When's the next eclipse on my birthday? When's the next eclipse in Hanimadhoo? Was there an eclipse on my birthday in Hanimadhoo when I was a kid?</p>
     <p>Type any combination of these into the search box, in any order, separated by spaces:</p>
     <table>
@@ -122,7 +157,7 @@
     <p>A country stands for <em>all</em> of itself: <code>chile total</code> asks whether the eclipse reached anywhere in Chile. Names take several forms — <code>usa</code>, <code>us</code>, <code>United States</code>, <code>United States of America</code>, and the two- and three-letter codes.</p>
     <p>Four things differ from a city:</p>
     <ul>
-      <li>Where a city and a country share a name the <strong>city wins</strong> — <code>singapore</code> means the city. Add &ldquo;<code>country</code>&rdquo; to force the other reading.</li>
+      <li>Where a city and a country share a name the <strong>city wins</strong> — <code>armenia</code> means the city in Colombia; <code>armenia country</code> means the country.</li>
       <li>A country means its <strong>own land</strong>. France is France and Corsica, not French Guiana, so an eclipse crossing South America won't answer to <code>france</code>. The far-flung parts are searchable separately: <code>french guiana</code>, <code>réunion</code>, <code>martinique</code>, <code>caribbean netherlands</code>. Accents optional.</li>
       <li>Obscuration is the <strong>best figure anywhere inside the borders</strong>, to the nearest 5% — it tells you the eclipse was worth travelling for, not where to stand.</li>
       <li>Eclipses covering less than a fifth of the Sun at their best are <strong>left out entirely</strong>.</li>
@@ -140,14 +175,12 @@
       <li><code>italy total &gt;90</code> — adding an obscuration widens it back to total anywhere, kept only where your place sees at least that partial percentage. In August 1999 the path passed just north of Italy, so <code>italy total</code> finds nothing while <code>italy total &gt;90</code> finds it.</li>
       <li>Obscuration is the Sun's covered area at a selected location, or the maximum anywhere on Earth if you haven't set one.</li>
     </ul>
-
-    <h3>Search range</h3>
-    <p><code>Info → Settings → Search range</code> caps how much of the catalogue is scanned (Modern 1500–2500 / ±500 years / Extended −1000–3000 / All ~11,800). Smaller ranges search faster. Typing an explicit year in the search box always overrides this setting for that search.</p>
     <div class="backtotop"><a href="#top">↑ back to top</a></div>
   </section>
+  <div class="ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
 
   <section id="map">
-    <h2>3. On the map</h2>
+    <h2>3. Map</h2>
     <p>The globe itself, and the controls that live on top of it. On desktop it's the permanent centre view; on mobile it's the <strong>Map</strong> tab.</p>
     <ul>
       <li><strong>Click anywhere</strong> to set your viewing location. This updates the Details panel with circumstances for the selected eclipse at that point, and adds the coordinates to the search field.</li>
@@ -156,7 +189,7 @@
     </ul>
 
     <h3>Overlay buttons (top left)</h3>
-    <p><strong>◐ Terrain shadows</strong> — so you can see where the eclipse will actually be viewable given the local terrain.</p>
+    <p><svg class="inline-icon" viewBox="2 2 20 20" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg> <strong>Terrain shadows</strong> — so you can see where the eclipse will actually be viewable given the local terrain.</p>
     <ul>
       <li>Needs a live connection (streams elevation data) — greyed out offline.</li>
       <li><strong>Zoom in to activate</strong> — shadows only render above a certain zoom.</li>
@@ -164,22 +197,26 @@
       <li>You can also click a row in the Details contact-times table to scrub directly to that contact time.</li>
     </ul>
 
-    <p><strong>☁ Cloud cover</strong> — three data sources, one button. It reveals:</p>
+    <p><svg class="inline-icon" viewBox="1 4 22 15" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878"/></svg> <strong>Cloud cover</strong> — three data sources, one button. It reveals:</p>
     <ul>
       <li><strong>Average:</strong> Long-run cloud-cover climatology for the date. Precached — works offline.</li>
       <li><strong>Now:</strong> A live cloud mask, online-only, decoded from current infrared satellite data.</li>
       <li><strong>Photo:</strong> The actual live satellite picture, online-only, for more detailed cloud data on the day.</li>
     </ul>
 
-    <p><strong>☺ Favorability</strong> — the other two buttons each show you one ingredient. This one blends
+    <p><svg class="inline-icon" viewBox="2 2 20 20" aria-hidden="true" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M9.5 15a3.5 3.5 0 0 0 5 0"/></svg> <strong>Favorability</strong> — the other two overlay buttons each show you one ingredient. This one blends
     them into a single answer to &ldquo;how good is this spot for watching <em>this</em> eclipse&rdquo;, painted
     along the central path only, blue for better and red for worse. Total and annular eclipses only; the button
     does nothing for a partial one, which has no central path.</p>
+    <p>Three criteria — duration, sun altitude and the average cloudiness — each measured at that spot&rsquo;s own
+    local maximum, and <em>multiplied</em>, so one bad ingredient cannot be bought off by the other two:</p>
+    <div class="formula">S = (1&minus;C)<sup>0.60</sup> &times; (T/T<sub>max</sub>)<sup>0.40</sup> &times; (A/7.5)<sup>0.35</sup>
+
+<span class="k">C    </span> cloud fraction
+<span class="k">T    </span> totality length
+<span class="k">Tmax </span> longest totality on path
+<span class="k">A    </span> sun altitude in &deg;, capped at 7.5&deg;</div>
     <ul>
-      <li><strong>Three criteria</strong> — how long totality lasts, how high the Sun sits, and the average
-      cloudiness, each measured at that spot&rsquo;s own local maximum rather than at greatest eclipse. They are
-      <em>multiplied</em>, not added, so one bad ingredient cannot be bought off by the other two: a cloud-locked
-      four-minute valley should not outrank a clear two-minute ridge.</li>
       <li><strong>The scale is relative to the path, not absolute.</strong> Colours are stretched across the range
       that particular eclipse offers, so blue means &ldquo;the best this eclipse has&rdquo; and not &ldquo;good&rdquo;.
       2033 will almost certainly be cloudy along its whole track, and the map will still show you where the best
@@ -197,45 +234,46 @@
     </ul>
     <div class="backtotop"><a href="#top">↑ back to top</a></div>
   </section>
+  <div class="ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
 
   <section id="details">
-    <h2>4. Details tab</h2>
+    <h2>4. Details</h2>
     <p>Everything the app knows about the selected eclipse, in two parts: what it looks like <strong>from your location</strong>, and the event's <strong>global</strong> facts, which don't depend on where you're standing.</p>
 
     <h3>Local Circumstances</h3>
-    <p>Shown once you've set a location (search by coordinates, or click the map). A summary — duration, magnitude, obscuration, sun position at maximum — leads, because that's the question you opened the panel to answer.</p>
-    <p><strong>Favorability</strong> closes the block, and it is a summary of the rows above rather than another
+    <p>Shown once you've set a location (search by coordinates, or click the map). A summary — duration, magnitude, obscuration, sun position at maximum</p>
+    <p><strong>Favorability</strong> computes a summary of the rows above rather than another
     measurement — the same blended score the ☺ overlay paints, for the spot you have selected. Hover it (or tap
     it) for the three numbers behind it. It appears only inside the central path, where the score means something.</p>
 
-    <p>The row above it, <strong>Clear sky</strong>, is the odd one out: it says nothing about the eclipse, only about your chances of seeing it. It's the share of the time this spot is historically cloud-free at that time of day and that time of year, from the satellite record. Higher is better, like everything else in the block. <strong>It is not a forecast</strong> — for an eclipse in 2085 no such thing exists, and even for next month this is a long-run average rather than a prediction.</p>
+    <p>The row above it, <strong>Clear sky</strong>, is the odd one out: it says nothing about the eclipse, only about your chances of seeing it. It's the share of the time this spot has been historically cloud-free at that time of day and that time of year, from the satellite record. Higher is better, like everything else in the block. <strong>It is not a forecast</strong> — for an eclipse in 2085 no such thing exists, and even for next month this is a long-run average rather than a prediction.</p>
 
     <h4>Contact Times</h4>
-    <p>C1 (partial begins) → C2 (totality/annularity begins, umbral events only) → <strong>MAX</strong> (greatest eclipse) → C3 → C4, each with sun altitude and azimuth. Click any row to jump the terrain-shadow scrubber to that instant.</p>
+    <p>C1 (partial begins) → C2 (totality/annularity begins, umbral events only) → <strong>MAX</strong> (greatest eclipse) → C3 → C4, each with sun altitude and azimuth. Click any row to jump the sky-tracker (and terrain-shadow scrubber, if it's open) to that instant.</p>
     <p>Each row carries a small icon showing the Sun–Moon overlap <em>oriented as you'd actually see it</em> — the angle is measured clockwise from your zenith, so the icon tells you which side of the Sun's disc the Moon is covering at that moment, not just that a contact is happening.</p>
-    <p>Click the column header to switch every time in the table (and the shadow-scrubber clock) between local time and UT. Persists across sessions. Times off the greatest-eclipse date carry a <code>(±Nd)</code> suffix.</p>
+    <p>Click the column header to switch every time in the table (and the shadow-scrubber clock) between local time and UT. Persists across sessions.</p>
 
     <h4>Sky Tracker</h4>
     <p>A small interactive sky diagram — the Sun's path across your sky through the whole event, drawn to true scale, so distances on it are real distances in the sky. Drag its slider to scrub a Sun marker along the arc and watch the Moon's bite grow and shrink at each instant, in sync with the contact-times table above.</p>
     <p>Where the eclipse is <strong>total</strong> at your location, the planets and the bright stars appear around the Sun between second and third contact, each where you would actually see it.</p>
 
     <h3>Global Circumstances</h3>
-    <p>Reference facts about the eclipse itself, independent of any location — shown at the bottom since it's the least actionable part: time and place of greatest eclipse (UT), sun altitude/azimuth there, magnitude, path width, longest duration (and where), Saros number, and ΔT used for the calculation.</p>
+    <p>Reference facts about the eclipse itself, independent of any location: time and place of greatest eclipse (UT), sun altitude/azimuth there, magnitude, path width, longest duration (and where), Saros number, and ΔT used for the calculation.</p>
 
     <h3>Save &amp; share</h3>
     <p>Three icons sit beside the date:</p>
     <ul>
-      <li><svg class="ic" viewBox="0 0 20 20"><path d="M10 2.8l2.35 4.76 5.25.76-3.8 3.7.9 5.23L10 14.78l-4.7 2.47.9-5.23-3.8-3.7 5.25-.76z"/></svg> saves the eclipse — with your currently set location, if any — to your <strong>Log</strong>.</li>
+      <li>the globe icon downloads a <strong>KMZ</strong> for Google Earth &mdash; one eclipse per file, named for its date and type. Inside: the centreline and umbra limits, the penumbral and terminator limits, the maximum-on-the-horizon curve, the shadow's own footprint at intervals, and greatest eclipse.</li>
       <li>the share icon builds a text summary (circumstances plus a link back to this exact eclipse and location) and hands it to your device's native share sheet, or opens a copy-to-clipboard box if the browser has none.</li>
-      <li>the globe icon downloads a <strong>KMZ</strong> for Google Earth &mdash; one eclipse per file, named for its date and type (<code>19610215_TSE.kmz</code>). Inside: the centreline and umbra limits, the penumbral and terminator limits, the maximum-on-the-horizon curve, the shadow's own footprint at intervals, and greatest eclipse.</li>
+      <li><svg class="ic" viewBox="0 0 20 20"><path d="M10 2.8l2.35 4.76 5.25.76-3.8 3.7.9 5.23L10 14.78l-4.7 2.47.9-5.23-3.8-3.7 5.25-.76z"/></svg> saves the eclipse — with your currently set location, if any — to your <strong>Log</strong>.</li>
     </ul>
-    <p>The diamonds along the centreline &mdash; one roughly every 100&nbsp;km &mdash; are the useful part. Each one <strong>already carries its own contact times</strong>: click it in Google Earth and the balloon gives C1 to C4, duration, sun altitude and azimuth, and obscuration for that exact spot, in UT and in local time. Those numbers are computed when you press the button and frozen into the file, so <strong>the whole thing works with no signal</strong>. Only the dots have numbers; for anywhere in between, each balloon carries a link that opens this app at that point.</p>
-    <p class="callout warn">That link opens inside Google Earth's own built-in browser, which is too old to run this app &mdash; you will see a bare heading and nothing else. To send it to your real browser instead, tick <em>Show web results in external browser</em> under Tools &rarr; Options &rarr; General (on a Mac, Google Earth &rarr; Preferences &rarr; General).</p>
+    <p>The diamonds along the centreline &mdash; one roughly every 100&nbsp;km &mdash; are the useful part. Each one <strong>already carries its own contact times</strong>: click it in Google Earth and the balloon gives C1 to C4, duration, sun altitude and azimuth, and obscuration for that exact spot, in UT and in local time.</p>
     <div class="backtotop"><a href="#top">↑ back to top</a></div>
   </section>
+  <div class="ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
 
   <section id="log">
-    <h2>5. Log tab</h2>
+    <h2>5. Log</h2>
     <p>Your personal list of saved/seen eclipses.</p>
     <div class="callout warn"><strong>Stored only on this device — no account, nothing uploaded.</strong></div>
 
@@ -272,7 +310,7 @@
     <table>
       <tr><th>Icon</th><th>Action</th></tr>
       <tr>
-        <td><svg class="ic" viewBox="0 0 20 20"><path d="M7.3 3.2 3.6 5.4l1.5 3.1 2.2-1.1v9.4h5.4V7.4l2.2 1.1 1.5-3.1-3.7-2.2z"/><path d="M7.3 3.2a2.7 2.7 0 0 0 5.4 0"/></svg></td>
+        <td><svg class="ic" viewBox="1.5 2.4 17 16.2"><path d="M2.5 5.9 7.5 3.4l5 2.5 5-2.5v10.7l-5 2.5-5-2.5-5 2.5z"/></svg></td>
         <td><strong>Make map</strong> — see Poster maker, below.</td>
       </tr>
       <tr>
@@ -290,7 +328,7 @@
     </table>
 
     <h3>Poster maker</h3>
-    <p>Tap <svg class="ic" viewBox="0 0 20 20"><path d="M7.3 3.2 3.6 5.4l1.5 3.1 2.2-1.1v9.4h5.4V7.4l2.2 1.1 1.5-3.1-3.7-2.2z"/><path d="M7.3 3.2a2.7 2.7 0 0 0 5.4 0"/></svg> <strong>Make map</strong> to open a full-screen "umbral paths" map built from your Log selection — every checked eclipse's path on one world map. If nothing is checked, it uses your whole log. Options:</p>
+    <p>Tap <svg class="ic" viewBox="1.5 2.4 17 16.2"><path d="M2.5 5.9 7.5 3.4l5 2.5 5-2.5v10.7l-5 2.5-5-2.5-5 2.5z"/></svg> <strong>Make map</strong> to open a full-screen "umbral paths" map built from your Log selection — every checked eclipse's path on one world map. If nothing is checked, it uses your whole log. Options:</p>
     <ul>
       <li><strong>Projection</strong>: Natural Earth, Equal Earth, Sinusoidal, Plate Carrée, Robinson, Mollweide, Winkel Tripel</li>
       <li><strong>Theme</strong>: T-Shirt, Midnight, Blueprint, Mono Ink</li>
@@ -300,9 +338,10 @@
     <p>Good for a "my eclipses" wall map or literally printing on a shirt.</p>
     <div class="backtotop"><a href="#top">↑ back to top</a></div>
   </section>
+  <div class="ornament" aria-hidden="true">&#9790;&nbsp;&#9728;&nbsp;&#9789;</div>
 
   <section id="info">
-    <h2>6. Info tab</h2>
+    <h2>6. Info</h2>
 
     <h3>Instructions</h3>
     <p>This manual, but shorter — the in-app quick reference, plus the home-screen install link.</p>
@@ -310,81 +349,91 @@
     <h3>Data — sources &amp; accuracy</h3>
     <h4>Eclipse data</h4>
     <ul>
-      <li>Catalogue &amp; Besselian elements: Espenak &amp; Meeus, <em>Five Millennium Canon of Solar Eclipses</em> (NASA/TP-2006-214141); local circumstances via Meeus's Besselian-element method (<em>Astronomical Algorithms</em>, 2nd ed.).</li>
-      <li>ΔT (TT−UT): USNO observed monthly data (1973–Apr 2026) → USNO quarterly forecast (through late 2033) → Espenak–Meeus polynomial (−720 to 2050) → Stephenson/Morrison/Hohenkerk (2016) extrapolation outside that.</li>
+      <li>Catalogue and Besselian elements: Fred Espenak and Jean Meeus, <em>Five Millennium Canon of Solar Eclipses: −1999 to +3000</em> (NASA/TP-2006-214141), NASA Goddard Space Flight Center.</li>
+      <li>Local circumstances: the Besselian-element method of Jean Meeus, <em>Astronomical Algorithms</em>, 2nd ed. (Willmann-Bell, 1998), ch. 54.</li>
+      <li>ΔT (TT − UT): U.S. Naval Observatory observed monthly values (1973 – April 2026) → USNO quarterly forecast (to late 2033) → Espenak–Meeus polynomials (−720 to 2050, outside the USNO range) → Stephenson, Morrison &amp; Hohenkerk (2016), <em>Proc. R. Soc. A</em> 472, with the 2021 addendum (Morrison, Stephenson, Hohenkerk &amp; Zawilski), beyond that.</li>
       <li>94 eclipses have totality somewhere but <strong>no central line</strong> (the shadow axis misses Earth while the cone's edge still clips it) — the canon correctly records zero central duration for these; the app additionally computes a <em>longest totality found on the surface</em> for them.</li>
     </ul>
 
+    <h4>Accuracy</h4>
+    <p>Every curve is computed to within a few metres of its exact geometric definition — centreline, umbral and penumbral limits, sunrise/sunset curves and the maximum-on-horizon curve, all ~3 m or better. Between drawn points a line can bow a little further, up to ~10 m.</p>
+    <p>Eclipses before 1900 or after 2050 are subject to variability in ΔT.</p>
+    <p>No lunar limb correction is applied.</p>
+
     <h4>Maps</h4>
     <ul>
-      <li><strong>Street</strong> &amp; <strong>Sat</strong>: Esri World Street Map and World Imagery (esri.com).</li>
-      <li><strong>Topo</strong>: Esri World Topographic zoomed out, handing over to OpenTopoMap (CC-BY-SA, opentopomap.org) close in.</li>
-      <li><strong>Offline fallback</strong>: NASA/NGDC Natural Earth II shaded relief, with coastlines, borders, rivers, lakes and cities from Natural Earth public-domain geodata (naturalearthdata.com). Country names and their alternative spellings, used by country search, come from the same source.</li>
-      <li>Rendered with MapLibre GL JS (BSD-3-Clause, maplibre.org).</li>
+      <li><strong>Street</strong> &amp; <strong>Satellite</strong>: Esri World Street Map and World Imagery. Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community.</li>
+      <li><strong>Topo</strong>: Esri World Topographic Map zoomed out. Close in, OpenTopoMap: map data © OpenStreetMap contributors, SRTM; map style © OpenTopoMap (CC-BY-SA).</li>
+      <li><strong>Offline globe</strong>: Natural Earth II shaded relief with Natural Earth coastlines, borders, rivers, lakes and cities, by Tom Patterson and Nathaniel Vaughn Kelso; public domain. Made with Natural Earth (naturalearthdata.com). Country names and alternative spellings for country search come from the same source.</li>
+      <li><strong>Terrain shadow</strong>: elevation from Terrain Tiles by Mapzen, hosted by AWS Open Data. 3DEP, SRTM and GMTED2010 content courtesy of the U.S. Geological Survey; ETOPO1 content courtesy of the U.S. National Oceanic and Atmospheric Administration. Further regional sources: <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">tilezen/joerd attribution</a>. Water mask: © OpenStreetMap contributors (ODbL).</li>
+      <li><strong>Elevation readout</strong>: Open-Elevation API, with Open-Meteo's elevation API as fallback (data CC BY 4.0).</li>
     </ul>
 
-    <h4>Weather / cloud</h4>
+    <h4>Clouds</h4>
     <ul>
-      <li><strong>Average</strong> mode: ERA5 reanalysis total cloud cover (Copernicus/ECMWF), 1991–2020 mean.</li>
-      <li><strong>Now</strong> and <strong>Photo</strong> modes: live geostationary infrared and imagery from NASA GIBS and EUMETSAT (GOES, Himawari and Meteosat).</li>
+      <li><strong>Average</strong>: ERA5 total cloud cover, 1991–2020 monthly means. Contains modified Copernicus Climate Change Service information 2026. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.</li>
+      <li><strong>Now</strong> and <strong>Pic</strong>: NASA's Global Imagery Browse Services (GIBS), part of NASA's Earth Science Data and Information System (ESDIS). GOES imagery is from NOAA; Himawari imagery from the Japan Meteorological Agency; Meteosat (0° and Indian Ocean) © EUMETSAT 2026, via EUMETSAT's EUMView service.</li>
     </ul>
 
-    <h4>Other</h4>
+    <h4>Sky Tracker</h4>
     <ul>
-      <li>Timezones resolved offline via a polygon lookup.</li>
-      <li>Elevation auto-filled online via the Open-Elevation API.</li>
+      <li>Planets: truncated VSOP87D series (Bretagnon &amp; Francou).</li>
+      <li>Stars: Yale Bright Star Catalogue, 5th ed. (Hoffleit &amp; Warren), with proper motion.</li>
+      <li>Precession: Vondrák, Capitaine &amp; Wallace (2011).</li>
     </ul>
 
-    <h4>Accuracy</h4>
-    <p style="color:var(--muted); font-size:.88rem;">Every curve is computed to within a few metres of its exact geometric definition — centreline, umbral and penumbral limits, sunrise/sunset curves and the maximum-on-horizon curve, all ~3 m or better. Between drawn points a line can bow a little further, up to ~10 m.</p>
-    <p style="color:var(--muted); font-size:.88rem;">Eclipses before 1900 or after 2050 are subject to variability in ΔT.</p>
-    <p style="color:var(--muted); font-size:.88rem;">No lunar limb correction is applied.</p>
+    <h4>Time zones</h4>
+    <ul>
+      <li>tz-lookup by Dark Sky (CC0), with boundary data from Evan Siroky's timezone-boundary-builder (ODbL; © OpenStreetMap contributors).</li>
+    </ul>
 
-    <h3>Settings</h3>
-    <p>Search range only — see §3.</p>
+    <h4>Software and fonts</h4>
+    <ul>
+      <li>MapLibre GL JS 5.5 — BSD 3-Clause. deck.gl 9 — MIT. tz-lookup — CC0.</li>
+      <li>Cormorant Garamond and JetBrains Mono — SIL Open Font License 1.1 (licence text in <code>fonts/OFL.txt</code>).</li>
+    </ul>
 
     <h3>About</h3>
     <div class="bio">
-      <p>My name is Guy, and I have been following eclipses since a fateful camping trip back in May 1994. We all ate mushrooms and sat in a circle with drums between our knees, silver glasses on our faces, grinning like fools and staring upwards at the ring of fire. That kind of sealed the deal, and certainly changed my life. Since then, I have always had a direction — an endless series of predictable glorious events — to pursue: across mountains, jungles, and deserts, to the very farthest corners of the globe.</p>
-      <p>Although there are many eclipse-adventure-planning tools out there (Thank you, Mr. Espenak! Merci, M. Jubier!), I still missed certain features: search-by-date (all the eclipses on your birthday), search-by-location (what, Ouagadougou went 894 years without a TSE?!), search-by-vibe (was there a total eclipse right near but not in Oslo sometime in the 50s?), historical cloud data overlays (did he just use the C-word?), shadow-mapping from local topographies (d'oh that hill is in the way!), and offline map caching for in-the-field use. This app tries to cover all the bases in one convenient package, to help plan syzygystic adventures more efficiently. I also learned a <em>ton</em> about Besselian geometry while making it, which is always so much fun.</p>
+      <p>My name is Guy, and I have been following eclipses since a fateful camping trip back in <a class="app-link" href="./#e=9495&amp;q=1994%20annular%20(39.48110%2C%20-88.68215)">May 1994</a>. We all ate mushrooms and sat in a circle with drums between our knees, silver glasses on our faces, grinning like fools and staring upwards at the ring of fire. That kind of sealed the deal, and certainly changed my life. Six months later, I was on a <a class="app-link" href="./#e=9496&amp;q=(-19.61000%2C%20-65.75000)">hilltop</a> outside Potosi, Bolivia, and since then, I have always had a direction — an endless series of predictable glorious events — to pursue: across mountains, jungles, and deserts, to the very farthest corners of the globe.</p>
+      <p>Although there are many eclipse-adventure-planning tools out there (Thank you, Mr. Espenak! Merci, M. Jubier!), I still missed certain features: search-by-date (all the eclipses on your birthday), search-by-location (what, <a class="app-link" href="./#e=6927&amp;q=ouagadougou%20total%20900-1900">Ouagadougou</a> went 894 years without a TSE?!), search-by-vibe (was there a total eclipse right near but not in <a class="app-link" href="./#e=9408&amp;q=1950-1960%20total%20%3E50%25%20oslo">Oslo</a> sometime in the 50s?), historical <a class="app-link" href="./#e=9578&amp;q=2031%20(-2.31669%2C%20-119.53690)&amp;cloud=avg">cloud</a> data overlays (did he just use the C-word?), <a class="app-link" href="./#e=9422&amp;q=1961%20(44.38750%2C%206.60780)&amp;shadow=12">shadow-mapping</a> from local topographies (d'oh that hill is in the way!), and offline map caching for in-the-field use. This app tries to cover all the bases in one convenient package, to help plan syzygystic adventures more efficiently. I also learned a <em>ton</em> about Besselian geometry while making it, which is always so much fun.</p>
       <p><strong>On a phone, add it to your home screen.</strong> Use your browser's share button and choose "Add to Home Screen". Installed, it runs full-screen, keeps its offline data, and behaves like an app rather than a web page — which is the point, since it is built to work in a field with no signal.</p>
-      <p>Tuned to Chrome + iOS and never tested on Android — if you have any suggestions or find any bugs, <a href="mailto:app@followtheshadow.com">drop me a line</a> — <strong>and don't stare at the sun!</strong></p>
+      <p>Tuned to Chrome + iOS and never tested on Android — if you have any suggestions or find any bugs, <a href="mailto:app@followtheshadow.com">drop me a line</a> — <strong><em>and don't stare at the sun!</em></strong></p>
     </div>
     <div class="backtotop"><a href="#top">↑ back to top</a></div>
   </section>
-
-  <section id="offline">
-    <h2>7. Offline behaviour, quick reference</h2>
-    <table>
-      <tr><th>Feature</th><th>Offline?</th></tr>
-      <tr><td>Search, eclipse catalogue, contact times</td><td><span class="icon-check">✓ Yes</span></td></tr>
-      <tr><td>Map, path/umbra rendering</td><td><span class="icon-check">✓ Yes</span> (offline relief basemap)</td></tr>
-      <tr><td>Street / Sat / Topo basemaps</td><td><span class="icon-x">✗ No</span> — needs a connection</td></tr>
-      <tr><td>Terrain shadows</td><td><span class="icon-x">✗ No</span></td></tr>
-      <tr><td>Cloud — Average</td><td><span class="icon-check">✓ Yes</span></td></tr>
-      <tr><td>Cloud — Now / Photo</td><td><span class="icon-x">✗ No</span></td></tr>
-      <tr><td>Favorability — the score</td><td><span class="icon-check">✓ Yes</span></td></tr>
-      <tr><td>Favorability — terrain veto</td><td><span class="icon-x">✗ No</span></td></tr>
-      <tr><td>Log (save/seen/export/import)</td><td><span class="icon-check">✓ Yes</span></td></tr>
-      <tr><td>Elevation lookup</td><td><span class="icon-x">✗ No</span> (falls back gracefully)</td></tr>
-    </table>
-    <div class="backtotop"><a href="#top">↑ back to top</a></div>
-  </section>
-
-  <section id="tips">
-    <h2>8. Tips</h2>
-    <ul>
-      <li>Combine location + obscuration to plan a "partial-but-worth-it" trip near a totality path.</li>
-      <li>A saved log entry keeps whatever location was set <em>when you saved it</em> — use the pencil icon if you decide on a different viewing spot later.</li>
-      <li>The share text is plain, tab-formatted — pastes cleanly into notes apps or messages.</li>
-      <li>If cloud "Now"/"Photo" look greyed out, check you're online and not above ~65°N — geostationary satellites don't see that far north.</li>
-      <li>Use <strong>Favorability</strong> to narrow a path down to a region, then switch it to
-      <em>This view</em> and zoom in to choose between spots inside that region. On <em>Whole path</em>
-      a good country can look uniformly blue, because it is being compared with the whole track.</li>
-    </ul>
-    <div class="backtotop"><a href="#top">↑ back to top</a></div>
-  </section>
-
+  <p class="back-to-app"><a class="app-link" href="./">&larr; Back to the app</a></p>
 </div>
+<script>
+/* LINKS BACK INTO THE APP — "Back to the app" and the eclipse links in About.
+   Opened from the app's Instructions (window.open, so this window keeps its
+   opener), the manual steers the app's own window to the eclipse and brings it
+   forward, and STAYS OPEN, so you can come back to it; the app's manual link
+   then returns to this same tab instead of opening another. Opened any other way —
+   the installed app (which opens the manual in its own window, having no tabs),
+   a bookmark, a direct visit — it navigates this window to the app instead. */
+(function () {
+  function toApp(hash) {
+    var o = null;
+    try { if (window.opener && !window.opener.closed && window.opener.location.href) o = window.opener; }
+    catch (e) { o = null; }                   /* another origin: cannot be steered */
+    if (o) {
+      try {
+        if (hash && o.location.hash !== hash) o.location.hash = hash;
+        o.focus();
+        return;
+      } catch (e) {}
+    }
+    location.href = './' + (hash || '');
+  }
+  document.addEventListener('click', function (ev) {
+    var a = ev.target.closest && ev.target.closest('a.app-link');
+    if (!a) return;
+    ev.preventDefault();
+    var h = a.getAttribute('href'), k = h.indexOf('#');
+    toApp(k >= 0 ? h.slice(k) : '');
+  });
+})();
+</script>
 </body>
 </html>
