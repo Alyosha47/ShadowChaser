@@ -16,3 +16,4 @@ data/cloud/*.npz
 data build tools/_cloud_cache/
 vendor/cesium-1.121/
 node_modules/
+reference kmz/
