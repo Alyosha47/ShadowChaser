@@ -5,51 +5,73 @@ The open task list. **`HANDOFF.md` owns knowledge and status; this file owns wha
 - No third document.
 - Priorities are the user's to set; the order below is a suggestion.
 
-Last rewritten 2026-09-22 against commit `2227720` (BUILD `2026-09-22a`).
+Last rewritten 2026-09-22 against commit `2227720` (BUILD `2026-09-22a`); tidied 2026-09-25 (live BUILD `2026-09-25n`).
 
 ---
 
 ## 1. Suggested order
 
-1. **`Now` first load takes ~15 s** — the only defect a user in the field would notice. §4.1.
-2. **Evaluate a non-GIBS imagery source** — would improve freshness, resolution and reliability at once. §4.2.
-3. **#F2b cloud forecast** — scoped; first job is one curl. §5.
-4. Chores (§2), then bugs (§3), then features (§6).
+1. **The public repo (§2)** — it is public now, with files §8 says must not be published.
+2. **Launch blockers:** the Safari-wedge watch (§3); the licence items left in §1b are not blockers.
+3. **#F4 "Cache this spot"** — offline for field use. §6.
+4. **True-colour Himawari for Photo** (§4.2) — pays off for 2028 (Australia), not 2027.
+5. Bugs (§3), then features (§6).
+- **#F2b cloud forecast (§5): SHELVED by the user 2026-09-25.**
 
 ---
 
-## 1b. Before launch — licence terms to check (attribution itself is done, 2026-09-23)
+## 1b. Licence terms (checked 2026-09-25; details in HANDOFF §7.5 and the 25n change log)
 
-- **EUMETSAT near-real-time.** Their 2019 policy note: hourly imagery needs no licence; full-resolution
-  15-min imagery is free three hours after sensing. `Now` shows Meteosat frames minutes old at 10/15-min
-  steps via EUMView. Whether that public service covers this use is unverified — ask EUMETSAT.
-- **OpenStreetMap tiles as the terrain shadow's water mask** (tile.openstreetmap.org, not displayed).
-  Unverified against OSM's tile usage policy for a public app.
-- **Esri basemaps without an account.** Esri's terms for public apps unverified.
+- **OpenStreetMap (Street, and the terrain shadow's water mask): allowed as used.** Credit shown,
+  normal viewing only. **Never offline/prefetch** — #F4 must not cache OSM tiles.
+- **Esri (Topo zoomed out, Sat, Street's backup): no account, which Esri's terms want. MANAGED, not
+  solved** — the watchdog switches to stand-ins and emails the owner if Esri refuses us. The full fix,
+  if ever wanted: a free ArcGIS Location Platform key (2M basemap tiles/month free, then pay-per-use;
+  restrict it to the domain; renew at least yearly; different tile URLs, ~1 h of work).
+- **OpenTopoMap (Topo close in): UNCHECKED.** The user is comfortable leaving it for now.
+- **Sentinel-2 cloudless 2017 (Sat stand-in): CC BY 4.0, credited.** Fine.
 - **Open-Meteo elevation fallback.** Free API is non-commercial; if the site becomes commercial (ads,
-  donations, sales) it needs a paid plan.
+  donations, sales) it needs a paid plan. So would OSM's goodwill (their policy warns donation-seeking
+  services that access may be withdrawn).
+- **EUMETSAT near-real-time — PARKED by the user (2026-09-25).** Not expected to be an issue; if EUMETSAT
+  ever raises it, answer then, or drop the live cloud modes (useful about one day a year). Note it covers
+  BOTH `Now` and `Pic` — both show minutes-old Meteosat frames via `sat.php`.
 
 ---
 
 ## 2. Chores — yours
 
-- **Delete `data build tools/splice_umbral_limits.py`**: `git rm "data build tools/splice_umbral_limits.py"`.
-  It only patched the retired `13j` data; the 09-19b change log already records it as deleted.
+- **THE GITHUB REPO IS PUBLIC — decide what to do (found 2026-09-25).** Anyone can clone it (verified
+  anonymously; GitHub reports `visibility: public`). It contains what §8 says must NOT be published:
+  Jubier's 53 reference KMZs (`reference kmz/`), `.nova/` (reveals the hosting account path), and
+  `followtheshadow-log-20260922.json` (may hold personal locations). The simplest step is making it
+  private in GitHub's settings (Settings → General → Danger Zone → Change visibility); §8's plan then
+  holds as written. Removing files alone does not help — they stay in the history.
+- **Commit the 25k–25n files** (`index.html`, `js/map.js`, `report.php`) — the repo is behind live.
+  `report.php` sends to `app@followtheshadow.com`, already public on the About page, so it commits as-is.
 
 ---
 
 ## 3. Bugs
+- **iOS home-screen app in landscape — check once.** The bottom-strip fix (status bar `default`,
+  HANDOFF change log 25l) was verified in portrait only.
 - **iOS Safari wedged after a deploy (2026-09-23) — WATCH; blocks launch only if it recurs.** After a
   day of seven BUILD bumps (22b → 23e), the user's iPhone (Safari) showed a white page with the progress
   bar stuck at ~40% for 5+ minutes; the globe never appeared. Deleting the site's data (Settings →
   Safari → Advanced → Website Data) fixed it at once, so it was stored state, not the current files.
   Server normal throughout (0.1–0.4 s); Chromium emulating an iPhone loaded the same build fine three
   times. Possibly an artefact of rapid-fire deploys (updates overlapping while ~20 MB of offline data
-  was still downloading). **Test in normal use:** after each ordinary single deploy, open the site on
+  was still downloading). **Passes so far: 1** (25k, 2026-09-25, no freeze). **Test in normal use:** after each ordinary single deploy, open the site on
   the iPhone. Fine across a few → low priority. Stalls after ONE deploy → real, blocks launch, and needs
   Safari's own view (desktop Safari or the iPhone on a Mac's Web Inspector).
 - **Slow first load from a local-disk server** — minutes, against seconds live. Profile the local case
   specifically; do not assume it shares a cause with anything else.
+
+---
+
+## 4. Live cloud (`Now` / `Photo`)
+
+### 4.1 Load and caching
 - **Server-built reference: SHIPPED and live-confirmed 2026-09-23 (BUILD 23e, HANDOFF §10A.4).**
   Open: how a cold first load now feels on the phone (user's impression is enough).
 - **Solved but unapplied:** `compose()` row mapping by latitude (~8 lines; byte-identical on today's
@@ -57,14 +79,20 @@ Last rewritten 2026-09-22 against commit `2227720` (BUILD `2026-09-22a`).
 - **Dead end — do not retry:** rounding background timestamps. Over desert at dawn a 30-min shift takes
   cloud 39% → 70%. Ocean hides it.
 
-### 4.2 A non-GIBS source
-GIBS runs 18–50 min behind and drops ~1 request in 5. Measure before writing code:
-1. Is `rammb-slider.cira.colostate.edu` reachable? (CIRA SLIDER: GOES + Himawari at ~5 min; the only
-   known true-colour Himawari, which would close Photo's greyscale band.) Its tiles are in the
-   satellite's fixed-grid projection, so this is a **reprojection job**, not a source swap.
-2. What shape are its tiles (likely directory-style JPEGs, not WMS)?
-3. CORS: without it `Now` can't read pixels, but Photo only displays them; `sat.php` can proxy.
-4. `www.accuweather.com` is allowlisted to see what they actually use.
+### 4.2 A non-GIBS source — CIRA SLIDER measured 2026-09-25
+Freshness gain is small; the reason to do it is **true-colour Himawari for Photo** (closes the
+greyscale band, 70–153°E). No gain over Europe/Africa (already Meteosat), so none for 2027.
+Measured:
+- Reachable from the container, 0.2–0.4 s. `rammb-slider…` 302s to `slider.cira.colostate.edu`.
+- Latest list: `/data/json/{sat}/full_disk/geocolor/latest_times.json` (`timestamps_int`, newest first).
+- Tiles: `/data/imagery/YYYY/MM/DD/{sat}---full_disk/geocolor/{YYYYMMDDhhmmss}/{zz}/{rrr}_{ccc}.png`
+  (sats `himawari`, `goes-19`, `goes-18`). PNG, 688 px (Himawari), zoom 00–04 (05 → 404). Satellite
+  fixed-grid projection → **reprojection job**.
+- **No CORS header** → must go through `sat.php`.
+- **Latency is NOT ~5 min:** newest full disk was 23 min old (GOES) and 33 min (Himawari).
+- GOES GeoColor confirmed colour; Himawari was at night when tested — **re-check colour by day**
+  (after ~00 UTC) before building.
+- `www.accuweather.com` (allowlisted) not yet looked at.
 
 ### 4.3 Remaining, lower
 - **Detection is ~49% of cloud (30–41% over sea), cause unknown.** Visible band and SST reference are
@@ -78,7 +106,7 @@ GIBS runs 18–50 min behind and drops ~1 request in 5. Measure before writing c
 
 ---
 
-## 5. #F2b Cloud forecast — scoped, starts from scratch
+## 5. #F2b Cloud forecast — SHELVED by the user 2026-09-25 (scope below kept for when it returns)
 
 - **Shape (agreed 2026-09-13):** a third cell on the `Average | Now` strip, live only within ~a week of
   the eclipse. Recolours the **corridor only**, each point at **its own local maximum**. Details panel
@@ -98,7 +126,9 @@ GIBS runs 18–50 min behind and drops ~1 request in 5. Measure before writing c
 ## 6. Features
 
 ### Medium
-- **#F4 "Cache this spot" — offline tiles round the pin.** Decided: **10 km radius, max z15**
+- **#F4 "Cache this spot" — offline tiles round the pin.** **Must not cache OpenStreetMap tiles**
+  (their policy forbids offline/prefetch), so Street needs a source whose terms allow offline
+  caching — not yet identified; Esri's terms on this are unchecked. Decided: **10 km radius, max z15**
   (~19 MB at the equator, ~56 MB at 57°; tile count scales as 1/cos²φ). Terrain adds ~4 MB.
   **Blocker: `sw.js` passes all cross-origin requests straight through**, and every basemap and DEM tile
   is cross-origin, so nothing cached would be served. That line is also what keeps the SW away from
@@ -148,6 +178,9 @@ GIBS runs 18–50 min behind and drops ~1 request in 5. Measure before writing c
 - **Thunderforest / Stadia / Mapbox basemaps need an API key**, which a static PWA exposes. Acceptable?
 
 **Polish (Sonnet-grade)**
+- **Search clear (×) should refocus the search box.** The only reason to clear it is to type
+  something else, so the keyboard/cursor should be ready straight away.
+- **Favorability box on mobile: remove the text.** Keep only the buttons and the scale.
 - Merge "Coordinates" + "City" into one "Location" section (the parser can't yet take bracketed
   multi-word cities).
 - Eclipse date: overlay on desktop, more visible on mobile.
@@ -163,9 +196,21 @@ GIBS runs 18–50 min behind and drops ~1 request in 5. Measure before writing c
 
 - **Offline city labels** — MapLibre symbol layers need PBF glyphs; bundling Noto Sans is ~2–3 MB.
   Offline is dots-only today.
-- **Open-source prep** — licensing/attribution for MapLibre (BSD-3), deck.gl (MIT), Natural Earth,
-  NASA imagery, Espenak/Meeus data, Terrarium DEM. The archived Cesium branch's ion token must be
-  restricted or rotated before that branch is ever published.
+- **Open source, after launch (user's decision 2026-09-25: "the work must remain free for all").**
+  - **Licence:** code AGPL-3.0 (a modified version run as a website must publish its source too; MIT
+    lets it be closed, plain GPL does not cover websites). Our own derived data (country lists, cloud
+    climatology, reference files we generate) CC BY-SA 4.0. Third-party parts keep their licences
+    (MapLibre BSD-3, deck.gl MIT, tz-lookup CC0 + ODbL boundaries, fonts OFL; Copernicus notice kept).
+  - **Must NOT be published:** Xavier Jubier's 53 reference KMZs (his work; link to his site instead);
+    `.nova/` (reveals the hosting account path); check `files.zip` and `shadowchaser-log-*.json`
+    (may hold personal locations). A scan on 2026-09-25 found no keys, passwords or tokens.
+  - **History:** start the public repo FRESH from the tidied tree; keep this repo private as the full
+    record (rewriting history would otherwise be needed to drop the files above).
+  - **File banner:** a comment block at the top of every source file — a followtheshadow ASCII
+    drawing plus a credit line (and the licence line). The user wants help drawing it; design it first,
+    then apply by script to each file type's comment syntax (JS/CSS /* */, HTML <!-- -->, Python #, PHP).
+  - The archived Cesium branch's ion token must be restricted or rotated before that branch is ever
+    published (or leave the branch out).
 - **Shrink git history** of the old `data/paths/` (~274 MB) — destructive `git filter-repo` + force-push.
 - **Production bundling** (single JS/CSS) — optimisation, not a blocker.
 - **Refactor, when a feature motivates it:**

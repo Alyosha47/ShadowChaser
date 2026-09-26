@@ -67,8 +67,37 @@ var BASEMAPS = {
                   nearMax:  17,
                   nearAttr: 'Map data \u00a9 OpenStreetMap contributors, SRTM \u00b7 style \u00a9 OpenTopoMap (CC-BY-SA)',
                   nearUrl:  'https://tile.opentopomap.org/{z}/{x}/{y}.png' },
-  osm:          { name: 'OpenStreetMap',    attr: '\u00a9 OpenStreetMap contributors',   max: 19, url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' }
+  osm:          { name: 'OpenStreetMap',    attr: '\u00a9 OpenStreetMap contributors',   max: 19, url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+  /* ESRI FALLBACKS (2026-09-25). Never offered in the picker; used only when the
+     Esri check below finds Esri refusing us. Topo keeps its OpenTopoMap close-in
+     sheet and swaps only the Esri far layer for OSM. Sat's stand-in is EOX
+     Sentinel-2 cloudless 2017 — CC BY 4.0 (the 2018+ years are NonCommercial),
+     native ~10 m, so capped at z14 and over-zoomed past it. */
+  topo_fb:      { name: 'Topographic',      attr: '\u00a9 OpenStreetMap contributors', max: 19,
+                  url:      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  nearFrom: 9.5,
+                  nearMax:  17,
+                  nearAttr: 'Map data \u00a9 OpenStreetMap contributors, SRTM \u00b7 style \u00a9 OpenTopoMap (CC-BY-SA)',
+                  nearUrl:  'https://tile.opentopomap.org/{z}/{x}/{y}.png' },
+  eox_s2:       { name: 'Sentinel-2 cloudless', max: 14, dark: true,
+                  attr: '<a href="https://s2maps.eu">Sentinel-2 cloudless - https://s2maps.eu</a> by <a href="https://eox.at">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel data 2017)',
+                  url:  'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2017_3857/default/g/{z}/{y}/{x}.jpg' }
 };
+
+/* STREET IS OPENSTREETMAP (2026-09-25, user's choice), with Esri Street as its
+   backup. The picker key stays 'esri_street' so stored choices keep working; it
+   now means "the Street button". Topo's far layer and Sat are still Esri, with
+   the open stand-ins below while Esri is down. */
+var ESRI_FALLBACK = { opentopo: 'topo_fb', esri_imagery: 'eox_s2' };
+var _down = { esri: false, osm: false };   /* set by the watchdog, this session only */
+
+/* The basemap actually DRAWN for the user's choice. The picker keeps showing the
+   user's choice either way. */
+function _activeBasemapKey() {
+  var k = _basemapKey();
+  if (k === 'esri_street') return (_down.osm && !_down.esri) ? 'esri_street' : 'osm';
+  return (_down.esri && ESRI_FALLBACK[k]) ? ESRI_FALLBACK[k] : k;
+}
 
 /* The three basemaps offered on the map itself; this array is the picker order.
    BASEMAPS still holds the others — they are simply no longer exposed, now that
@@ -147,7 +176,7 @@ function renderBasemapPicker() {
   if (!host.dataset.built) {
     host.innerHTML = PICKER_KEYS.map(function (k) {
       return '<button class="basemap-opt" data-key="' + k + '" title="' +
-             (BASEMAPS[k] ? BASEMAPS[k].name : k) + '">' +
+             (k === 'esri_street' ? 'Street' : (BASEMAPS[k] ? BASEMAPS[k].name : k)) + '">' +
              '<span class="basemap-swatch">' + PICKER_SWATCH[k] + '</span></button>';
     }).join('');
     host.dataset.built = '1';
@@ -185,17 +214,118 @@ window._scSetBasemap = function (key) {
   /* Retarget the existing raster source rather than rebuilding the style — same
      reason as applyOnlineState. The choice is persisted even while offline; it
      simply isn't visible until the layer is shown again. */
+  _retargetBasemap();
+};
+
+/* Point the two raster sources at the ACTIVE basemap. Attribution and maxzoom
+   must follow too: setTiles() reloads the source from its private `_options`
+   (MapLibre 5.5.0: load() re-derives tiles, maxzoom AND attribution from them),
+   so they are written THERE — setting the public fields alone is overwritten by
+   the reload. Before 25n they were never updated, so a switch in the picker kept
+   the first basemap's credit (e.g. Street → Sat still said just "Esri"). */
+function _retargetBasemap() {
   if (!map || !map.getSource) return;
+  var bm   = BASEMAPS[_activeBasemapKey()];
   var far  = map.getSource('basemap-far');
   var near = map.getSource('basemap-near');
+  if (!bm) return;
   try {
+    function opts(src, attr, max) {
+      if (!src) return;
+      src.attribution = attr; src.maxzoom = max;
+      if (src._options) { src._options.attribution = attr; src._options.maxzoom = max; }
+    }
+    opts(far,  bm.attr,                bm.max);
+    opts(near, bm.nearAttr || bm.attr, bm.nearMax || bm.max);
     if (far  && far.setTiles)  far.setTiles([bm.url]);
     if (near && near.setTiles) near.setTiles([bm.nearUrl || bm.url]);
   } catch (e) {}
   syncBasemapLayers();
   refreshBasemapTiles();
   redrawIfMapVisible();   /* path colours follow the base — see pathPalette() */
+}
+
+/* ── Tile watchdog (2026-09-25) ────────────────────────────────────────────
+   Two providers are used without an account: Esri (Topo far layer, Sat, and the
+   Street backup) and OpenStreetMap (Street). If either refuses us, draw the
+   stand-in and tell the owner once. Each check fetches one tile WITH CORS so the
+   STATUS is readable:
+     ok                 → fine.
+     not ok (403, 404…) → down.
+     network failure    → ask our own server (report.php?ping); if IT answers we
+                          are online and only that provider is unreachable → down.
+                          If not, we are simply offline → do nothing.
+   Runs once after load and again (at most once a minute per provider) when that
+   provider's tiles error. OSM's check is NOT cache-busted — their policy asks us
+   to honour caching — so a cached answer simply means "fine". Limit: a block
+   served as a normal-looking "not permitted" picture is not detected. */
+var TILE_CHECK = {
+  esri: { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/0/0/0',
+          bust: true },
+  osm:  { url: 'https://tile.openstreetmap.org/0/0/0.png', bust: false }
 };
+var _checking = {}, _lastCheck = {}, _reported = {};
+
+function _fetchTimeout(url, opts, ms) {
+  var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  if (ctl) { opts.signal = ctl.signal; setTimeout(function () { try { ctl.abort(); } catch (e) {} }, ms); }
+  return fetch(url, opts);
+}
+
+function checkTiles(name) {
+  var c = TILE_CHECK[name];
+  if (!c || _down[name] || _checking[name] || isOffline()) return;
+  var now = Date.now();
+  if (now - (_lastCheck[name] || 0) < 60000) return;
+  _checking[name] = true; _lastCheck[name] = now;
+  function done() { _checking[name] = false; }
+  var url  = c.bust ? c.url + '?_=' + now : c.url;
+  var opts = c.bust ? { mode: 'cors', cache: 'no-store' } : { mode: 'cors' };
+  _fetchTimeout(url, opts, 6000)
+    .then(function (r) {
+      done();
+      if (!r.ok) markDown(name, 'HTTP ' + r.status);
+    }, function (err) {
+      _fetchTimeout('report.php?ping=1&_=' + Date.now(), { cache: 'no-store' }, 6000)
+        .then(function (r) {
+          done();
+          if (r.ok) markDown(name, 'unreachable: ' + ((err && err.message) || err));
+        }, done);                                       /* our server silent too → offline */
+    });
+}
+function checkEsri() { checkTiles('esri'); }
+function checkOsm()  { checkTiles('osm'); }
+
+/* TEST SWITCH — see a provider's stand-ins without it actually failing. Sends NO
+   report. Console: `forceFallback('esri', true)` / `forceFallback('osm', false)`.
+   Phone: followtheshadow.com/?esri=down, ?osm=down, or ?esri=down&osm=down
+   (applied once after load). */
+function forceFallback(name, on) {
+  if (!(name in _down)) return;
+  _down[name] = !!on;
+  if (on) _reported[name] = true;   /* a test must never email the owner */
+  _retargetBasemap();
+}
+window.forceFallback = forceFallback;
+
+function markDown(name, reason) {
+  if (_down[name]) return;
+  _down[name] = true;
+  console.warn(name + ' tiles unavailable (' + reason + ') — using stand-ins.');
+  _retargetBasemap();
+  if (_reported[name]) return;
+  _reported[name] = true;
+  try {
+    fetch('report.php', {
+      method: 'POST', keepalive: true, cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ what: name, reason: String(reason).slice(0, 200),
+                             basemap: _basemapKey(),
+                             build: (typeof BUILD !== 'undefined') ? BUILD : '',
+                             ua: navigator.userAgent.slice(0, 200) })
+    }).catch(function () {});
+  } catch (e) {}
+}
 
 /* Why this exists, precisely: setTiles() defers to RasterTileSource.load(),
    which is ASYNC — it awaits the TileJSON, then calls
@@ -603,7 +733,7 @@ function buildLocalStyle(data) {
      globe state, and the eclipse paths then draw straight through the planet;
      a diffed rebuild of this many sources at once left the map blank instead.
      Toggling one layer has neither failure mode. */
-  var bm = BASEMAPS[_basemapKey()];
+  var bm = BASEMAPS[_activeBasemapKey()];
   if (bm) {
     /* TWO layers, always present: a far one and a near one. A single-source
        basemap simply leaves the near layer hidden. Their tiles, zoom ranges and
@@ -697,7 +827,13 @@ function probeConnectivity() {
 
   fetch(PROBE_URL + '?_=' + Date.now(), {
     mode: 'no-cors', cache: 'no-store', signal: ctl ? ctl.signal : undefined
-  }).then(function () { finish(true); }, function () { finish(false); });
+  }).then(function () { finish(true); }, function () {
+    /* Esri unreachable is not proof of offline — Esri alone may be refusing us.
+       Our own server is the second opinion (report.php is never cached by sw.js). */
+    fetch('report.php?ping=1&_=' + Date.now(), {
+      cache: 'no-store', signal: ctl ? ctl.signal : undefined
+    }).then(function (r) { finish(r.ok); }, function () { finish(false); });
+  });
 }
 
 function setOnline(v) {
@@ -752,7 +888,7 @@ var _styleMode  = null;
    simply hidden. */
 function syncBasemapLayers() {
   if (!map || !map.getLayer || !map.getLayer('basemap-far')) return;
-  var bm    = BASEMAPS[_basemapKey()];
+  var bm    = BASEMAPS[_activeBasemapKey()];
   var off   = isOffline();
   var split = (bm && bm.nearUrl) ? bm.nearFrom : null;
   try {
@@ -886,9 +1022,16 @@ function createMap(style) {
        once. (Re-adding on every style.load stacked duplicates on each basemap
        swap.) */
     if (!_mapEventsWired) {
+      setTimeout(function () {       /* tile watchdog: once after first load */
+        var q = location.search, test = false;
+        if (/[?&]esri=down\b/.test(q)) { forceFallback('esri', true); test = true; }
+        if (/[?&]osm=down\b/.test(q))  { forceFallback('osm',  true); test = true; }
+        if (!test) { checkEsri(); checkOsm(); }
+      }, 2000);
       map.on('render', updateMarkerOcclusion);
       map.on('zoom', updateOvalVisibility);
       map.on('zoom', updateArrowScale);
+      map.on('render', updateArrowScale);   /* arrow follows the ground: rotate, pitch, pan */
       _mapEventsWired = true;
     }
 
@@ -922,6 +1065,11 @@ function createMap(style) {
      than waiting for the probe. Map-level listener: it survives everything,
      since the style is now built once and never replaced. */
   map.on('error', function (e) {
+    /* Tile watchdog: a failing basemap tile triggers a (throttled) provider check. */
+    var eurl = (e && e.error && e.error.url) || '';
+    var bsrc = !!(e && /^basemap-/.test(e.sourceId || ''));
+    if (/arcgisonline/.test(eurl) || bsrc) checkEsri();
+    if (/openstreetmap\.org/.test(eurl) || bsrc) checkOsm();
     if (_styleMode !== 'online') return;
     probeConnectivity();
     var msg = (e && e.error && e.error.message) || '';
@@ -1268,10 +1416,32 @@ function arrowScale() {
   return Math.max(ARROW_MIN_S, s);
 }
 
+/* Screen angle (CSS rotate degrees, 0 = pointing right, clockwise) of the
+   sun's compass bearing as it runs along the GROUND at the pin. Projects the pin
+   and a point a few pixels' worth of ground away along that bearing, so it
+   follows map rotation, pitch and the globe's curvature. Returns null if the
+   projection is unusable; the caller then keeps the previous angle. */
+function arrowScreenAngle(lat, lon, az) {
+  if (!map) return null;
+  var R = 6371008.8, d2r = Math.PI / 180;
+  var mpp = 156543.03392 * Math.cos(lat * d2r) / Math.pow(2, map.getZoom());
+  var dist = Math.min(Math.max(mpp * 2, 1), 5e4) / R;  /* ~2 px of ground, 50 km cap */
+  var p1 = lat * d2r, l1 = lon * d2r, b = az * d2r;
+  var p2 = Math.asin(Math.sin(p1) * Math.cos(dist) + Math.cos(p1) * Math.sin(dist) * Math.cos(b));
+  var l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(dist) * Math.cos(p1),
+                           Math.cos(dist) - Math.sin(p1) * Math.sin(p2));
+  var a = map.project([lon, lat]), c = map.project([l2 / d2r, p2 / d2r]);
+  var dx = c.x - a.x, dy = c.y - a.y;
+  if (!isFinite(dx) || !isFinite(dy) || (dx * dx + dy * dy) < 1e-6) return null;
+  return Math.atan2(dy, dx) / d2r;
+}
+
 function updateArrowScale() {
   var s = arrowScale();
   for (var i = 0; i < _arrowEls.length; i++) {
     var el = _arrowEls[i];
+    var ang = arrowScreenAngle(el._lat, el._lon, el._sunAz);
+    if (ang !== null) el._az = ang;
     el.style.transform = 'rotate(' + el._az + 'deg) scale(' + s + ')';
   }
   var ps = pinScale();
@@ -1290,7 +1460,9 @@ function addObserverMarker(lat, lon, sunAz) {
     wrap.className = 'sun-arrow-wrap';
     var arrow = document.createElement('div');
     arrow.className = 'sun-arrow';
-    arrow._az = sunAz - 90;
+    arrow._lat = lat; arrow._lon = lon; arrow._sunAz = sunAz;
+    var ang0 = arrowScreenAngle(lat, lon, sunAz);
+    arrow._az = ang0 !== null ? ang0 : sunAz - 90;   /* screen-north fallback */
     arrow.style.transformOrigin = '0 50%';
     arrow.style.transform = 'rotate(' + arrow._az + 'deg) scale(' + arrowScale() + ')';
     wrap.appendChild(arrow);
@@ -1624,7 +1796,7 @@ function updateOvalVisibility() {
    four separate call sites, which is how they drifted out of step in the first
    place. */
 function pathPalette() {
-  var bm = (_styleMode === 'online') ? BASEMAPS[_basemapKey()] : null;
+  var bm = (_styleMode === 'online') ? BASEMAPS[_activeBasemapKey()] : null;
   if (bm && bm.dark) return {
     penumbra:    [130, 205, 255, 225],
     umbraTotal:  [255, 176,  64],

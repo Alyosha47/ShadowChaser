@@ -235,9 +235,11 @@ someone should DO, it belongs in TODO; if it is something someone should KNOW, i
 
 ### What is deployed
 
-Repo (2026-09-25): `BUILD 2026-09-25j`. `cloud-average.js 2026-09-13a`,
-`cloud-now.js 2026-09-23c`, `cloud-photo.js 2026-09-23a`, `cloud-ui.js 2026-09-23b`. What is LIVE
-may lag this — the user deploys by hand.
+LIVE (2026-09-25): `BUILD 2026-09-25n` (live-confirmed). **The repo is at `2026-09-25j`** until the
+user commits the 25k–25n files: `index.html`, `js/map.js`, `report.php` (new). All 16 suites pass
+with them (run 2026-09-25). `cloud-average.js 2026-09-13a`,
+`cloud-now.js 2026-09-23c`, `cloud-photo.js 2026-09-23a`, `cloud-ui.js 2026-09-23b`. Live and
+repo can each lead the other — the user deploys and commits by hand.
 *(This line said `2026-08-20u` for a fortnight while five commits landed. It is the one fact in this
 file most likely to be stale — check `index.html` before believing it.)*
 The map, offline mode, terrain shadows, the user log and the poster are all shipped and working.
@@ -265,7 +267,8 @@ temperature; Photo only displays them, and inherited a compositor by being writt
   that is its maximum, so a city view is visibly blocky. **A source limit, not a bug.**
 - **`Photo` is greyscale from 70°E to 153°E** — China, Australia, the Indian Ocean edge. GIBS has no
   true-colour Himawari product at all. It is already the smallest such band the available products
-  allow (§10A.8c). **Closing it needs a different source, not a code change.**
+  allow (§10A.8c). **Closing it needs a different source, not a code change.** A candidate (CIRA
+  SLIDER) was measured 2026-09-25: `TODO.md` §4.2.
 - **`Photo` logs 404s in the console and they are CORRECT** — the frame probe walking back through
   frames GIBS has not published yet (§10A.8c). Do not "fix" it.
 - **GIBS is stale and unreliable.** 18–50 min behind, jittering. It has served a GOES-East frame with
@@ -294,6 +297,10 @@ acted on it and hit exactly that. Verify against the working copy, not the repo,
 ignore rule obsolete.)*
 
 ### Unverified / unresolved
+- **THE GITHUB REPO IS PUBLIC** (verified 2026-09-25: anonymous clone works; the GitHub API says
+  `"visibility": "public"`). `TODO.md` §8 plans a private full-history repo plus a fresh public one,
+  and lists what must NOT be published — Jubier's 53 reference KMZs, `.nova/` (hosting path),
+  personal logs. All of those are in this public repo now. Action is in `TODO.md` §2.
 - **`addPin` gap.** The Cesium renderer exposed `addPin`; the MapLibre renderer does not — confirmed,
   no occurrence anywhere in `js/`. Never investigated: it is not known whether anything wants it.
 - **The dead `MAP_JS_BUILD` guard.** REMOVED 2026-09-02. `index.html` tested `window.MAP_JS_BUILD`
@@ -434,10 +441,14 @@ ShadowChaser/
 ├── HANDOFF.md          (this file — status & knowledge. THE only reference doc)
 ├── TODO.md             (open task list — the only other one)
 ├── sat.php             (same-origin imagery proxy, §10A.7b — SITE ROOT on the server)
-├── PARITY.md           (maplibre ⇄ cesium branch sync rules)
-├── DESIGN_SPEC_cesium_map.md   (pin / arrow / palette values — ported, still authoritative)
-├── shadow-layer-README.md      (terrain-shadow engine API + integration notes)
-├── shadow-layer-example.html   (minimal standalone wiring of the engine)
+├── sat-clearsky.php    (Now's clear-sky reference built on the server, §10A.4)
+├── report.php          (ping + once-a-day tile-failure email to app@followtheshadow.com, §7.5)
+├── followtheshadow-manual.html  (the user manual)
+├── ON HOLD/            GREATEST-DURATION.md — handoff for the all-eclipse greatest duration
+├── reference kmz/      Jubier's 53 reference KMZs — HIS work, not ours (TODO §8)
+├── .nova/              editor project; reveals the hosting path (TODO §8)
+│   (PARITY.md, DESIGN_SPEC_cesium_map.md, shadow-layer-README.md and shadow-layer-example.html
+│    were listed here until 2026-09-25 but are not in the repo root.)
 ├── shadow-layer-building-DO-NOT-DELETE/   the shadow-layer ARCHIVE (§8.1a).
 │                       PRE-MASK is the rollback target; ORIGINAL is provenance
 │                       ONLY and restoring it would silently delete supersampling.
@@ -459,13 +470,11 @@ ShadowChaser/
 │                       noncentral_durations.py (§9.10); gen_cloud_climatology.py +
 │                       encode_cloud.py (cloud pipeline); delta_t / update_dt / verify_dt;
 │                       validate_paths.py, pathdump.js, check_regen.py (§9.6);
-│   (root)              sat.php (imagery proxy), sat-clearsky.php (Now's reference, §10A.4)
 │                       validate_terminators.py, inspect_term_gaps.py, audit_paths.py (§9.7);
 │                       WHAT-EACH-FILE-DOES.md is the index
 ├── tools/              set_build.js — the only way to bump BUILD (§4)
 │                       checks/ — headless test suites + run.js (§13); the depth
 │                       matters, they resolve paths two levels up
-├── GREATEST-DURATION.md   handoff for the all-eclipse version (repo ROOT, not docs/)
 └── js/
     ├── search-cities.js       lookupCity, lazy index from basemapData.cities
     ├── cloud-average.js        CLOUD OVERLAY — climatology layer, palette, sampleAt (§10)
@@ -473,6 +482,15 @@ ShadowChaser/
     ├── cloud-photo.js      PHOTO MODE — the satellite picture composited (§10A.8c)
     ├── cloud-ui.js     the Average | Now[Map|Pic] mode strip (§10A.1)
     ├── details.js      renderData, buildContactRows, contactIcon, lookupElevationAndTz
+    ├── favorability.js     the favorability overlay (#F6) — one composite score
+    ├── favorability-ui.js  its map button, caption strip and handover with other overlays
+    ├── pathgen.js      eclipse path generator — JS port of gen_eclipse_paths.py (§9.6)
+    ├── pathgen-worker.js   runs pathgen off the main thread
+    ├── paths.js        loadPath / warmPaths — computed paths cached in IndexedDB (§9.6)
+    ├── search-countries.js country search support
+    ├── starfield.js    static starfield behind the globe
+    ├── starmap.js      naked-eye planets and bright stars for the sun-track diagram
+    ├── starmap-ui.js   the sun-track diagram (Sun's path over C1–C4, totality sky)
     ├── eclipse.js      computeEclipse, fundamentalArgs, sunAltAz, findMaximum, findContact,
     │                   getV(t,interior)   — strict-mode UMD
     ├── format.js       fmt*, fmtUTAnchored, fmtLocalAnchored, eclipseIcon, horizonIcon
@@ -648,7 +666,7 @@ internal border.
 ### 7.3 Connectivity — one owner
 `map.js` owns `isOffline()`:
 ```js
-function isOffline(){ return _forceOffline || _probedOffline === true || navigator.onLine === false; }
+function isOffline() { return _forceOffline || !_online; }   // _online is set only by the probe
 ```
 **iOS never reports offline** — `navigator.onLine` lies and the `offline` event doesn't fire. So an
 **active probe** runs on a 15 s poll (plus events) with a 3 s `AbortController` timeout (iOS *hangs*
@@ -658,6 +676,9 @@ oscillates offline↔online and rebuilds everything repeatedly during service-wo
 failure re-probes in 3 s, so a real drop shows in ~3 s rather than 30. Positives are trusted
 instantly; `navigator.onLine === false` is trusted instantly. `_forceOffline` is the debug toggle
 (`forceOfflineMap(on)`).
+The probe fetches an Esri tile (`no-cors`). **Since 2026-09-25n a failed Esri probe is not taken as
+proof of offline:** it asks our own server (`report.php?ping=1`, never cached by `sw.js`) and counts
+as online if that answers — so an Esri outage or block is not mistaken for no network (§7.5).
 **Route every new network-gated feature through `isOffline()`** — don't re-derive offline state
 inline. The elevation lookup in `details.js` already does.
 
@@ -692,6 +713,34 @@ is the guarantee.** A fully-WebGL marker (deck.gl IconLayer) is not warranted: b
 Basemap picker top right; `_scSetBasemap()` is the single entry point. Three options: Street, Topo,
 Sat; `PICKER_KEYS` is the picker order. **Default is `esri_street`**; `_basemapKey()` resolves
 anything off the picker to it, so no stored key can leave the picker with nothing lit.
+
+**Street is OpenStreetMap (since 2026-09-25n, the user's choice), with Esri Street as its backup.**
+The stored key is still `esri_street` so saved choices keep working; it now means "the Street button"
+(its tooltip says "Street"). What is DRAWN comes from `_activeBasemapKey()`, never `_basemapKey()`:
+Street → `osm`, or `esri_street` while OSM is down; Topo/Sat → themselves, or their stand-ins while
+Esri is down (`ESRI_FALLBACK`: Topo → `topo_fb` = OSM far + OpenTopoMap near; Sat → `eox_s2` =
+Sentinel-2 cloudless **2017**, CC BY 4.0 — the 2018+ years are NonCommercial — native ~10 m, so
+`max: 14` and blurry at street level). Neither stand-in is on the picker.
+*History:* Esri Street became the default on 2026-08-03 only as the "closest equivalent" to the old
+vector `osm` style when the picker replaced the Settings pulldown. Raster OSM was never compared.
+
+**The tile watchdog** (`checkTiles` / `markDown` in `map.js`). Esri is used with no account (its
+terms want one) and OSM's servers may block heavy users without notice, so each is checked once
+after load and again (≤ once a minute each) when its tiles error. The check fetches tile 0/0/0 WITH
+CORS so the status is readable: not ok → down; network failure → ask `report.php?ping`; if our
+server answers, only that provider is unreachable → down; if not, we are offline → nothing. The
+Esri check is cache-busted; **the OSM check is not** (their policy asks us to honour caching).
+Down → retarget to the stand-in and POST once to `report.php`, which logs it and emails the owner
+at most once a day per provider (tested live 2026-09-25: email arrives). State is per session,
+never persisted. **Limit:** a block served as a normal-looking "not permitted" picture is not
+detected. Note: MapLibre fires no error for tile **404**s, so the load-time check is what catches a
+retired URL. **Test switches (send no email):** `?esri=down`, `?osm=down` (or both) in the address;
+console `forceFallback('esri'|'osm', on)`.
+
+**Credits and zoom caps follow a switch only because `_retargetBasemap()` writes the source's
+private `_options`.** `setTiles()` reloads the source from `_options` (MapLibre 5.5.0), re-deriving
+`tiles`, `maxzoom` AND `attribution` — setting the public fields is overwritten. Before 25n they were
+never updated: Street → Sat kept saying just "Esri". **Re-check this after any MapLibre upgrade.**
 
 Swatches are inline SVG map fragments. Live provider tiles were tried first (Google's approach — show
 the thing, not a metaphor) and **failed**: at 44 px a zoomed-out topo tile is indistinguishable from
@@ -2849,6 +2898,12 @@ state, and that sentence asks you to press the unsaved one; weight alone lifts i
 *discretely* and the colour snaps.
 
 ### 11.6 iOS specifics
+- **Status bar style is `default`, NOT `black-translucent` (2026-09-25l).** iOS 26 home-screen apps
+  with `black-translucent` draw the web view from the top of the screen but keep the height minus the
+  status bar, leaving a strip (59 pt on the user's iPhone) at the BOTTOM that is outside the web view
+  — elements 100vh/100lvh tall were clipped at 793 of 852. **No CSS can reach that strip**; an lvh
+  body rule was tried (25k) and failed. With `default` the app sits below the status bar and reaches
+  the bottom; the top looks the same. Browser-mode's bottom band is Safari's own toolbar.
 - **Scrubber vs the home indicator.** The panel runs to `bottom: 0` so no map shows beneath it; the
   CONTROLS are lifted by `padding-bottom: env(safe-area-inset-bottom)` (+8 px in standalone). At
   bottom:0 with no padding, dragging the scrubber switched apps.
@@ -3168,6 +3223,11 @@ evidence — do not keep investigating the part they share.**
 
 ## 14. QUICK GOTCHA INDEX
 
+- **iOS home-screen strip at the bottom = status bar style.** Keep `default`; no CSS fixes it (§11.6).
+- **Draw from `_activeBasemapKey()`, not `_basemapKey()`** — the latter is the picker's choice, the
+  former what is actually shown (Street is OSM; stand-ins while a provider is down) (§7.5).
+- **`setTiles()` does not update credit or maxzoom** — write `_options` too (`_retargetBasemap`, §7.5).
+
 - **There is no corridor polygon, and none should be built.** Rasters ask "is this cell central?"
   per cell (`m < |L2'|`, §9.0). Four polygon attempts each fixed one case and broke polar paths.
 - **Eclipse paths are drawn at height 0.** Any lift parallaxes them across the ground (2.5 km lift =
@@ -3284,6 +3344,40 @@ evidence — do not keep investigating the part they share.**
 ---
 
 ## 15. CHANGE LOG
+- **2026-09-25n** — **Street is now OpenStreetMap, with a tile watchdog and stand-ins (§7.5).**
+  User's choice after seeing OSM as a fallback. New in `map.js`: `_activeBasemapKey()`,
+  `_retargetBasemap()` (also fixes the credit/zoom cap not following a picker switch), `checkTiles` /
+  `markDown` / `forceFallback`, stand-ins `topo_fb` and `eox_s2`; the connectivity probe asks
+  `report.php` when Esri fails (§7.3). New `report.php` (ping; POST alert emailed ≤ once a day per
+  provider; `?test=1` sends a test email ≤ once an hour). Licence check results: OSM allowed as used
+  (credit shown, normal viewing — **never offline/prefetch**, so #F4 must exclude it); Esri wants an
+  account (managed by the watchdog, not solved); Sentinel-2 2017 is CC BY 4.0; OpenTopoMap still
+  unchecked. Headless tests against the live site: 7 provider cases (healthy, OSM 403, both 403,
+  Esri 403 for Sat, Topo, both test switches) all correct; test switches send nothing. PHP linted and
+  exercised locally; the user confirmed the test email arrives. All 16 suites pass. Seen in the rig,
+  NOT caused by this: MapLibre throws `reading 'bind'` on a basemap switch when every tile fails
+  (the rig blocks tile hosts); the unmodified 25m code does the same. Chore closed: `data build
+  tools/splice_umbral_limits.py` is confirmed gone from the repo. BUILD 2026-09-25n.
+- **2026-09-25m** — **Sun arrow follows the ground, not the screen.** It was rotated once to
+  `sunAz − 90` in screen space, so map rotation (bearing), pitch and the globe's curvature were
+  ignored. New `arrowScreenAngle()` in `map.js` projects the pin and a point ~2 px of ground away along
+  the sun's azimuth (50 km cap) and uses the screen angle between them; `updateArrowScale()` now also
+  runs on `render`. Length/scale behaviour unchanged (user: direction only). Headless test against the
+  live site: bearing 0/45/90/−60 turned the arrow by exactly −B; no errors. Considered and rejected:
+  drawing the arrow as a map layer (wiped on every basemap switch, rebuilt per zoom, replaces working
+  code). BUILD 2026-09-25m.
+- **2026-09-25l** — **iOS home-screen app: black strip at the bottom fixed** by changing
+  `apple-mobile-web-app-status-bar-style` from `black-translucent` to `default` in `index.html`.
+  Cause (measured on the user's iPhone with a diagnostic page): iOS 26 standalone with
+  black-translucent draws the web view from y=0 but keeps the status-bar-subtracted height — screen 852,
+  innerHeight 793, gap 59 = safe-area-inset-top. Elements 852 tall (100vh/100lvh) were CLIPPED at 793:
+  the strip is outside the web view, so **no CSS can reach it** (matches other developers' on-device
+  reports). With `default` the web view sits below the status bar and reaches the bottom; top looks the
+  same (same colour, map starts at the same height; a ~1 px seam). Landscape not yet checked.
+  **Dead end — do not retry:** 25k's `@supports (height:100lvh)` standalone body rule (removed in 25l);
+  any CSS height fix. Browser-mode band is Safari's own toolbar, not ours. BUILD 2026-09-25l.
+- **2026-09-25k** — lvh attempt for the strip above (failed, reverted in 25l). Also the first
+  single-deploy test of the Safari-wedge watch (TODO §3): **no freeze**. BUILD 2026-09-25k.
 - **2026-09-25j** — Manual sections renamed (headings and contents): 1. Syzygy, 2. Search, 3. Map, 4. Details,
   5. Log, 6. Info. Anchors (#what-it-is, #search…) unchanged. BUILD 2026-09-25j.
 - **2026-09-25i** — Lo-res (1x) manual logo: the user chose the 48-ray version (width ×2.2) over 64. Same

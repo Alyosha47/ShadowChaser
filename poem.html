@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Elliptical Triangle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300;0,500;1,400&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+	--night:#0c1024;
+	--night-deep:#070914;
+	--moon:#f2ecd8;
+	--moon-dim:#cfc9b4;
+	--sun:#e8a33d;
+	--earth:#5f9bb0;
+	--rule: rgba(242,236,216,0.18);
+	font-family: 'Lora', Georgia, serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--night-deep);}
+  body{
+	color: var(--moon);
+	padding-top: env(safe-area-inset-top,0px);
+	padding-bottom: env(safe-area-inset-bottom,0px);
+	-webkit-font-smoothing: antialiased;
+  }
+
+  /* Celestial hero */
+  .hero{
+	position:relative;
+	height: min(60vh, 520px);
+	min-height: 340px;
+	overflow:hidden;
+	background:
+	  radial-gradient(ellipse at 50% 15%, #141a3a 0%, transparent 55%),
+	  linear-gradient(180deg, var(--night) 0%, var(--night-deep) 75%);
+  }
+  .stars{position:absolute; inset:0;}
+  .stars span{
+	position:absolute; width:2px; height:2px; border-radius:50%;
+	background: var(--moon); opacity:.55;
+  }
+  .orbit-scene{
+	position:absolute; inset:0;
+	display:flex; align-items:center; justify-content:center;
+  }
+  .eclipse{
+	position:relative; width:150px; height:150px;
+  }
+  .sun-disc{
+	position:absolute; inset:0; border-radius:50%;
+	background: radial-gradient(circle at 40% 35%, #ffd58a, var(--sun) 60%, #c9791f 100%);
+	box-shadow: 0 0 70px 12px rgba(232,163,61,0.45);
+  }
+  .moon-disc{
+	position:absolute; inset:0; border-radius:50%;
+	background: var(--night-deep);
+	transform: translateX(30px);
+	box-shadow: -6px 0 0 0 rgba(255,255,255,0.03) inset;
+	animation: pass 8s ease-in-out infinite alternate;
+  }
+  @keyframes pass{
+	0%   { transform: translateX(95px); }
+	100% { transform: translateX(-95px); }
+  }
+  .earth-arc{
+	position:absolute; bottom:-140px; left:50%; transform:translateX(-50%);
+	width:900px; height:280px; border-radius:50%;
+	background: radial-gradient(ellipse at 50% 0%, #163344 0%, var(--night-deep) 70%);
+  }
+  .hero-title{
+	position:relative; z-index:2;
+	text-align:center;
+	padding-top: 8%;
+  }
+  .kicker{
+	font-family:'Cormorant', serif;
+	font-weight:300;
+	font-style:italic;
+	color: var(--moon-dim);
+	font-size: clamp(0.95rem, 1.6vw, 1.15rem);
+	letter-spacing: 0.02em;
+	margin: 0 0 0.4em;
+  }
+  h1{
+	font-family:'Cormorant', serif;
+	font-weight:500;
+	font-size: clamp(2.4rem, 7vw, 4.4rem);
+	line-height: 1.05;
+	margin: 0;
+	letter-spacing: 0.005em;
+  }
+  .byline{
+	margin-top: 1.1em;
+	font-size: clamp(0.95rem, 1.6vw, 1.05rem);
+	color: var(--moon-dim);
+  }
+  .byline .amp{ color: var(--sun); }
+
+  /* Poem body */
+  main{
+	background: linear-gradient(180deg, var(--night-deep), #0a0d1c 4%, #0a0d1c);
+	padding: 4rem 1.5rem 6rem;
+  }
+  .poem{
+	max-width: 620px;
+	margin: 0 auto;
+  }
+  .stanza{
+	margin-bottom: 2.3em;
+  }
+  .stanza p{
+	margin:0;
+	font-size: clamp(1.15rem, 2.1vw, 1.32rem);
+	line-height: 1.65;
+	color: var(--moon);
+	text-align:center;
+  }
+  .stanza p + p{ margin-top: 0.1em; }
+
+  .divider{
+	display:flex; align-items:center; justify-content:center;
+	gap: 0.9em;
+	margin: 3.2em auto;
+	max-width: 620px;
+	color: var(--moon-dim);
+  }
+  .divider .line{ flex:1; height:1px; background: var(--rule); }
+  .divider .mark{ font-size: 0.9rem; letter-spacing: 0.2em; }
+
+  footer{
+	text-align:center;
+	padding: 2.5rem 1.5rem calc(3rem + env(safe-area-inset-bottom,0px));
+	color: var(--moon-dim);
+	font-family:'Cormorant', serif;
+	font-style: italic;
+	font-size: 1rem;
+	background:#0a0d1c;
+  }
+
+  @media (max-width: 480px){
+	.hero{ height: 46vh; min-height: 300px;}
+	.eclipse{ width:110px; height:110px; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+	.moon-disc{ animation: none; transform: translateX(6px); }
+  }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <div class="stars" id="stars"></div>
+  <div class="orbit-scene">
+	<div class="eclipse">
+	  <div class="sun-disc"></div>
+	  <div class="moon-disc"></div>
+	</div>
+  </div>
+  <div class="earth-arc"></div>
+  <div class="hero-title">
+	<p class="kicker">a celestial myth of unrequited heavenly romance</p>
+	<h1>Elliptical<br>Triangle</h1>
+	<p class="byline">by Guy Alyosha Mordecai Petzall XLVII <span class="amp">&middot;</span> &copy;1995</p>
+  </div>
+</section>
+
+<main>
+  <div class="poem">
+
+	<div class="divider"><span class="line"></span><span class="mark">&#9790;</span><span class="line"></span></div>
+
+	<div class="stanza">
+	  <p>The tide was stirring up the sea which lapped against the sand.</p>
+	  <p>The sand made up a sunny beach which lapped against the land.</p>
+	  <p>The land rose up to mountain peaks which lapped against the sky.</p>
+	  <p>The sky contained the moon, whose laps elliptic cause the tides.</p>
+	</div>
+
+	<div class="stanza">
+	  <p>I whispered to my girlfriend on the mountain by the sea,</p>
+	  <p>&ldquo;Hey can you keep a secret? The man in the moon is me.</p>
+	  <p>I like to shine upon you as I cycle round your world,</p>
+	  <p>For I can tell from far away you&rsquo;re such a far-out girl.</p>
+	</div>
+
+	<div class="stanza">
+	  <p>I drive the sea and wind which move the rivers and the sand</p>
+	  <p>To sculpt a ring of canyons which I place upon your hand.</p>
+	  <p>I orbit round you, sweetie, you&rsquo;re my world, my number one.</p>
+	  <p>Whom could you cherish more?&rdquo; My sweetheart answered me: &ldquo;The sun.&rdquo;</p>
+	</div>
+
+	<div class="stanza">
+	  <p>I bellowed: &ldquo;That philanderer! You think the sun&rsquo;s so great?</p>
+	  <p>You think that you&rsquo;re his only girl? He has another EIGHT!</p>
+	  <p>Oh, darling, I&rsquo;m so faithful, please consent to be my wife,</p>
+	  <p>For what can he provide that I cannot?&rdquo; She answered: &ldquo;Life.</p>
+	</div>
+
+	<div class="stanza">
+	  <p>&ldquo;He offers food and light to the plants with which I abound.</p>
+	  <p>He gives me thermal power, heating up my fertile ground,</p>
+	  <p>Enabling my children to proliferate and spread.</p>
+	  <p>I love you, you big lunatic, but without him, I&rsquo;m dead.&rdquo;</p>
+	</div>
+
+	<div class="stanza">
+	  <p>This answer left me speechless, mad with envy and chagrin.</p>
+	  <p>I spend my life orbiting her, and she&rsquo;s in love with him!</p>
+	  <p>I said, &ldquo;I&rsquo;ll win you over. Yes. I must. Without a doubt.</p>
+	  <p>I&rsquo;ll show you who has power. I will block your boyfriend out!&rdquo;</p>
+	</div>
+
+	<div class="stanza">
+	  <p>Her voice was full of fear, &ldquo;Oh, no! Don&rsquo;t make him go away!</p>
+	  <p>My children need him to survive! They need the light of day!</p>
+	  <p>Oh, please don&rsquo;t do what you propose!&rdquo; I heard her stricken cry,</p>
+	  <p>&ldquo;I need the sun, for as I said, without him I will die!&rdquo;</p>
+	</div>
+
+	<div class="stanza">
+	  <p>I felt a pang of pity, but it quickly turned to glee.</p>
+	  <p>&ldquo;If I can pull this off,&rdquo; I thought, &ldquo;she&rsquo;ll be impressed with me.</p>
+	  <p>Then she will know who holds the reins of power up above,</p>
+	  <p>And then with me, it&rsquo;s plain to see, she&rsquo;ll madly fall in love.&rdquo;</p>
+	</div>
+
+	<div class="stanza">
+	  <p>I sat right down to work upon my plan to rule the sky.</p>
+	  <p>I worked out the equations of the paths that we three fly.</p>
+	  <p>I figured out a way to shift the track of my ellipse,</p>
+	  <p>Then put my scheme in action, and created an eclipse.</p>
+	</div>
+
+	<div class="stanza">
+	  <p>I marvelled at the beauty of the shadow on the land.</p>
+	  <p>I revelled in my glory, that I&rsquo;d done what I had planned.</p>
+	  <p>And turning to my sweetheart, sure that now she&rsquo;d think me great,</p>
+	  <p>I saw her staring at me full of awe&hellip; but also hate.</p>
+	</div>
+
+	<div class="stanza">
+	  <p>I realized at once that terror could not be the way</p>
+	  <p>To win her love, and so I moved, restoring full the day.</p>
+	  <p>She smiled, and it warmed me, as the sun was warming her,</p>
+	  <p>And I knew that I was wrong to try to keep light from the earth.</p>
+	</div>
+
+	<div class="stanza">
+	  <p>This happened centuries ago, and every year since then</p>
+	  <p>For just a couple minutes I have blocked the sun again.</p>
+	  <p>A short reminder for the earth, for whom my love still burns,</p>
+	  <p>To show her I accept that it&rsquo;s around the sun she turns.</p>
+	</div>
+
+	<div class="stanza">
+	  <p>The tide, it still stirs up the sea, which laps against the sand.</p>
+	  <p>The sand still makes a sunny beach which laps against the land.</p>
+	  <p>The land still rises to the peaks which lap against the sky,</p>
+	  <p>And lapping &rsquo;tween the sun and earth eternally am I.</p>
+	</div>
+
+	<div class="divider"><span class="line"></span><span class="mark">&#9728;</span><span class="line"></span></div>
+
+  </div>
+</main>
+
+<script>
+  const field = document.getElementById('stars');
+  const n = 90;
+  for(let i=0;i<n;i++){
+	const s = document.createElement('span');
+	s.style.left = Math.random()*100+'%';
+	s.style.top = Math.random()*100+'%';
+	s.style.opacity = (0.2 + Math.random()*0.6).toFixed(2);
+	const scale = 0.5 + Math.random()*1.2;
+	s.style.transform = `scale(${scale})`;
+	field.appendChild(s);
+  }
+</script>
+
+</body>
+</html>
