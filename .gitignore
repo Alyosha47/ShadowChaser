@@ -18,3 +18,5 @@ vendor/cesium-1.121/
 node_modules/
 reference kmz/
 .nova/
+followtheshadow-log-*.json
+shadowchaser-log-*.json
